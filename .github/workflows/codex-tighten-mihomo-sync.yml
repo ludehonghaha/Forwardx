@@ -23,47 +23,34 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
+
           p = Path("server/agentHeartbeatRoute.ts")
           s = p.read_text()
 
-          old = '''    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, mihomoAccessRevision] = await Promise.all([
-              db.getForwardRulesForAgent(host.id),
-              db.getTunnelsByHost(host.id),
-              getForwardProtocolSettings(),
-              latestConfigRevision(),
-              db.listManagedProtocolEndpointsForHost(host.id),
-              latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),
-              latestHostProtocolAccessRevision(Number(host.id), "mieru"),
-              latestHostProtocolAccessRevision(Number(host.id)),
-            ]);'''
-          new = '''    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, snellAccessRevision, realityAccessRevision, hysteria2AccessRevision] = await Promise.all([
-              db.getForwardRulesForAgent(host.id),
-              db.getTunnelsByHost(host.id),
-              getForwardProtocolSettings(),
-              latestConfigRevision(),
-              db.listManagedProtocolEndpointsForHost(host.id),
-              latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),
-              latestHostProtocolAccessRevision(Number(host.id), "mieru"),
-              latestHostProtocolAccessRevision(Number(host.id), "snell"),
-              latestHostProtocolAccessRevision(Number(host.id), "vless_reality"),
-              latestHostProtocolAccessRevision(Number(host.id), "hysteria2"),
-            ]);
-            const mihomoAccessRevision = Math.max(snellAccessRevision, realityAccessRevision, hysteria2AccessRevision);'''
-          if s.count(old) != 1:
-              raise SystemExit(f"revision block mismatch: {s.count(old)}")
-          s = s.replace(old, new, 1)
+          def one(old, new):
+              global s
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f"expected exactly one match, found {n}: {old!r}")
+              s = s.replace(old, new, 1)
 
-          old = '    if (!deferActionsForLocalState && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {'
-          new = '''    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
-            if (!deferActionsForLocalState && mihomoRuntimeRelevant
-              && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {'''
-          if s.count(old) != 1:
-              raise SystemExit(f"action condition mismatch: {s.count(old)}")
-          s = s.replace(old, new, 1)
+          one(
+              '    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, mihomoAccessRevision] = await Promise.all([',
+              '    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, snellAccessRevision, realityAccessRevision, hysteria2AccessRevision] = await Promise.all([',
+          )
+          one(
+              '      latestHostProtocolAccessRevision(Number(host.id)),\n    ]);\n    const rules = await gateForwardRulesForRuntime(rawRules as any[]);',
+              '      latestHostProtocolAccessRevision(Number(host.id), "snell"),\n      latestHostProtocolAccessRevision(Number(host.id), "vless_reality"),\n      latestHostProtocolAccessRevision(Number(host.id), "hysteria2"),\n    ]);\n    const mihomoAccessRevision = Math.max(snellAccessRevision, realityAccessRevision, hysteria2AccessRevision);\n    const rules = await gateForwardRulesForRuntime(rawRules as any[]);',
+          )
+          one(
+              '    if (!deferActionsForLocalState && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {',
+              '    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;\n    if (!deferActionsForLocalState && mihomoRuntimeRelevant\n      && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {',
+          )
 
           p.write_text(s)
           Path(".github/workflows/codex-tighten-mihomo-sync.yml").unlink()
           PY
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
