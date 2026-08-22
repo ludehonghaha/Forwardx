@@ -3,9 +3,17 @@ name: Docker Image
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "agent/**"
+      - "forwardx-fxp/**"
+      - ".github/workflows/release-agent.yml"
+      - "scripts/build-agent-release.sh"
 
 env:
-  IMAGE_NAME: ghcr.io/poouo/forwardx
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/forwardx
 
 permissions:
   contents: read
