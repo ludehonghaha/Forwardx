@@ -49,6 +49,7 @@ test("keeps external, unsupported and disabled endpoints out of Agent desired st
   const services = buildManagedProtocolGostServices([
     endpoint({ id: 1, runtimeMode: "external" }),
     endpoint({ id: 2, protocol: "shadowsocks_ssh" }),
+    endpoint({ id: 5, protocol: "mieru" }),
     endpoint({ id: 3, isEnabled: false }),
     endpoint({ id: 4, configJson: { cipher: "2022-blake3-aes-256-gcm", password: "secret" } }),
   ]);

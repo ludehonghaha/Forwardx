@@ -15,6 +15,8 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
 import {
   MANAGED_SHADOWSOCKS_CIPHERS,
+  MIERU_HANDSHAKE_MODES,
+  MIERU_MULTIPLEXING_LEVELS,
   parseProtocolAccessConfig,
   type ProtocolAccessProtocol,
   type ProtocolAccessRuntimeMode,
@@ -52,6 +54,12 @@ type EndpointForm = {
   remotePort: string;
   sshUsername: string;
   sshPrivateKey: string;
+  mieruUsername: string;
+  mieruTransport: "TCP" | "UDP";
+  mieruMtu: string;
+  mieruMultiplexing: string;
+  mieruHandshakeMode: string;
+  mieruTrafficPattern: string;
   sortOrder: string;
   isEnabled: boolean;
 };
@@ -71,6 +79,12 @@ const emptyEndpointForm: EndpointForm = {
   remotePort: "",
   sshUsername: "tunnel",
   sshPrivateKey: "",
+  mieruUsername: "",
+  mieruTransport: "TCP",
+  mieruMtu: "1400",
+  mieruMultiplexing: "MULTIPLEXING_LOW",
+  mieruHandshakeMode: "HANDSHAKE_STANDARD",
+  mieruTrafficPattern: "",
   sortOrder: "0",
   isEnabled: false,
 };
@@ -83,7 +97,9 @@ const cipherOptions = [
 ] as const;
 
 function protocolLabel(protocol?: string) {
-  return protocol === "shadowsocks_ssh" ? "SS over SSH" : "Shadowsocks";
+  if (protocol === "shadowsocks_ssh") return "SS over SSH";
+  if (protocol === "mieru") return "Mieru";
+  return "Shadowsocks";
 }
 
 function userLabel(user: any) {
@@ -115,7 +131,9 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
   return {
     id: Number(endpoint.id),
     name: String(endpoint.name || ""),
-    protocol: endpoint.protocol === "shadowsocks_ssh" ? "shadowsocks_ssh" : "shadowsocks",
+    protocol: endpoint.protocol === "shadowsocks_ssh" || endpoint.protocol === "mieru"
+      ? endpoint.protocol
+      : "shadowsocks",
     runtimeMode: endpoint.runtimeMode === "managed" ? "managed" : "external",
     hostId: endpoint.hostId ? String(endpoint.hostId) : "",
     listenPort: config.listenPort ? String(config.listenPort) : String(endpoint.publicPort || ""),
@@ -128,6 +146,12 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
     remotePort: config.remotePort ? String(config.remotePort) : "",
     sshUsername: String(config.sshUsername || "tunnel"),
     sshPrivateKey: typeof config.sshPrivateKey === "string" ? config.sshPrivateKey : "",
+    mieruUsername: String(config.username || ""),
+    mieruTransport: config.transport === "UDP" ? "UDP" : "TCP",
+    mieruMtu: String(config.mtu || 1400),
+    mieruMultiplexing: String(config.multiplexing || "MULTIPLEXING_LOW"),
+    mieruHandshakeMode: String(config.handshakeMode || "HANDSHAKE_STANDARD"),
+    mieruTrafficPattern: typeof config.trafficPattern === "string" ? config.trafficPattern : "",
     sortOrder: String(endpoint.sortOrder || 0),
     isEnabled: endpoint.isEnabled === true,
   };
@@ -163,6 +187,7 @@ export default function ProtocolAccessPage() {
   const [endpointForm, setEndpointForm] = useState<EndpointForm>(emptyEndpointForm);
   const [assignmentEndpoint, setAssignmentEndpoint] = useState<any | null>(null);
   const [assignmentUserId, setAssignmentUserId] = useState("");
+  const [assignmentUsername, setAssignmentUsername] = useState("");
   const [assignmentPassword, setAssignmentPassword] = useState("");
   const [assignmentEnabled, setAssignmentEnabled] = useState(true);
   const [feedUserId, setFeedUserId] = useState(0);
@@ -232,6 +257,7 @@ export default function ProtocolAccessPage() {
     onSuccess: async () => {
       toast.success("用户接入权限已保存");
       setAssignmentUserId("");
+      setAssignmentUsername("");
       setAssignmentPassword("");
       setAssignmentEnabled(true);
       await utils.protocolAccess.listAssignments.invalidate({ endpointId: Number(assignmentEndpoint?.id || 1) });
@@ -264,6 +290,7 @@ export default function ProtocolAccessPage() {
   const openAssignments = (endpoint: any) => {
     setAssignmentEndpoint(endpoint);
     setAssignmentUserId("");
+    setAssignmentUsername("");
     setAssignmentPassword("");
     setAssignmentEnabled(true);
   };
@@ -294,11 +321,31 @@ export default function ProtocolAccessPage() {
         return;
       }
     }
+    if (endpointForm.protocol === "mieru") {
+      const mtu = Number(endpointForm.mieruMtu);
+      if (!Number.isInteger(mtu) || mtu < 1280 || mtu > 1400) {
+        toast.error("Mieru MTU 必须是 1280-1400");
+        return;
+      }
+      if (!!endpointForm.mieruUsername !== !!endpointForm.password) {
+        toast.error("Mieru 默认用户名和密码必须同时填写，或同时留空改为按用户分配");
+        return;
+      }
+    }
     if (endpointForm.protocol === "shadowsocks_ssh" && (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535)) {
       toast.error("SSH 内部 SS 端口必须是 1-65535");
       return;
     }
-    const config: Record<string, unknown> = {
+    const config: Record<string, unknown> = endpointForm.protocol === "mieru" ? {
+      username: endpointForm.mieruUsername,
+      password: endpointForm.password,
+      transport: endpointForm.mieruTransport,
+      mtu: Number(endpointForm.mieruMtu),
+      multiplexing: endpointForm.mieruMultiplexing,
+      handshakeMode: endpointForm.mieruHandshakeMode,
+      trafficPattern: endpointForm.mieruTrafficPattern.trim(),
+      udp: endpointForm.udp,
+    } : {
       cipher: endpointForm.cipher,
       password: endpointForm.password,
       udp: endpointForm.protocol === "shadowsocks" && endpointForm.udp,
@@ -351,7 +398,9 @@ export default function ProtocolAccessPage() {
     setAssignment.mutate({
       endpointId: Number(assignmentEndpoint.id),
       userId,
-      credential: assignmentPassword ? { password: assignmentPassword } : {},
+      credential: assignmentEndpoint.protocol === "mieru"
+        ? (assignmentUsername || assignmentPassword ? { username: assignmentUsername.trim(), password: assignmentPassword } : {})
+        : (assignmentPassword ? { password: assignmentPassword } : {}),
       isEnabled: assignmentEnabled,
     });
   };
@@ -359,6 +408,7 @@ export default function ProtocolAccessPage() {
   const editAssignment = (assignment: any) => {
     const credential = parseProtocolAccessConfig(assignment.access?.credentialJson);
     setAssignmentUserId(String(assignment.user?.id || assignment.access?.userId || ""));
+    setAssignmentUsername(typeof credential.username === "string" ? credential.username : "");
     setAssignmentPassword(typeof credential.password === "string" ? credential.password : "");
     setAssignmentEnabled(assignment.access?.isEnabled !== false);
   };
@@ -407,13 +457,13 @@ export default function ProtocolAccessPage() {
   ) : feedQuery.data ? (
     <div className="space-y-3">
       <FeedLink
-        label="通用 SS 订阅"
-        description="适用于 Shadowrocket 等支持 SIP002 的客户端；SS over SSH 不会进入此订阅。"
+        label="通用 URI 订阅"
+        description="包含 SIP002 Shadowsocks 和 Mieru 简单链接；SS over SSH 仅进入 Mihomo 订阅。"
         value={fullFeedUrl(feedQuery.data.uriPath)}
       />
       <FeedLink
         label="Mihomo / OpenClash 订阅"
-        description="适用于 OpenClash、Clash Meta，可包含 SS 和 SS over SSH。"
+        description="适用于 OpenClash、Clash Meta，可包含 SS、SS over SSH 和 Mieru。"
         value={fullFeedUrl(feedQuery.data.mihomoPath)}
       />
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -537,8 +587,19 @@ export default function ProtocolAccessPage() {
                           )}
                         </div>
                         <div className="grid gap-2 rounded-lg bg-muted/30 p-3 text-sm sm:grid-cols-2">
-                          <div><span className="text-muted-foreground">加密：</span>{String(config.cipher || "-")}</div>
-                          <div><span className="text-muted-foreground">密码：</span>{config.password ? "共享密码" : "按用户分配"}</div>
+                          {endpoint.protocol === "mieru" ? (
+                            <>
+                              <div><span className="text-muted-foreground">传输：</span>{String(config.transport || "-")}</div>
+                              <div><span className="text-muted-foreground">凭据：</span>{config.username && config.password ? "默认凭据" : "按用户分配"}</div>
+                              <div><span className="text-muted-foreground">MTU：</span>{String(config.mtu || 1400)}</div>
+                              <div><span className="text-muted-foreground">多路复用：</span>{String(config.multiplexing || "-").replace("MULTIPLEXING_", "")}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div><span className="text-muted-foreground">加密：</span>{String(config.cipher || "-")}</div>
+                              <div><span className="text-muted-foreground">密码：</span>{config.password ? "共享密码" : "按用户分配"}</div>
+                            </>
+                          )}
                           {endpoint.runtimeMode === "managed" && (
                             <>
                               <div><span className="text-muted-foreground">Agent：</span>{String(hostById.get(Number(endpoint.hostId))?.name || `#${endpoint.hostId}`)}</div>
@@ -603,6 +664,7 @@ export default function ProtocolAccessPage() {
                     runtimeMode: runtimeMode as ProtocolAccessRuntimeMode,
                     ...(runtimeMode === "managed" ? {
                       protocol: "shadowsocks",
+                      password: endpointForm.protocol === "mieru" ? "" : endpointForm.password,
                       cipher: (MANAGED_SHADOWSOCKS_CIPHERS as readonly string[]).includes(endpointForm.cipher)
                         ? endpointForm.cipher
                         : MANAGED_SHADOWSOCKS_CIPHERS[0],
@@ -619,15 +681,28 @@ export default function ProtocolAccessPage() {
               </div>
               <div className="space-y-2">
                 <Label>协议</Label>
-                <Select disabled={endpointForm.runtimeMode === "managed"} value={endpointForm.protocol} onValueChange={(protocol) => setEndpointForm({ ...endpointForm, protocol: protocol as ProtocolAccessProtocol })}>
+                <Select
+                  disabled={endpointForm.runtimeMode === "managed"}
+                  value={endpointForm.protocol}
+                  onValueChange={(value) => {
+                    const protocol = value as ProtocolAccessProtocol;
+                    const crossesMieruBoundary = protocol === "mieru" || endpointForm.protocol === "mieru";
+                    setEndpointForm({
+                      ...endpointForm,
+                      protocol,
+                      ...(crossesMieruBoundary ? { password: "", udp: protocol === "mieru" } : {}),
+                    });
+                  }}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="shadowsocks">Shadowsocks</SelectItem>
                     <SelectItem value="shadowsocks_ssh">SS over SSH</SelectItem>
+                    <SelectItem value="mieru">Mieru</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
+              {endpointForm.protocol !== "mieru" && <div className="space-y-2">
                 <Label>加密方式</Label>
                 <Select value={endpointForm.cipher} onValueChange={(cipher) => setEndpointForm({ ...endpointForm, cipher })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -637,13 +712,13 @@ export default function ProtocolAccessPage() {
                       .map((cipher) => <SelectItem key={cipher} value={cipher}>{cipher}</SelectItem>)}
                   </SelectContent>
                 </Select>
-              </div>
+              </div>}
               <div className="space-y-2">
                 <Label>公网域名或 IP</Label>
                 <Input value={endpointForm.publicHost} onChange={(event) => setEndpointForm({ ...endpointForm, publicHost: event.target.value })} placeholder="211.136.162.184" />
               </div>
               <div className="space-y-2">
-                <Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : "SS 公网端口"}</Label>
+                <Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : endpointForm.protocol === "mieru" ? "Mieru 公网端口" : "SS 公网端口"}</Label>
                 <Input type="number" min={1} max={65535} value={endpointForm.publicPort} onChange={(event) => setEndpointForm({ ...endpointForm, publicPort: event.target.value })} />
               </div>
               {endpointForm.runtimeMode === "managed" && (
@@ -672,13 +747,27 @@ export default function ProtocolAccessPage() {
                   </div>
                 </>
               )}
-              <div className="space-y-2 sm:col-span-2">
-                <Label>共享 SS 密码{endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>
-                <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />
-                <p className="text-xs text-muted-foreground">
-                  {endpointForm.runtimeMode === "managed" ? "托管运行时只编译这一份共享密码；用户分配只控制订阅权限。" : "留空时必须在“用户分配”中为每个用户填写独立密码。"}
-                </p>
-              </div>
+              {endpointForm.protocol === "mieru" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>默认 Mieru 用户名（可选）</Label>
+                    <Input value={endpointForm.mieruUsername} onChange={(event) => setEndpointForm({ ...endpointForm, mieruUsername: event.target.value })} autoComplete="off" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>默认 Mieru 密码（可选）</Label>
+                    <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />
+                  </div>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">默认凭据必须成对填写；同时留空时，在“用户分配”中为每个用户设置独立凭据。</p>
+                </>
+              ) : (
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>共享 SS 密码{endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>
+                  <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />
+                  <p className="text-xs text-muted-foreground">
+                    {endpointForm.runtimeMode === "managed" ? "托管运行时只编译这一份共享密码；用户分配只控制订阅权限。" : "留空时必须在“用户分配”中为每个用户填写独立密码。"}
+                  </p>
+                </div>
+              )}
               {endpointForm.protocol === "shadowsocks_ssh" ? (
                 <>
                   <div className="space-y-2">
@@ -693,6 +782,42 @@ export default function ProtocolAccessPage() {
                     <Label>SSH 私钥</Label>
                     <Textarea className="min-h-40 font-mono text-xs" value={endpointForm.sshPrivateKey} onChange={(event) => setEndpointForm({ ...endpointForm, sshPrivateKey: event.target.value })} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
                     <p className="text-xs text-muted-foreground">私钥只进入获授权用户的 Mihomo 订阅，并在配置审计中脱敏。</p>
+                  </div>
+                </>
+              ) : endpointForm.protocol === "mieru" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>传输协议</Label>
+                    <Select value={endpointForm.mieruTransport} onValueChange={(mieruTransport) => setEndpointForm({ ...endpointForm, mieruTransport: mieruTransport as "TCP" | "UDP" })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="TCP">TCP</SelectItem><SelectItem value="UDP">UDP</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>MTU</Label>
+                    <Input type="number" min={1280} max={1400} value={endpointForm.mieruMtu} onChange={(event) => setEndpointForm({ ...endpointForm, mieruMtu: event.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>多路复用</Label>
+                    <Select value={endpointForm.mieruMultiplexing} onValueChange={(mieruMultiplexing) => setEndpointForm({ ...endpointForm, mieruMultiplexing })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{MIERU_MULTIPLEXING_LEVELS.map((value) => <SelectItem key={value} value={value}>{value.replace("MULTIPLEXING_", "")}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>握手模式</Label>
+                    <Select value={endpointForm.mieruHandshakeMode} onValueChange={(mieruHandshakeMode) => setEndpointForm({ ...endpointForm, mieruHandshakeMode })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{MIERU_HANDSHAKE_MODES.map((value) => <SelectItem key={value} value={value}>{value.replace("HANDSHAKE_", "")}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Traffic Pattern（可选）</Label>
+                    <Textarea className="min-h-20 font-mono text-xs" value={endpointForm.mieruTrafficPattern} onChange={(event) => setEndpointForm({ ...endpointForm, mieruTrafficPattern: event.target.value })} placeholder="Mieru 导出的 Base64 protobuf" />
+                  </div>
+                  <div className="flex items-center justify-between gap-3 rounded-lg border p-3 sm:col-span-2">
+                    <div><p className="text-sm font-medium">允许客户端 UDP</p><p className="text-xs text-muted-foreground">写入 Mihomo 节点的 udp 字段，不会创建额外监听。</p></div>
+                    <Switch checked={endpointForm.udp} onCheckedChange={(udp) => setEndpointForm({ ...endpointForm, udp })} />
                   </div>
                 </>
               ) : (
@@ -733,7 +858,7 @@ export default function ProtocolAccessPage() {
             <DialogDescription>复用现有 ForwardX 用户；不创建第二套协议用户。</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pb-4 sm:px-5">
-            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
               <div className="space-y-2">
                 <Label>用户</Label>
                 <Select value={assignmentUserId} onValueChange={setAssignmentUserId}>
@@ -747,15 +872,21 @@ export default function ProtocolAccessPage() {
                   </SelectContent>
                 </Select>
               </div>
+              {assignmentEndpoint?.protocol === "mieru" && (
+                <div className="space-y-2">
+                  <Label>独立 Mieru 用户名（可选）</Label>
+                  <Input value={assignmentUsername} onChange={(event) => setAssignmentUsername(event.target.value)} autoComplete="off" />
+                </div>
+              )}
               <div className="space-y-2">
-                <Label>独立 SS 密码（可选）</Label>
+                <Label>{assignmentEndpoint?.protocol === "mieru" ? "独立 Mieru 密码（可选）" : "独立 SS 密码（可选）"}</Label>
                 <Input disabled={assignmentEndpoint?.runtimeMode === "managed"} type="password" value={assignmentPassword} onChange={(event) => setAssignmentPassword(event.target.value)} autoComplete="new-password" />
                 {assignmentEndpoint?.runtimeMode === "managed" && <p className="text-xs text-muted-foreground">托管端点固定使用共享密码，避免重复编译用户监听。</p>}
               </div>
               <Button onClick={saveAssignment} disabled={!assignmentUserId || setAssignment.isPending}>
                 <UserPlus className="mr-2 h-4 w-4" /> 保存分配
               </Button>
-              <div className="flex items-center gap-2 sm:col-span-3">
+              <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-4">
                 <Switch checked={assignmentEnabled} onCheckedChange={setAssignmentEnabled} />
                 <span className="text-xs text-muted-foreground">分配后立即启用</span>
               </div>
@@ -772,7 +903,7 @@ export default function ProtocolAccessPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{userLabel(assignment.user)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {assignment.user?.accountEnabled ? "账户正常" : "账户停用"} · {parseProtocolAccessConfig(assignment.access.credentialJson).password ? "独立密码" : "共享密码"}
+                        {assignment.user?.accountEnabled ? "账户正常" : "账户停用"} · {parseProtocolAccessConfig(assignment.access.credentialJson).password ? "独立凭据" : "默认凭据"}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">

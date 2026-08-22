@@ -1,4 +1,4 @@
-export const PROTOCOL_ACCESS_PROTOCOLS = ["shadowsocks", "shadowsocks_ssh"] as const;
+export const PROTOCOL_ACCESS_PROTOCOLS = ["shadowsocks", "shadowsocks_ssh", "mieru"] as const;
 export type ProtocolAccessProtocol = typeof PROTOCOL_ACCESS_PROTOCOLS[number];
 
 export const PROTOCOL_ACCESS_RUNTIME_MODES = ["external", "managed"] as const;
@@ -11,6 +11,15 @@ export const MANAGED_SHADOWSOCKS_CIPHERS = [
   "aes-256-gcm",
   "aes-128-gcm",
 ] as const;
+
+export const MIERU_TRANSPORTS = ["TCP", "UDP"] as const;
+export const MIERU_MULTIPLEXING_LEVELS = [
+  "MULTIPLEXING_OFF",
+  "MULTIPLEXING_LOW",
+  "MULTIPLEXING_MIDDLE",
+  "MULTIPLEXING_HIGH",
+] as const;
+export const MIERU_HANDSHAKE_MODES = ["HANDSHAKE_STANDARD", "HANDSHAKE_NO_WAIT"] as const;
 
 export type ProtocolFeedEntry = {
   assignmentId: number;
@@ -70,11 +79,36 @@ export function effectiveProtocolSecret(entry: ProtocolFeedEntry) {
     || protocolConfigSecret(entry.endpointConfig, "password");
 }
 
+export function effectiveProtocolUsername(entry: ProtocolFeedEntry) {
+  return protocolConfigText(entry.credential, "username")
+    || protocolConfigText(entry.endpointConfig, "username");
+}
+
 export function validateProtocolEndpointConfig(
   protocol: ProtocolAccessProtocol,
   config: ProtocolAccessConfig,
 ) {
   const errors: string[] = [];
+  if (protocol === "mieru") {
+    const transport = protocolConfigText(config, "transport");
+    if (!(MIERU_TRANSPORTS as readonly string[]).includes(transport)) {
+      errors.push("transport 必须是 TCP 或 UDP");
+    }
+    const mtuValue = config.mtu;
+    if (mtuValue !== undefined && mtuValue !== null && mtuValue !== "") {
+      const mtu = Number(mtuValue);
+      if (!Number.isInteger(mtu) || mtu < 1280 || mtu > 1400) errors.push("mtu 必须是 1280-1400");
+    }
+    const multiplexing = protocolConfigText(config, "multiplexing");
+    if (!(MIERU_MULTIPLEXING_LEVELS as readonly string[]).includes(multiplexing)) {
+      errors.push("multiplexing 取值无效");
+    }
+    const handshakeMode = protocolConfigText(config, "handshakeMode");
+    if (!(MIERU_HANDSHAKE_MODES as readonly string[]).includes(handshakeMode)) {
+      errors.push("handshakeMode 取值无效");
+    }
+    return errors;
+  }
   if (!protocolConfigText(config, "cipher")) errors.push("cipher 不能为空");
   if (protocol === "shadowsocks_ssh") {
     if (!protocolConfigPort(config, "remotePort")) errors.push("remotePort 必须是 1-65535");
@@ -91,6 +125,7 @@ export function validateProtocolFeedEntry(entry: ProtocolFeedEntry) {
   if (!Number.isInteger(entry.publicPort) || entry.publicPort < 1 || entry.publicPort > 65535) {
     errors.push("publicPort 必须是 1-65535");
   }
+  if (entry.protocol === "mieru" && !effectiveProtocolUsername(entry)) errors.push("username 不能为空");
   if (!effectiveProtocolSecret(entry)) errors.push("password 不能为空");
   return errors;
 }
