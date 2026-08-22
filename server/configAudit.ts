@@ -144,6 +144,19 @@ export async function latestConfigRevision() {
   return Number(rows[0]?.id || 0);
 }
 
+export async function latestHostProtocolAccessRevision(hostId: number) {
+  const db = await getDb();
+  if (!db || !Number.isInteger(hostId) || hostId <= 0) return 0;
+  const rows = await db.select({ id: configAuditEvents.id }).from(configAuditEvents)
+    .where(and(
+      eq(configAuditEvents.resourceType, "protocol_endpoint" as any),
+      eq(configAuditEvents.hostId, hostId),
+    ))
+    .orderBy(desc(configAuditEvents.id))
+    .limit(1);
+  return Number(rows[0]?.id || 0);
+}
+
 export async function listRecentConfigAuditEvents(limit = 500) {
   const db = await getDb();
   if (!db) return [];

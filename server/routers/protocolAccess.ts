@@ -2,12 +2,17 @@ import { z } from "zod";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import {
+  isManagedShadowsocksCipher,
+  managedProtocolListenPort,
   parseProtocolAccessConfig,
+  protocolConfigBool,
+  protocolConfigSecret,
   validateProtocolEndpointConfig,
   validateProtocolFeedEntry,
   type ProtocolAccessProtocol,
 } from "../../shared/protocolAccess";
 import { ensureAdminOrSelf } from "./helpers";
+import { reserveSpecificHostPort, type HostPortReservation } from "../portReservations";
 
 const protocolSchema = z.enum(["shadowsocks", "shadowsocks_ssh"]);
 const runtimeModeSchema = z.enum(["external", "managed"]);
@@ -26,40 +31,100 @@ const endpointCreateSchema = z.object({
   sortOrder: z.number().int().min(0).default(0),
 });
 
-function validateExternalEndpoint(input: {
+async function validateEndpoint(input: {
+  id?: number;
   protocol: ProtocolAccessProtocol;
   runtimeMode: "external" | "managed";
+  hostId?: number | null;
+  forwardRuleId?: number | null;
   publicHost: string;
+  publicPort: number;
   config: Record<string, unknown>;
+  isEnabled: boolean;
 }) {
-  if (input.runtimeMode !== "external") {
-    throw new Error("托管协议运行时尚未开放；当前阶段只允许登记 external 端点");
-  }
   if (/\s|:\/\//.test(input.publicHost)) {
     throw new Error("publicHost 只能填写域名或 IP，不能包含协议头或空格");
   }
   const errors = validateProtocolEndpointConfig(input.protocol, input.config);
   if (errors.length > 0) throw new Error(errors.join("；"));
+  if (input.runtimeMode === "external") {
+    return { hostId: null, forwardRuleId: null, reservation: null as HostPortReservation | null };
+  }
+  if (input.protocol !== "shadowsocks") {
+    throw new Error("Agent 托管当前只支持标准 Shadowsocks；SS over SSH 请使用 external 模式");
+  }
+  const hostId = Number(input.hostId || 0);
+  if (!Number.isInteger(hostId) || hostId <= 0 || !await db.getHostById(hostId)) {
+    throw new Error("请选择有效的 ForwardX Agent 主机");
+  }
+  const cipher = String(input.config.cipher || "").trim();
+  if (!isManagedShadowsocksCipher(cipher)) {
+    throw new Error("Agent 托管仅支持 chacha20-ietf-poly1305、aes-256-gcm 或 aes-128-gcm");
+  }
+  if (!protocolConfigSecret(input.config, "password")) {
+    throw new Error("Agent 托管端点必须设置共享 SS 密码");
+  }
+  const listenPort = managedProtocolListenPort(input.config, input.publicPort);
+  if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+    throw new Error("Agent 监听端口必须是 1-65535");
+  }
+  const forwardRuleId = Number(input.forwardRuleId || 0) || null;
+  if (!forwardRuleId && listenPort !== input.publicPort) {
+    throw new Error("监听端口与公网端口不同时，必须关联现有 ForwardX 转发规则");
+  }
+  if (forwardRuleId) {
+    const rule = await db.getForwardRuleById(forwardRuleId) as any;
+    if (!rule || !rule.isEnabled || rule.pendingDelete) throw new Error("关联的 ForwardX 转发规则不存在或未启用");
+    if (Number(rule.sourcePort) !== input.publicPort || Number(rule.targetPort) !== listenPort) {
+      throw new Error("关联规则的源端口必须等于公网端口，目标端口必须等于 Agent 监听端口");
+    }
+    const ruleProtocol = String(rule.protocol || "tcp");
+    const udp = protocolConfigBool(input.config, "udp", false);
+    if ((udp && ruleProtocol !== "both") || (!udp && ruleProtocol !== "tcp" && ruleProtocol !== "both")) {
+      throw new Error(udp ? "开启 UDP 时关联规则必须转发 TCP+UDP" : "关联规则必须包含 TCP 转发");
+    }
+  }
+  if (!input.isEnabled) return { hostId, forwardRuleId, reservation: null as HostPortReservation | null };
+  const reservation = await reserveSpecificHostPort({
+    hostId,
+    port: listenPort,
+    protocol: protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
+    isUsed: () => db.isPortUsedOnHost(
+      hostId,
+      listenPort,
+      undefined,
+      protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
+      undefined,
+      true,
+      input.id,
+    ),
+  });
+  if (!reservation) throw new Error(`Agent 主机端口 ${listenPort} 已被占用或正在分配`);
+  return { hostId, forwardRuleId, reservation };
 }
 
 export const protocolAccessRouter = router({
   listEndpoints: adminProcedure.query(() => db.listProtocolEndpoints()),
 
   createEndpoint: adminProcedure.input(endpointCreateSchema).mutation(async ({ ctx, input }) => {
-    validateExternalEndpoint(input);
-    return db.createProtocolEndpoint({
-      name: input.name,
-      protocol: input.protocol,
-      runtimeMode: input.runtimeMode,
-      hostId: null,
-      forwardRuleId: null,
-      publicHost: input.publicHost,
-      publicPort: input.publicPort,
-      configJson: input.config,
-      isEnabled: input.isEnabled,
-      sortOrder: input.sortOrder,
-      createdByUserId: ctx.user.id,
-    } as any);
+    const validated = await validateEndpoint(input);
+    try {
+      return await db.createProtocolEndpoint({
+        name: input.name,
+        protocol: input.protocol,
+        runtimeMode: input.runtimeMode,
+        hostId: validated.hostId,
+        forwardRuleId: validated.forwardRuleId,
+        publicHost: input.publicHost,
+        publicPort: input.publicPort,
+        configJson: input.config,
+        isEnabled: input.isEnabled,
+        sortOrder: input.sortOrder,
+        createdByUserId: ctx.user.id,
+      } as any);
+    } finally {
+      validated.reservation?.release();
+    }
   }),
 
   updateEndpoint: adminProcedure.input(endpointCreateSchema.partial().extend({
@@ -70,15 +135,43 @@ export const protocolAccessRouter = router({
     const protocol = (input.protocol || current.protocol) as ProtocolAccessProtocol;
     const runtimeMode = input.runtimeMode || current.runtimeMode as "external" | "managed";
     const publicHost = input.publicHost || current.publicHost;
+    const publicPort = input.publicPort || current.publicPort;
     const config = input.config || parseProtocolAccessConfig(current.configJson);
-    validateExternalEndpoint({ protocol, runtimeMode, publicHost, config });
+    const hostId = input.hostId === undefined ? current.hostId : input.hostId;
+    const forwardRuleId = input.forwardRuleId === undefined ? current.forwardRuleId : input.forwardRuleId;
+    const isEnabled = input.isEnabled === undefined ? current.isEnabled : input.isEnabled;
+    if (current.runtimeMode === "managed" && runtimeMode === "managed"
+      && Number(current.hostId || 0) !== Number(hostId || 0)) {
+      throw new Error("托管端点不能直接迁移主机；请先改为 external，确认旧监听已移除后再启用新主机");
+    }
+    if (runtimeMode === "managed") {
+      const assignments = await db.listProtocolEndpointAssignments(current.id);
+      if (assignments.some((item: any) => protocolConfigSecret(parseProtocolAccessConfig(item.access?.credentialJson), "password"))) {
+        throw new Error("托管端点只支持共享密码；请先清除已有用户的独立密码");
+      }
+    }
+    const validated = await validateEndpoint({
+      id: current.id,
+      protocol,
+      runtimeMode,
+      hostId,
+      forwardRuleId,
+      publicHost,
+      publicPort,
+      config,
+      isEnabled,
+    });
     const { id, config: _config, ...patch } = input;
-    return db.updateProtocolEndpoint(id, {
-      ...patch,
-      hostId: null,
-      forwardRuleId: null,
-      ...(input.config ? { configJson: input.config } : {}),
-    } as any);
+    try {
+      return await db.updateProtocolEndpoint(id, {
+        ...patch,
+        hostId: validated.hostId,
+        forwardRuleId: validated.forwardRuleId,
+        ...(input.config ? { configJson: input.config } : {}),
+      } as any);
+    } finally {
+      validated.reservation?.release();
+    }
   }),
 
   deleteEndpoint: adminProcedure.input(z.object({ id: z.number().int().positive() }))
@@ -95,6 +188,9 @@ export const protocolAccessRouter = router({
   })).mutation(async ({ input }) => {
     const endpoint = await db.getProtocolEndpointById(input.endpointId);
     if (!endpoint) throw new Error("协议接入端点不存在");
+    if (endpoint.runtimeMode === "managed" && protocolConfigSecret(input.credential, "password")) {
+      throw new Error("Agent 托管端点使用单一共享密码，用户分配不能覆盖运行时密码");
+    }
     const errors = validateProtocolFeedEntry({
       assignmentId: 1,
       endpointId: endpoint.id,

@@ -6,6 +6,12 @@ export type ProtocolAccessRuntimeMode = typeof PROTOCOL_ACCESS_RUNTIME_MODES[num
 
 export type ProtocolAccessConfig = Record<string, unknown>;
 
+export const MANAGED_SHADOWSOCKS_CIPHERS = [
+  "chacha20-ietf-poly1305",
+  "aes-256-gcm",
+  "aes-128-gcm",
+] as const;
+
 export type ProtocolFeedEntry = {
   assignmentId: number;
   endpointId: number;
@@ -49,6 +55,14 @@ export function protocolConfigPort(config: ProtocolAccessConfig, key: string) {
 export function protocolConfigBool(config: ProtocolAccessConfig, key: string, fallback = false) {
   const value = config[key];
   return typeof value === "boolean" ? value : fallback;
+}
+
+export function managedProtocolListenPort(config: ProtocolAccessConfig, publicPort: number) {
+  return protocolConfigPort(config, "listenPort") || publicPort;
+}
+
+export function isManagedShadowsocksCipher(value: unknown) {
+  return (MANAGED_SHADOWSOCKS_CIPHERS as readonly string[]).includes(String(value || "").trim());
 }
 
 export function effectiveProtocolSecret(entry: ProtocolFeedEntry) {

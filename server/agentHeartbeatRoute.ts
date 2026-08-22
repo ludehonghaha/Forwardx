@@ -93,6 +93,7 @@ import {
   getMimicLifecycleRevisionSignature,
   hashConfig,
   latestConfigRevision,
+  latestHostProtocolAccessRevision,
   recordConfigAuditEvent,
   type MimicLifecycleResource,
 } from "./configAudit";
@@ -107,6 +108,7 @@ import { gateForwardRulesForRuntime } from "./linkAccessView";
 import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity, registerPresenceCapableHost } from "./agentFastLiveness";
 import { recordAuthenticatedAgentActivity } from "./agentActivity";
+import { buildManagedProtocolGostServices } from "./protocolRuntimePlan";
 
 // DNS 解析缓存：ruleId → 主目标上次解析到的 IPv4 地址。
 // 备用出站策略里的域名由 Agent 的 TCP 拨号和健康检查动态解析。
@@ -1666,11 +1668,13 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     // 获取该主机的转发规则
-    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision] = await Promise.all([
+    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, protocolAccessRevision] = await Promise.all([
       db.getForwardRulesForAgent(host.id),
       db.getTunnelsByHost(host.id),
       getForwardProtocolSettings(),
       latestConfigRevision(),
+      db.listManagedProtocolEndpointsForHost(host.id),
+      latestHostProtocolAccessRevision(Number(host.id)),
     ]);
     const rules = await gateForwardRulesForRuntime(rawRules as any[]);
     const actions: any[] = [];
@@ -3314,7 +3318,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         ? `127.0.0.1:${guardListenPort(rule)}`
         : failoverTargetAddr(rule, "exitSend");
     };
-    const gostServiceConfig = (await Promise.all(gostRules
+    const gostRuleServiceConfig = (await Promise.all(gostRules
       .map(async (r: any) => {
         const useRuleGuard = await shouldUseRuleGuard(r);
         const tunnel = (r as any).tunnelId ? tunnelById.get((r as any).tunnelId) as any : null;
@@ -3398,6 +3402,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       })))
       .flat()
       .filter(Boolean);
+    const gostServiceConfig = [
+      ...gostRuleServiceConfig,
+      ...buildManagedProtocolGostServices(managedProtocolEndpoints as any[]),
+    ];
     const tunnelGostChains = (await Promise.all(gostRules
       .filter((r: any) => r.isEnabled && r.forwardType === "gost" && r.tunnelId)
       .map(async (r: any) => {
@@ -5834,7 +5842,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     const dnsRuntimeChanged = dnsChangedReports.length > 0;
-    const gostRuntimeConfigChanged = actions.some((action) => actionMayAffectRuntimeFamily(action, SHARED_GOST_FORWARD_TYPES)) || dnsRuntimeChanged;
+    const protocolRuntimeConfigChanged = protocolAccessRevision > Number(agentLastAppliedRevision || 0);
+    const gostRuntimeConfigChanged = actions.some((action) => actionMayAffectRuntimeFamily(action, SHARED_GOST_FORWARD_TYPES))
+      || dnsRuntimeChanged
+      || protocolRuntimeConfigChanged;
     const nginxRuntimeConfigChanged = actions.some((action) => actionMayAffectRuntimeFamily(action, SHARED_NGINX_FORWARD_TYPES)) || dnsRuntimeChanged;
     const reportedGostRuntimeServices = reportedRuntimeServices.filter((service: AgentLocalRuntimeServiceState) => {
       const name = String(service?.name || "").trim();

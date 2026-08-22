@@ -21,7 +21,7 @@
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
     "test:migration": "node --import tsx --test server/legacyMigration.test.ts",
-    "test:protocol-access": "node --import tsx --test server/protocolAccessSchema.test.ts server/protocolSubscription.test.ts",
+    "test:protocol-access": "node --import tsx --test server/protocolAccessSchema.test.ts server/protocolRuntimePlan.test.ts server/protocolSubscription.test.ts",
     "test:mimic": "node --import tsx --test server/mimicEnvironment.test.ts server/mimicRuntimeLifecycle.test.ts",
     "test:selftest-dispatch": "node --import tsx --test server/forwardTestDispatch.test.ts",
     "test:smtp": "node --import tsx --test server/smtpTransport.test.ts",
