@@ -76,9 +76,6 @@ jobs:
       - name: Build panel assets
         run: pnpm build
 
-      - name: Build bundled Agent assets
-        run: bash scripts/build-agent-release.sh
-
       - name: Package panel runtime bundle
         shell: bash
         env:
