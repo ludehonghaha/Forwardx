@@ -1,0 +1,81 @@
+name: Narrow fork defaults once
+
+on:
+  push:
+    branches:
+      - codex/fix-fork-defaults
+
+permissions:
+  contents: write
+
+jobs:
+  narrow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Keep fork defaults scoped to panel and Agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+
+          # Keep Go module identity, Android release source and official plugin source upstream.
+          git checkout origin/main -- \
+            agent/go.mod \
+            forwardx-fxp/go.mod \
+            client/src/lib/mobileNotifications.ts \
+            plugins/china-region-whitelist/forwardx-plugin.json \
+            plugins/live2d-widget/forwardx-plugin.json \
+            plugins/official-store.json \
+            server/repositories/pluginRepository.ts \
+            shared/pluginTypes.ts
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('server/_core/systemRouter.ts')
+          text = path.read_text()
+          old = '''const ANDROID_APK_DOWNLOAD_URL =
+            `${REPO_URL}/releases/download/v${ANDROID_APK_RELEASE_VERSION}/forwardx-android-v${ANDROID_APP_VERSION}.apk`;'''
+          new = '''const ANDROID_APK_DOWNLOAD_URL =
+            `https://github.com/poouo/Forwardx/releases/download/v${ANDROID_APK_RELEASE_VERSION}/forwardx-android-v${ANDROID_APP_VERSION}.apk`;'''
+          if old not in text:
+              raise SystemExit('expected Android APK URL block not found')
+          path.write_text(text.replace(old, new, 1))
+
+          readme = Path('README.md')
+          text = readme.read_text()
+          text = text.replace(
+              '- [Android APK](https://github.com/ludehonghaha/Forwardx/releases/latest)',
+              '- [Android APK](https://github.com/poouo/Forwardx/releases/latest)',
+              1,
+          )
+          readme.write_text(text)
+          PY
+
+          rm -f .github/workflows/narrow-fork-defaults-once.yml
+          git diff --check
+
+          test "$(head -n1 agent/go.mod)" = 'module github.com/poouo/Forwardx/agent'
+          test "$(head -n1 forwardx-fxp/go.mod)" = 'module github.com/poouo/Forwardx/forwardx-fxp'
+          grep -Fq 'raw.githubusercontent.com/ludehonghaha/Forwardx/main/scripts/install-agent.sh' client/src/components/AgentTokenManager.tsx
+          grep -Fq 'REPO_SLUG="${FORWARDX_GITHUB_REPO:-ludehonghaha/Forwardx}"' scripts/install-panel-docker.sh
+          grep -Fq 'IMAGE_REPO="${FORWARDX_IMAGE_REPO:-ghcr.io/ludehonghaha/forwardx}"' scripts/install-panel-docker.sh
+
+      - name: Commit narrowed fork defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git commit -m 'fix(deploy): scope fork defaults to panel and Agent'
+          git push origin HEAD:codex/fix-fork-defaults
