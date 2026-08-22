@@ -1,11 +1,12 @@
+import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import {
   isManagedShadowsocksCipher,
   managedProtocolListenPort,
+  managedProtocolSocketProtocol,
   parseProtocolAccessConfig,
-  protocolConfigBool,
   protocolConfigSecret,
   protocolConfigText,
   validateProtocolEndpointConfig,
@@ -18,7 +19,7 @@ import { latestHostProtocolAccessRevision } from "../configAudit";
 import { getAgentLocalRuntimeStateSnapshot } from "../agentHeartbeatRoute";
 import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
 
-const protocolSchema = z.enum(["shadowsocks", "shadowsocks_ssh", "mieru"]);
+const protocolSchema = z.enum(["shadowsocks", "shadowsocks_ssh", "mieru", "snell", "vless_reality", "hysteria2"]);
 const runtimeModeSchema = z.enum(["external", "managed"]);
 const configSchema = z.record(z.unknown());
 
@@ -34,6 +35,55 @@ const endpointCreateSchema = z.object({
   isEnabled: z.boolean().default(false),
   sortOrder: z.number().int().min(0).default(0),
 });
+
+function randomProtocolSecret() {
+  return randomBytes(24).toString("base64url");
+}
+
+function realityKeyPair() {
+  const { privateKey, publicKey } = generateKeyPairSync("x25519");
+  const privateJwk = privateKey.export({ format: "jwk" }) as { d?: string; x?: string };
+  const publicJwk = publicKey.export({ format: "jwk" }) as { d?: string; x?: string };
+  if (!privateJwk.d || !publicJwk.x) throw new Error("Reality X25519 密钥生成失败");
+  return { privateKey: privateJwk.d, publicKey: publicJwk.x };
+}
+
+function provisionManagedProtocolConfig(
+  protocol: ProtocolAccessProtocol,
+  runtimeMode: "external" | "managed",
+  rawConfig: Record<string, unknown>,
+) {
+  const config = { ...rawConfig };
+  if (runtimeMode !== "managed") return config;
+  if (protocol === "snell") {
+    if (!protocolConfigSecret(config, "password")) config.password = randomProtocolSecret();
+    if (!Number.isInteger(Number(config.version))) config.version = 5;
+    if (typeof config.udp !== "boolean") config.udp = true;
+  }
+  if (protocol === "vless_reality") {
+    if (!protocolConfigText(config, "uuid")) config.uuid = randomUUID();
+    if (!protocolConfigText(config, "serverName")) config.serverName = "www.cloudflare.com";
+    if (!protocolConfigText(config, "realityDest")) config.realityDest = `${protocolConfigText(config, "serverName")}:443`;
+    if (!protocolConfigText(config, "shortId")) config.shortId = randomBytes(8).toString("hex");
+    if (!protocolConfigText(config, "clientFingerprint")) config.clientFingerprint = "chrome";
+    if (typeof config.udp !== "boolean") config.udp = true;
+    if (!protocolConfigSecret(config, "realityPrivateKey") || !protocolConfigText(config, "realityPublicKey")) {
+      const keys = realityKeyPair();
+      config.realityPrivateKey = keys.privateKey;
+      config.realityPublicKey = keys.publicKey;
+    }
+  }
+  if (protocol === "hysteria2") {
+    if (!protocolConfigSecret(config, "password")) config.password = randomProtocolSecret();
+    if (!protocolConfigText(config, "sni")) config.sni = "www.cloudflare.com";
+    if (typeof config.insecure !== "boolean") config.insecure = true;
+    if (!protocolConfigText(config, "obfsMode")) config.obfsMode = "salamander";
+    if (config.obfsMode === "salamander" && !protocolConfigSecret(config, "obfsPassword")) {
+      config.obfsPassword = randomProtocolSecret();
+    }
+  }
+  return config;
+}
 
 async function validateEndpoint(input: {
   id?: number;
@@ -55,7 +105,7 @@ async function validateEndpoint(input: {
     return { hostId: null, forwardRuleId: null, reservation: null as HostPortReservation | null };
   }
   if (input.protocol === "shadowsocks_ssh") {
-    throw new Error("Agent 托管不支持 SS over SSH；请选择标准 Shadowsocks 或 Mieru");
+    throw new Error("Agent 托管不支持 SS over SSH");
   }
   const hostId = Number(input.hostId || 0);
   if (!Number.isInteger(hostId) || hostId <= 0 || !await db.getHostById(hostId)) {
@@ -66,23 +116,29 @@ async function validateEndpoint(input: {
     if (!isManagedShadowsocksCipher(cipher)) {
       throw new Error("Agent 托管仅支持 chacha20-ietf-poly1305、aes-256-gcm 或 aes-128-gcm");
     }
-    if (!protocolConfigSecret(input.config, "password")) {
-      throw new Error("Agent 托管端点必须设置共享 SS 密码");
-    }
-  } else {
+    if (!protocolConfigSecret(input.config, "password")) throw new Error("Agent 托管端点必须设置共享 SS 密码");
+  } else if (input.protocol === "mieru") {
     if (!protocolConfigText(input.config, "username") || !protocolConfigSecret(input.config, "password")) {
       throw new Error("Agent 托管 Mieru 必须设置共享用户名和密码");
     }
     if (input.isEnabled) {
       const duplicate = (await db.listManagedProtocolEndpointsForHost(hostId) as any[])
-        .some((endpoint: any) => endpoint.protocol === "mieru" && Number(endpoint.id) !== Number(input.id || 0));
+        .some((endpoint: any) => endpoint.protocol === "mieru" && endpoint.isEnabled !== false && Number(endpoint.id) !== Number(input.id || 0));
       if (duplicate) throw new Error("同一 Agent 主机只能启用一个托管 Mieru 端点");
     }
+  } else if (input.protocol === "snell") {
+    if (!protocolConfigSecret(input.config, "password")) throw new Error("托管 Snell 必须设置 PSK");
+  } else if (input.protocol === "vless_reality") {
+    if (!protocolConfigSecret(input.config, "realityPrivateKey")) throw new Error("托管 Reality 缺少服务端私钥");
+  } else if (input.protocol === "hysteria2") {
+    if (!protocolConfigSecret(input.config, "password")) throw new Error("托管 Hysteria2 必须设置密码");
   }
+
   const listenPort = managedProtocolListenPort(input.config, input.publicPort);
   if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
     throw new Error("Agent 监听端口必须是 1-65535");
   }
+  const serverProtocol = managedProtocolSocketProtocol(input.protocol, input.config);
   const forwardRuleId = Number(input.forwardRuleId || 0) || null;
   if (!forwardRuleId && listenPort !== input.publicPort) {
     throw new Error("监听端口与公网端口不同时，必须关联现有 ForwardX 转发规则");
@@ -94,37 +150,16 @@ async function validateEndpoint(input: {
       throw new Error("关联规则的源端口必须等于公网端口，目标端口必须等于 Agent 监听端口");
     }
     const ruleProtocol = String(rule.protocol || "tcp");
-    const serverProtocol = input.protocol === "mieru"
-      ? protocolConfigText(input.config, "transport").toLowerCase()
-      : protocolConfigBool(input.config, "udp", false) ? "both" : "tcp";
-    if (serverProtocol === "both" && ruleProtocol !== "both") {
-      throw new Error("开启 UDP 时关联规则必须转发 TCP+UDP");
-    }
-    if (serverProtocol === "tcp" && ruleProtocol !== "tcp" && ruleProtocol !== "both") {
-      throw new Error("关联规则必须包含 TCP 转发");
-    }
-    if (serverProtocol === "udp" && ruleProtocol !== "udp" && ruleProtocol !== "both") {
-      throw new Error("关联规则必须包含 UDP 转发");
-    }
+    if (serverProtocol === "both" && ruleProtocol !== "both") throw new Error("关联规则必须转发 TCP+UDP");
+    if (serverProtocol === "tcp" && ruleProtocol !== "tcp" && ruleProtocol !== "both") throw new Error("关联规则必须包含 TCP 转发");
+    if (serverProtocol === "udp" && ruleProtocol !== "udp" && ruleProtocol !== "both") throw new Error("关联规则必须包含 UDP 转发");
   }
   if (!input.isEnabled) return { hostId, forwardRuleId, reservation: null as HostPortReservation | null };
   const reservation = await reserveSpecificHostPort({
     hostId,
     port: listenPort,
-    protocol: input.protocol === "mieru"
-      ? protocolConfigText(input.config, "transport").toLowerCase() as "tcp" | "udp"
-      : protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
-    isUsed: () => db.isPortUsedOnHost(
-      hostId,
-      listenPort,
-      undefined,
-      input.protocol === "mieru"
-        ? protocolConfigText(input.config, "transport").toLowerCase()
-        : protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
-      undefined,
-      true,
-      input.id,
-    ),
+    protocol: serverProtocol,
+    isUsed: () => db.isPortUsedOnHost(hostId, listenPort, undefined, serverProtocol, undefined, true, input.id),
   });
   if (!reservation) throw new Error(`Agent 主机端口 ${listenPort} 已被占用或正在分配`);
   return { hostId, forwardRuleId, reservation };
@@ -138,12 +173,11 @@ export const protocolAccessRouter = router({
       .map((endpoint: any) => Number(endpoint.hostId || 0))
       .filter((hostId: number) => hostId > 0)));
     const hostEntries = await Promise.all(hostIds.map(async (hostId) => {
-      const [host, shadowsocksRevision, mieruRevision] = await Promise.all([
+      const [host, hostRevision] = await Promise.all([
         db.getHostById(hostId),
-        latestHostProtocolAccessRevision(hostId, "shadowsocks"),
-        latestHostProtocolAccessRevision(hostId, "mieru"),
+        latestHostProtocolAccessRevision(hostId),
       ]);
-      return [hostId, { host, shadowsocksRevision, mieruRevision, snapshot: getAgentLocalRuntimeStateSnapshot(hostId) }] as const;
+      return [hostId, { host, hostRevision, snapshot: getAgentLocalRuntimeStateSnapshot(hostId) }] as const;
     }));
     const runtimeByHostId = new Map(hostEntries);
     return endpoints.map((endpoint: any) => {
@@ -153,7 +187,7 @@ export const protocolAccessRouter = router({
         runtimeStatus: projectProtocolEndpointRuntimeStatus({
           endpoint,
           host: runtime?.host,
-          hostProtocolRevision: Number(endpoint.protocol === "mieru" ? runtime?.mieruRevision : runtime?.shadowsocksRevision || 0),
+          hostProtocolRevision: Number(runtime?.hostRevision || 0),
           localState: runtime?.snapshot?.state,
           localStateUpdatedAt: runtime?.snapshot?.updatedAt,
         }),
@@ -162,7 +196,8 @@ export const protocolAccessRouter = router({
   }),
 
   createEndpoint: adminProcedure.input(endpointCreateSchema).mutation(async ({ ctx, input }) => {
-    const validated = await validateEndpoint(input);
+    const config = provisionManagedProtocolConfig(input.protocol, input.runtimeMode, input.config);
+    const validated = await validateEndpoint({ ...input, config });
     try {
       return await db.createProtocolEndpoint({
         name: input.name,
@@ -172,7 +207,7 @@ export const protocolAccessRouter = router({
         forwardRuleId: validated.forwardRuleId,
         publicHost: input.publicHost,
         publicPort: input.publicPort,
-        configJson: input.config,
+        configJson: config,
         isEnabled: input.isEnabled,
         sortOrder: input.sortOrder,
         createdByUserId: ctx.user.id,
@@ -191,7 +226,8 @@ export const protocolAccessRouter = router({
     const runtimeMode = input.runtimeMode || current.runtimeMode as "external" | "managed";
     const publicHost = input.publicHost || current.publicHost;
     const publicPort = input.publicPort || current.publicPort;
-    const config = input.config || parseProtocolAccessConfig(current.configJson);
+    const rawConfig = input.config || parseProtocolAccessConfig(current.configJson);
+    const config = provisionManagedProtocolConfig(protocol, runtimeMode, rawConfig);
     const hostId = input.hostId === undefined ? current.hostId : input.hostId;
     const forwardRuleId = input.forwardRuleId === undefined ? current.forwardRuleId : input.forwardRuleId;
     const isEnabled = input.isEnabled === undefined ? current.isEnabled : input.isEnabled;
@@ -225,7 +261,7 @@ export const protocolAccessRouter = router({
         ...patch,
         hostId: validated.hostId,
         forwardRuleId: validated.forwardRuleId,
-        ...(input.config ? { configJson: input.config } : {}),
+        configJson: config,
       } as any);
     } finally {
       validated.reservation?.release();

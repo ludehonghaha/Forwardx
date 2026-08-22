@@ -108,7 +108,16 @@ import { gateForwardRulesForRuntime } from "./linkAccessView";
 import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity, registerPresenceCapableHost } from "./agentFastLiveness";
 import { recordAuthenticatedAgentActivity } from "./agentActivity";
-import { buildManagedMieruRuntimePlan, buildManagedProtocolGostServices } from "./protocolRuntimePlan";
+import { buildManagedMieruRuntimePlan, buildManagedMihomoRuntimePlan, buildManagedProtocolGostServices } from "./protocolRuntimePlan";
+import {
+  MIHOMO_CONFIG_DIR,
+  MIHOMO_CONFIG_PATH,
+  MIHOMO_SERVICE_NAME,
+  ensureMihomoBinaryCmd,
+  ensureMihomoCertificateCmds,
+  mihomoServiceUnit,
+  verifyMihomoRuntimeCmd,
+} from "./protocolMihomoRuntime";
 
 // DNS 解析缓存：ruleId → 主目标上次解析到的 IPv4 地址。
 // 备用出站策略里的域名由 Agent 的 TCP 拨号和健康检查动态解析。
@@ -191,6 +200,7 @@ const AGENT_RUNTIME_SYNC_REPAIR_RESEND_MS = 60 * 1000;
 const AGENT_GOST_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_NGINX_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_MIERU_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
+const AGENT_MIHOMO_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_MIMIC_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_REBOOT_DETECTION_GRACE_MS = 1000;
 const AGENT_PLUGIN_SYNC_RESEND_MS = 5 * 60 * 1000;
@@ -1712,7 +1722,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     // 获取该主机的转发规则
-    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision] = await Promise.all([
+    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, snellAccessRevision, realityAccessRevision, hysteria2AccessRevision] = await Promise.all([
       db.getForwardRulesForAgent(host.id),
       db.getTunnelsByHost(host.id),
       getForwardProtocolSettings(),
@@ -1720,7 +1730,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       db.listManagedProtocolEndpointsForHost(host.id),
       latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),
       latestHostProtocolAccessRevision(Number(host.id), "mieru"),
+      latestHostProtocolAccessRevision(Number(host.id), "snell"),
+      latestHostProtocolAccessRevision(Number(host.id), "vless_reality"),
+      latestHostProtocolAccessRevision(Number(host.id), "hysteria2"),
     ]);
+    const mihomoAccessRevision = Math.max(snellAccessRevision, realityAccessRevision, hysteria2AccessRevision);
     const rules = await gateForwardRulesForRuntime(rawRules as any[]);
     const actions: any[] = [];
     const dnsWatches = new Map<string, AgentDnsWatch>();
@@ -3449,6 +3463,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       .filter(Boolean);
     const managedProtocolGostServices = buildManagedProtocolGostServices(managedProtocolEndpoints as any[]);
     const managedMieruRuntimePlan = buildManagedMieruRuntimePlan(managedProtocolEndpoints as any[]);
+    const managedMihomoRuntimePlan = buildManagedMihomoRuntimePlan(managedProtocolEndpoints as any[]);
     const mieruServerConfig = managedMieruRuntimePlan?.config || {
       portBindings: [],
       users: [],
@@ -3490,6 +3505,38 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         commands.push(restartManagedServiceIfConfigChangedCmd(MIERU_SERVICE_NAME, MIERU_CONFIG_PATH));
       } else {
         commands.push(stopManagedServiceCmd(MIERU_SERVICE_NAME));
+      }
+      return commands;
+    };
+    const mihomoServerConfig = managedMihomoRuntimePlan?.config || {
+      mode: "rule",
+      "log-level": "warning",
+      ipv6: true,
+      listeners: [],
+      rules: ["MATCH,DIRECT"],
+    };
+    const mihomoManagedConfigs = [{
+      path: MIHOMO_CONFIG_PATH,
+      contentBase64: Buffer.from(JSON.stringify(mihomoServerConfig, null, 2), "utf8").toString("base64"),
+      format: "json",
+      mode: 0o600,
+      serviceName: MIHOMO_SERVICE_NAME,
+    }];
+    const buildMihomoRuntimePreCmds = () => managedMihomoRuntimePlan
+      ? [ensureMihomoBinaryCmd(), ...ensureMihomoCertificateCmds(managedMihomoRuntimePlan)]
+      : [];
+    const buildMihomoRuntimeSyncCmds = () => {
+      const commands = [
+        `mkdir -p ${shQuote(MIHOMO_CONFIG_DIR)}`,
+        writeManagedServiceCmd(MIHOMO_SERVICE_NAME, mihomoServiceUnit()),
+      ];
+      if (managedMihomoRuntimePlan) {
+        commands.push(
+          restartManagedServiceIfConfigChangedCmd(MIHOMO_SERVICE_NAME, MIHOMO_CONFIG_PATH),
+          verifyMihomoRuntimeCmd(managedMihomoRuntimePlan),
+        );
+      } else {
+        commands.push(stopManagedServiceCmd(MIHOMO_SERVICE_NAME));
       }
       return commands;
     };
@@ -5936,6 +5983,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     const dnsRuntimeChanged = dnsChangedReports.length > 0;
     const gostProtocolRuntimeConfigChanged = shadowsocksAccessRevision > Number(agentLastAppliedRevision || 0);
     const mieruRuntimeConfigChanged = mieruAccessRevision > Number(agentLastAppliedRevision || 0);
+    const mihomoRuntimeConfigChanged = mihomoAccessRevision > Number(agentLastAppliedRevision || 0);
     const gostRuntimeConfigChanged = actions.some((action) => actionMayAffectRuntimeFamily(action, SHARED_GOST_FORWARD_TYPES))
       || dnsRuntimeChanged
       || gostProtocolRuntimeConfigChanged;
@@ -6194,6 +6242,40 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
           appendPanelLog("warn", `[MieruRuntime] stale managed runtime cleanup queued host=${host.id} name=${String(host.name || "-")}`);
         }
       }
+    }
+    const mihomoDesiredRelevant = !!managedMihomoRuntimePlan;
+    const mihomoPeriodicReconcileDue = mihomoDesiredRelevant && runtimeSyncReconcileDue(
+      Number(host.id),
+      "mihomo-runtime-sync",
+      responseIssuedAt,
+      AGENT_MIHOMO_RUNTIME_RECONCILE_MS,
+    );
+    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
+    if (!deferActionsForLocalState && mihomoRuntimeRelevant
+      && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {
+      const mihomoRuntimeSyncAction = {
+        statusType: "runtime",
+        ruleId: 0,
+        tunnelId: 0,
+        op: "apply",
+        forwardType: "mihomo-runtime-sync",
+        sourcePort: 0,
+        targetIp: "",
+        targetPort: 0,
+        protocol: managedMihomoRuntimePlan?.sockets[0]?.transport || "tcp",
+        knownRunning: false,
+        forceRuntimeSync: true,
+        preCommands: buildMihomoRuntimePreCmds(),
+        commands: buildMihomoRuntimeSyncCmds(),
+        managedConfigs: mihomoManagedConfigs,
+      } as any;
+      if (shouldSendRuntimeSyncAction(
+        Number(host.id),
+        mihomoRuntimeSyncAction,
+        mihomoRuntimeConfigChanged || runtimeSyncBootstrap,
+        responseIssuedAt,
+        AGENT_MIHOMO_RUNTIME_RECONCILE_MS,
+      )) actions.push(mihomoRuntimeSyncAction);
     }
     if (!deferActionsForLocalState && mimicRuntimeSyncWanted) {
       const mimicDnsRefreshToken = anyTunnelDnsRefresh(

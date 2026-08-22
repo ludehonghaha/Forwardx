@@ -14,6 +14,26 @@ function endpoint(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function host(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 3,
+    isOnline: true,
+    agentVersion: "2.2.191",
+    agentLastAppliedRevision: 12,
+    lastHeartbeat: new Date("2026-08-22T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function localState(listeners: Array<{ runtime: string; port: number; protocol: "tcp" | "udp"; ready: boolean }>) {
+  return {
+    rules: [],
+    tunnels: [],
+    services: [{ name: "forwardx-runtime", active: true, hasWork: true }],
+    listeners,
+  };
+}
+
 test("checks managed Mieru against the single mita transport listener", () => {
   const result = projectProtocolEndpointRuntimeStatus({
     endpoint: endpoint({
@@ -50,26 +70,6 @@ test("does not turn Mieru client UDP capability into a second server listener", 
   });
   assert.equal(result.state, "healthy");
 });
-
-function host(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 3,
-    isOnline: true,
-    agentVersion: "2.2.191",
-    agentLastAppliedRevision: 12,
-    lastHeartbeat: new Date("2026-08-22T00:00:00.000Z"),
-    ...overrides,
-  };
-}
-
-function localState(listeners: Array<{ runtime: string; port: number; protocol: "tcp" | "udp"; ready: boolean }>) {
-  return {
-    rules: [],
-    tunnels: [],
-    services: [{ name: "forwardx-runtime", active: true, hasWork: true }],
-    listeners,
-  };
-}
 
 test("requires applied revision and real listener readiness before reporting healthy", () => {
   const pending = projectProtocolEndpointRuntimeStatus({
@@ -146,4 +146,29 @@ test("keeps external endpoints outside Agent runtime status", () => {
   });
   assert.equal(result.state, "external");
   assert.equal(result.applied, null);
+});
+
+test("new entry protocols report applied after the generic Agent runtime action succeeds", () => {
+  for (const protocol of ["snell", "vless_reality", "hysteria2"]) {
+    const result = projectProtocolEndpointRuntimeStatus({
+      endpoint: endpoint({ protocol }),
+      host: host({ agentVersion: "2.2.192", agentLastAppliedRevision: 12 }),
+      hostProtocolRevision: 12,
+      localState: null,
+    });
+    assert.equal(result.state, "healthy", protocol);
+    assert.equal(result.applied, true, protocol);
+    assert.equal(result.listenerHealthy, null, protocol);
+    assert.match(result.message, /forwardx-mihomo/, protocol);
+  }
+});
+
+test("new entry protocols stay pending until the Agent applies their revision", () => {
+  const result = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "vless_reality" }),
+    host: host({ agentVersion: "2.2.192", agentLastAppliedRevision: 11 }),
+    hostProtocolRevision: 12,
+  });
+  assert.equal(result.state, "pending");
+  assert.equal(result.applied, false);
 });

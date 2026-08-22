@@ -17,6 +17,62 @@ function entry(overrides: Partial<ProtocolFeedEntry> = {}): ProtocolFeedEntry {
   };
 }
 
+function realityEntry(overrides: Partial<ProtocolFeedEntry> = {}): ProtocolFeedEntry {
+  return entry({
+    assignmentId: 21,
+    endpointId: 21,
+    name: "JP Reality",
+    protocol: "vless_reality",
+    publicHost: "reality.example.com",
+    publicPort: 443,
+    endpointConfig: {
+      uuid: "550e8400-e29b-41d4-a716-446655440000",
+      serverName: "www.cloudflare.com",
+      realityDest: "www.cloudflare.com:443",
+      realityPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      shortId: "0011223344556677",
+      clientFingerprint: "chrome",
+      udp: true,
+    },
+    credential: {},
+    ...overrides,
+  });
+}
+
+function hysteria2Entry(overrides: Partial<ProtocolFeedEntry> = {}): ProtocolFeedEntry {
+  return entry({
+    assignmentId: 22,
+    endpointId: 22,
+    name: "JP Hysteria2",
+    protocol: "hysteria2",
+    publicHost: "hy2.example.com",
+    publicPort: 8443,
+    endpointConfig: {
+      password: "hy2-secret",
+      sni: "www.cloudflare.com",
+      insecure: true,
+      obfsMode: "salamander",
+      obfsPassword: "obfs-secret",
+    },
+    credential: {},
+    ...overrides,
+  });
+}
+
+function snellEntry(overrides: Partial<ProtocolFeedEntry> = {}): ProtocolFeedEntry {
+  return entry({
+    assignmentId: 23,
+    endpointId: 23,
+    name: "JP Snell",
+    protocol: "snell",
+    publicHost: "snell.example.com",
+    publicPort: 1443,
+    endpointConfig: { password: "snell-secret", version: 5, udp: true },
+    credential: {},
+    ...overrides,
+  });
+}
+
 test("renders a SIP002 Shadowsocks URI feed without an extra runtime", () => {
   const result = renderProtocolUriSubscription([entry()]);
   assert.equal(result.included, 1);
@@ -160,4 +216,78 @@ test("skips malformed Mieru configuration and credentials", () => {
   assert.match(result.skipped[0]?.reason || "", /mtu/);
   assert.match(result.skipped[0]?.reason || "", /username/);
   assert.match(result.skipped[0]?.reason || "", /password/);
+});
+
+test("renders Snell v5 into Mihomo without inventing a non-standard share URI", () => {
+  const uri = renderProtocolUriSubscription([snellEntry()]);
+  assert.equal(uri.included, 0);
+  assert.match(uri.skipped[0]?.reason || "", /Snell.*Mihomo/);
+
+  const mihomo = renderProtocolMihomoSubscription([snellEntry()]);
+  assert.equal(mihomo.included, 1);
+  assert.match(mihomo.content, /type: snell/);
+  assert.match(mihomo.content, /psk: "snell-secret"/);
+  assert.match(mihomo.content, /version: 5/);
+  assert.match(mihomo.content, /udp: true/);
+});
+
+test("renders VLESS Reality into URI and Mihomo feeds", () => {
+  const uri = renderProtocolUriSubscription([realityEntry()]);
+  assert.equal(uri.included, 1);
+  const decoded = Buffer.from(uri.content, "base64").toString("utf8");
+  assert.match(decoded, /^vless:\/\/550e8400-e29b-41d4-a716-446655440000@reality\.example\.com:443\?/);
+  assert.match(decoded, /security=reality/);
+  assert.match(decoded, /flow=xtls-rprx-vision/);
+  assert.match(decoded, /pbk=AAAAAAAA/);
+
+  const mihomo = renderProtocolMihomoSubscription([realityEntry()]);
+  assert.equal(mihomo.included, 1);
+  assert.match(mihomo.content, /type: vless/);
+  assert.match(mihomo.content, /flow: xtls-rprx-vision/);
+  assert.match(mihomo.content, /reality-opts:/);
+  assert.match(mihomo.content, /public-key: "AAAAAAAA/);
+  assert.match(mihomo.content, /short-id: "0011223344556677"/);
+});
+
+test("renders Hysteria2 into URI and Mihomo feeds with Salamander", () => {
+  const uri = renderProtocolUriSubscription([hysteria2Entry()]);
+  assert.equal(uri.included, 1);
+  const decoded = Buffer.from(uri.content, "base64").toString("utf8");
+  assert.match(decoded, /^hysteria2:\/\/hy2-secret@hy2\.example\.com:8443\/\?/);
+  assert.match(decoded, /sni=www.cloudflare.com/);
+  assert.match(decoded, /obfs=salamander/);
+
+  const mihomo = renderProtocolMihomoSubscription([hysteria2Entry()]);
+  assert.equal(mihomo.included, 1);
+  assert.match(mihomo.content, /type: hysteria2/);
+  assert.match(mihomo.content, /password: "hy2-secret"/);
+  assert.match(mihomo.content, /skip-cert-verify: true/);
+  assert.match(mihomo.content, /obfs: salamander/);
+});
+
+test("one total Mihomo subscription preserves all selected entry protocols", () => {
+  const result = renderProtocolMihomoSubscription([
+    snellEntry(),
+    realityEntry(),
+    hysteria2Entry(),
+  ]);
+  assert.equal(result.included, 3);
+  assert.deepEqual(result.skipped, []);
+  assert.equal((result.content.match(/  - name:/g) || []).length, 3);
+  assert.match(result.content, /type: snell/);
+  assert.match(result.content, /type: vless/);
+  assert.match(result.content, /type: hysteria2/);
+});
+
+test("generic URI feed keeps Reality and Hysteria2 when Snell is skipped", () => {
+  const result = renderProtocolUriSubscription([
+    snellEntry(),
+    realityEntry(),
+    hysteria2Entry(),
+  ]);
+  assert.equal(result.included, 2);
+  assert.equal(result.skipped.length, 1);
+  const decoded = Buffer.from(result.content, "base64").toString("utf8");
+  assert.match(decoded, /vless:\/\//);
+  assert.match(decoded, /hysteria2:\/\//);
 });
