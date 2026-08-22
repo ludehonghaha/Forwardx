@@ -59,6 +59,7 @@ import {
   Globe2,
   BellOff,
   Puzzle,
+  RadioTower,
   type LucideIcon,
 } from "lucide-react";
 import { App as CapacitorApp } from "@capacitor/app";
@@ -101,6 +102,7 @@ const mainMenuItems: SidebarNavItem[] = [
   { icon: Server, label: "主机管理", path: "/hosts" },
   { icon: Route, label: "链路管理", path: "/tunnels" },
   { icon: ArrowRightLeft, label: "转发规则", path: "/rules" },
+  { icon: RadioTower, label: "协议接入", path: "/protocol-access", menuKey: "protocolAccess" },
 ];
 const profileMenuItem: SidebarNavItem = { icon: UserRound, label: "个人资料", path: "/profile", menuKey: "profile" };
 const lookingGlassMenuItem: SidebarNavItem = { icon: Globe2, label: "网络测试", path: "/looking-glass", menuKey: "lookingGlass" };

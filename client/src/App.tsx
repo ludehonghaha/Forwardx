@@ -27,6 +27,7 @@ import PaymentsPage from "@/pages/Payments";
 import PlansPage from "@/pages/Plans";
 import PluginsPage from "@/pages/Plugins";
 import ProfilePage from "@/pages/Profile";
+import ProtocolAccessPage from "@/pages/ProtocolAccess";
 import RulesPage from "@/pages/Rules";
 import SettingsPage from "@/pages/Settings";
 import StorePage from "@/pages/Store";
@@ -94,6 +95,7 @@ function Router() {
       <Route path="/homepage-preview">{routeComponent(HomepagePreviewPage)}</Route>
       <Route path="/">{routeComponent(HomePage)}</Route>
       <Route path="/profile">{routeComponent(ProfilePage)}</Route>
+      <Route path="/protocol-access">{routeComponent(ProtocolAccessPage)}</Route>
       <Route path="/hosts">{() => <AdminRoute component={HostsPage} />}</Route>
       <Route path="/rules">{routeComponent(RulesPage)}</Route>
       <Route path="/looking-glass" component={LookingGlassRoute} />
