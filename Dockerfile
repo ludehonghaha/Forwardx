@@ -12,15 +12,6 @@ RUN pnpm install --frozen-lockfile --prod=false
 COPY . .
 RUN pnpm build
 
-# ---------- 1b. Agent/runtime assets ----------
-FROM --platform=$BUILDPLATFORM golang:1.23-bookworm AS agent-assets
-WORKDIR /app
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git \
-  && rm -rf /var/lib/apt/lists/*
-COPY . .
-RUN bash scripts/build-agent-release.sh
-
 # ---------- 2. Production dependencies ----------
 FROM node:22-alpine AS prod-deps
 WORKDIR /app
@@ -49,7 +40,6 @@ VOLUME ["/data"]
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY --from=agent-assets /app/dist/agent ./dist/agent
 COPY --from=builder /app/THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
 COPY --from=builder /app/client/dist ./client/dist
 COPY --from=builder /app/drizzle ./drizzle
