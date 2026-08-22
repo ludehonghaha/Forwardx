@@ -1,0 +1,58 @@
+name: Fix fork defaults once
+
+on:
+  push:
+    branches:
+      - codex/fix-fork-defaults
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replace upstream repository defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo '===== upstream references before ====='
+          git grep -n -I -E 'poouo/Forwardx|ghcr\.io/poouo/forwardx' || true
+
+          while IFS= read -r -d '' file; do
+            sed -i \
+              -e 's#poouo/Forwardx#ludehonghaha/Forwardx#g' \
+              -e 's#ghcr\.io/poouo/forwardx#ghcr.io/ludehonghaha/forwardx#g' \
+              "$file"
+          done < <(git grep -Ilz -E 'poouo/Forwardx|ghcr\.io/poouo/forwardx' || true)
+
+          rm -f .github/workflows/fix-fork-defaults-once.yml
+
+          echo '===== upstream references after ====='
+          if git grep -n -I -E 'poouo/Forwardx|ghcr\.io/poouo/forwardx'; then
+            echo 'Upstream repository defaults remain after replacement.' >&2
+            exit 1
+          fi
+
+          git diff --check
+          git diff --stat
+
+      - name: Commit permanent fork defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git commit -m 'fix(deploy): use fork as permanent repository default'
+          git push origin HEAD:codex/fix-fork-defaults
