@@ -1,4 +1,11 @@
-export const PROTOCOL_ACCESS_PROTOCOLS = ["shadowsocks", "shadowsocks_ssh", "mieru"] as const;
+export const PROTOCOL_ACCESS_PROTOCOLS = [
+  "shadowsocks",
+  "shadowsocks_ssh",
+  "mieru",
+  "snell",
+  "vless_reality",
+  "hysteria2",
+] as const;
 export type ProtocolAccessProtocol = typeof PROTOCOL_ACCESS_PROTOCOLS[number];
 
 export const PROTOCOL_ACCESS_RUNTIME_MODES = ["external", "managed"] as const;
@@ -20,6 +27,11 @@ export const MIERU_MULTIPLEXING_LEVELS = [
   "MULTIPLEXING_HIGH",
 ] as const;
 export const MIERU_HANDSHAKE_MODES = ["HANDSHAKE_STANDARD", "HANDSHAKE_NO_WAIT"] as const;
+
+export const SNELL_VERSIONS = [1, 2, 3, 4, 5] as const;
+export const SNELL_OBFS_MODES = ["", "http", "tls"] as const;
+export const REALITY_CLIENT_FINGERPRINTS = ["chrome", "firefox", "safari", "iOS", "android", "edge", "random"] as const;
+export const HYSTERIA2_OBFS_MODES = ["", "salamander"] as const;
 
 export type ProtocolFeedEntry = {
   assignmentId: number;
@@ -84,6 +96,31 @@ export function effectiveProtocolUsername(entry: ProtocolFeedEntry) {
     || protocolConfigText(entry.endpointConfig, "username");
 }
 
+export function protocolNeedsPassword(protocol: ProtocolAccessProtocol) {
+  return protocol !== "vless_reality";
+}
+
+export function managedProtocolSocketProtocol(protocol: ProtocolAccessProtocol, config: ProtocolAccessConfig): "tcp" | "udp" | "both" {
+  if (protocol === "mieru") {
+    return protocolConfigText(config, "transport").toLowerCase() === "udp" ? "udp" : "tcp";
+  }
+  if (protocol === "hysteria2") return "udp";
+  if (protocol === "snell" || protocol === "vless_reality") return "tcp";
+  return protocolConfigBool(config, "udp", false) ? "both" : "tcp";
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isRealityKey(value: string) {
+  return /^[A-Za-z0-9_-]{40,64}$/.test(value);
+}
+
+function isShortId(value: string) {
+  return /^(?:[0-9a-fA-F]{2}){1,8}$/.test(value);
+}
+
 export function validateProtocolEndpointConfig(
   protocol: ProtocolAccessProtocol,
   config: ProtocolAccessConfig,
@@ -109,6 +146,34 @@ export function validateProtocolEndpointConfig(
     }
     return errors;
   }
+  if (protocol === "snell") {
+    const version = Number(config.version ?? 5);
+    if (!(SNELL_VERSIONS as readonly number[]).includes(version)) errors.push("Snell version 必须是 1-5");
+    if (protocolConfigBool(config, "udp", true) && version < 3) errors.push("Snell UDP 需要 version 3-5");
+    const obfsMode = protocolConfigText(config, "obfsMode");
+    if (!(SNELL_OBFS_MODES as readonly string[]).includes(obfsMode)) errors.push("Snell obfsMode 取值无效");
+    if (obfsMode && !protocolConfigText(config, "obfsHost")) errors.push("启用 Snell 混淆时 obfsHost 不能为空");
+    return errors;
+  }
+  if (protocol === "vless_reality") {
+    const uuid = protocolConfigText(config, "uuid");
+    if (!isUuid(uuid)) errors.push("VLESS UUID 无效");
+    if (!protocolConfigText(config, "serverName")) errors.push("Reality serverName 不能为空");
+    if (!protocolConfigText(config, "realityDest")) errors.push("Reality dest 不能为空");
+    if (!isRealityKey(protocolConfigText(config, "realityPublicKey"))) errors.push("Reality public key 无效");
+    if (!isShortId(protocolConfigText(config, "shortId"))) errors.push("Reality short ID 必须是 2-16 位十六进制字符");
+    const fingerprint = protocolConfigText(config, "clientFingerprint") || "chrome";
+    if (!(REALITY_CLIENT_FINGERPRINTS as readonly string[]).includes(fingerprint)) errors.push("Reality 客户端指纹无效");
+    return errors;
+  }
+  if (protocol === "hysteria2") {
+    const obfsMode = protocolConfigText(config, "obfsMode");
+    if (!(HYSTERIA2_OBFS_MODES as readonly string[]).includes(obfsMode)) errors.push("Hysteria2 obfsMode 取值无效");
+    if (obfsMode === "salamander" && !protocolConfigSecret(config, "obfsPassword")) {
+      errors.push("启用 Hysteria2 Salamander 时 obfsPassword 不能为空");
+    }
+    return errors;
+  }
   if (!protocolConfigText(config, "cipher")) errors.push("cipher 不能为空");
   if (protocol === "shadowsocks_ssh") {
     if (!protocolConfigPort(config, "remotePort")) errors.push("remotePort 必须是 1-65535");
@@ -126,6 +191,6 @@ export function validateProtocolFeedEntry(entry: ProtocolFeedEntry) {
     errors.push("publicPort 必须是 1-65535");
   }
   if (entry.protocol === "mieru" && !effectiveProtocolUsername(entry)) errors.push("username 不能为空");
-  if (!effectiveProtocolSecret(entry)) errors.push("password 不能为空");
+  if (protocolNeedsPassword(entry.protocol) && !effectiveProtocolSecret(entry)) errors.push("password 不能为空");
   return errors;
 }
