@@ -146,16 +146,16 @@ export default function ProtocolAccessPage() {
 
   const endpointsQuery = trpc.protocolAccess.listEndpoints.useQuery(undefined, {
     enabled: isAdmin,
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData: any) => previousData,
   });
   const usersQuery = trpc.users.options.useQuery(undefined, {
     enabled: isAdmin,
     staleTime: 30_000,
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData: any) => previousData,
   });
   const assignmentsQuery = trpc.protocolAccess.listAssignments.useQuery(
     { endpointId: Number(assignmentEndpoint?.id || 1) },
-    { enabled: isAdmin && !!assignmentEndpoint, placeholderData: (previousData) => previousData },
+    { enabled: isAdmin && !!assignmentEndpoint, placeholderData: (previousData: any) => previousData },
   );
   const displayedFeedUserId = isAdmin ? feedUserId : Number(user?.id || 0);
   const feedQuery = trpc.protocolAccess.feedForUser.useQuery(
