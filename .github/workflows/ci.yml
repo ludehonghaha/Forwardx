@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: forwardx-ci-${{ github.ref }}
@@ -19,24 +19,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: codex/release-2.3.277
-          fetch-depth: 0
-
-      - name: Apply staged release bump
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/codex_release_2_3_277.py
-          node scripts/check-versions.mjs
-          git diff --check
-          rm -f scripts/codex_release_2_3_277.py
-          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "chore(release): prepare v2.3.277"
-          git push origin HEAD:codex/release-2.3.277
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
