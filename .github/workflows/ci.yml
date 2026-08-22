@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: forwardx-ci-${{ github.ref }}
@@ -19,25 +19,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: codex/fix-mihomo-agent-runtime-state
-          fetch-depth: 0
-
-      - name: Apply staged Mihomo Agent patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/codex_patch_mihomo_agent.py
-          gofmt -w agent/main.go agent/mihomo_runtime_test.go
-          (cd agent && go test ./...)
-          git diff --check
-          rm -f scripts/codex_patch_mihomo_agent.py .github/workflows/codex-mihomo-agent-state.yml
-          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix(agent): report and self-heal managed Mihomo runtime"
-          git push origin HEAD:codex/fix-mihomo-agent-runtime-state
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
