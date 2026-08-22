@@ -7,6 +7,7 @@ import {
   parseProtocolAccessConfig,
   protocolConfigBool,
   protocolConfigSecret,
+  protocolConfigText,
   validateProtocolEndpointConfig,
   validateProtocolFeedEntry,
   type ProtocolAccessProtocol,
@@ -53,19 +54,30 @@ async function validateEndpoint(input: {
   if (input.runtimeMode === "external") {
     return { hostId: null, forwardRuleId: null, reservation: null as HostPortReservation | null };
   }
-  if (input.protocol !== "shadowsocks") {
-    throw new Error("Agent 托管当前只支持标准 Shadowsocks；SS over SSH 和 Mieru 请使用 external 模式");
+  if (input.protocol === "shadowsocks_ssh") {
+    throw new Error("Agent 托管不支持 SS over SSH；请选择标准 Shadowsocks 或 Mieru");
   }
   const hostId = Number(input.hostId || 0);
   if (!Number.isInteger(hostId) || hostId <= 0 || !await db.getHostById(hostId)) {
     throw new Error("请选择有效的 ForwardX Agent 主机");
   }
-  const cipher = String(input.config.cipher || "").trim();
-  if (!isManagedShadowsocksCipher(cipher)) {
-    throw new Error("Agent 托管仅支持 chacha20-ietf-poly1305、aes-256-gcm 或 aes-128-gcm");
-  }
-  if (!protocolConfigSecret(input.config, "password")) {
-    throw new Error("Agent 托管端点必须设置共享 SS 密码");
+  if (input.protocol === "shadowsocks") {
+    const cipher = String(input.config.cipher || "").trim();
+    if (!isManagedShadowsocksCipher(cipher)) {
+      throw new Error("Agent 托管仅支持 chacha20-ietf-poly1305、aes-256-gcm 或 aes-128-gcm");
+    }
+    if (!protocolConfigSecret(input.config, "password")) {
+      throw new Error("Agent 托管端点必须设置共享 SS 密码");
+    }
+  } else {
+    if (!protocolConfigText(input.config, "username") || !protocolConfigSecret(input.config, "password")) {
+      throw new Error("Agent 托管 Mieru 必须设置共享用户名和密码");
+    }
+    if (input.isEnabled) {
+      const duplicate = (await db.listManagedProtocolEndpointsForHost(hostId) as any[])
+        .some((endpoint: any) => endpoint.protocol === "mieru" && Number(endpoint.id) !== Number(input.id || 0));
+      if (duplicate) throw new Error("同一 Agent 主机只能启用一个托管 Mieru 端点");
+    }
   }
   const listenPort = managedProtocolListenPort(input.config, input.publicPort);
   if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
@@ -82,21 +94,33 @@ async function validateEndpoint(input: {
       throw new Error("关联规则的源端口必须等于公网端口，目标端口必须等于 Agent 监听端口");
     }
     const ruleProtocol = String(rule.protocol || "tcp");
-    const udp = protocolConfigBool(input.config, "udp", false);
-    if ((udp && ruleProtocol !== "both") || (!udp && ruleProtocol !== "tcp" && ruleProtocol !== "both")) {
-      throw new Error(udp ? "开启 UDP 时关联规则必须转发 TCP+UDP" : "关联规则必须包含 TCP 转发");
+    const serverProtocol = input.protocol === "mieru"
+      ? protocolConfigText(input.config, "transport").toLowerCase()
+      : protocolConfigBool(input.config, "udp", false) ? "both" : "tcp";
+    if (serverProtocol === "both" && ruleProtocol !== "both") {
+      throw new Error("开启 UDP 时关联规则必须转发 TCP+UDP");
+    }
+    if (serverProtocol === "tcp" && ruleProtocol !== "tcp" && ruleProtocol !== "both") {
+      throw new Error("关联规则必须包含 TCP 转发");
+    }
+    if (serverProtocol === "udp" && ruleProtocol !== "udp" && ruleProtocol !== "both") {
+      throw new Error("关联规则必须包含 UDP 转发");
     }
   }
   if (!input.isEnabled) return { hostId, forwardRuleId, reservation: null as HostPortReservation | null };
   const reservation = await reserveSpecificHostPort({
     hostId,
     port: listenPort,
-    protocol: protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
+    protocol: input.protocol === "mieru"
+      ? protocolConfigText(input.config, "transport").toLowerCase() as "tcp" | "udp"
+      : protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
     isUsed: () => db.isPortUsedOnHost(
       hostId,
       listenPort,
       undefined,
-      protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
+      input.protocol === "mieru"
+        ? protocolConfigText(input.config, "transport").toLowerCase()
+        : protocolConfigBool(input.config, "udp", false) ? "both" : "tcp",
       undefined,
       true,
       input.id,
@@ -114,11 +138,12 @@ export const protocolAccessRouter = router({
       .map((endpoint: any) => Number(endpoint.hostId || 0))
       .filter((hostId: number) => hostId > 0)));
     const hostEntries = await Promise.all(hostIds.map(async (hostId) => {
-      const [host, revision] = await Promise.all([
+      const [host, shadowsocksRevision, mieruRevision] = await Promise.all([
         db.getHostById(hostId),
-        latestHostProtocolAccessRevision(hostId),
+        latestHostProtocolAccessRevision(hostId, "shadowsocks"),
+        latestHostProtocolAccessRevision(hostId, "mieru"),
       ]);
-      return [hostId, { host, revision, snapshot: getAgentLocalRuntimeStateSnapshot(hostId) }] as const;
+      return [hostId, { host, shadowsocksRevision, mieruRevision, snapshot: getAgentLocalRuntimeStateSnapshot(hostId) }] as const;
     }));
     const runtimeByHostId = new Map(hostEntries);
     return endpoints.map((endpoint: any) => {
@@ -128,7 +153,7 @@ export const protocolAccessRouter = router({
         runtimeStatus: projectProtocolEndpointRuntimeStatus({
           endpoint,
           host: runtime?.host,
-          hostProtocolRevision: Number(runtime?.revision || 0),
+          hostProtocolRevision: Number(endpoint.protocol === "mieru" ? runtime?.mieruRevision : runtime?.shadowsocksRevision || 0),
           localState: runtime?.snapshot?.state,
           localStateUpdatedAt: runtime?.snapshot?.updatedAt,
         }),
@@ -176,8 +201,11 @@ export const protocolAccessRouter = router({
     }
     if (runtimeMode === "managed") {
       const assignments = await db.listProtocolEndpointAssignments(current.id);
-      if (assignments.some((item: any) => protocolConfigSecret(parseProtocolAccessConfig(item.access?.credentialJson), "password"))) {
-        throw new Error("托管端点只支持共享密码；请先清除已有用户的独立密码");
+      if (assignments.some((item: any) => {
+        const credential = parseProtocolAccessConfig(item.access?.credentialJson);
+        return protocolConfigSecret(credential, "password") || protocolConfigText(credential, "username");
+      })) {
+        throw new Error("托管端点只支持共享凭据；请先清除已有用户的独立用户名或密码");
       }
     }
     const validated = await validateEndpoint({
@@ -218,8 +246,10 @@ export const protocolAccessRouter = router({
   })).mutation(async ({ input }) => {
     const endpoint = await db.getProtocolEndpointById(input.endpointId);
     if (!endpoint) throw new Error("协议接入端点不存在");
-    if (endpoint.runtimeMode === "managed" && protocolConfigSecret(input.credential, "password")) {
-      throw new Error("Agent 托管端点使用单一共享密码，用户分配不能覆盖运行时密码");
+    if (endpoint.runtimeMode === "managed" && (
+      protocolConfigSecret(input.credential, "password") || protocolConfigText(input.credential, "username")
+    )) {
+      throw new Error("Agent 托管端点使用单一共享凭据，用户分配不能覆盖运行时用户名或密码");
     }
     const errors = validateProtocolFeedEntry({
       assignmentId: 1,

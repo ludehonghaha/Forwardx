@@ -181,8 +181,8 @@ func supportCommandSpecs() []supportCommandSpec {
 	return []supportCommandSpec{
 		{"agent-journal-current-boot", "journalctl -u forwardx-agent -b -n 600 --no-pager 2>&1 || tail -n 600 /var/log/forwardx-agent/agent-go.log 2>&1", supportJournalOutputLimit},
 		{"agent-journal-previous-boot", "journalctl -u forwardx-agent -b -1 -n 300 --no-pager 2>&1 || true", supportJournalOutputLimit},
-		{"service-status", "systemctl status forwardx-agent forwardx-runtime forwardx-tunnel-runtime forwardx-nginx --no-pager -l 2>&1 || true", supportCommandOutputLimit},
-		{"service-restarts", "systemctl show forwardx-agent forwardx-runtime forwardx-tunnel-runtime forwardx-nginx -p Id -p ActiveState -p SubState -p NRestarts -p ExecMainStartTimestamp 2>&1 || true", supportCommandOutputLimit},
+		{"service-status", "systemctl status forwardx-agent forwardx-runtime forwardx-tunnel-runtime forwardx-nginx forwardx-mita --no-pager -l 2>&1 || true", supportCommandOutputLimit},
+		{"service-restarts", "systemctl show forwardx-agent forwardx-runtime forwardx-tunnel-runtime forwardx-nginx forwardx-mita -p Id -p ActiveState -p SubState -p NRestarts -p ExecMainStartTimestamp 2>&1 || true", supportCommandOutputLimit},
 		{"nginx-journal", "journalctl -u forwardx-nginx -b -n 400 --no-pager 2>&1 || true", supportNginxOutputLimit},
 		{"nginx-logs", "for f in /var/log/forwardx-agent/forwardx-nginx-error.log /var/log/forwardx-agent/forwardx-nginx-session.log; do echo \"### $f\"; if [ -f \"$f\" ]; then tail -n 400 \"$f\"; else echo missing; fi; done 2>&1", supportNginxOutputLimit},
 		{"kernel-network-events", "journalctl -k -b --since '-2 hours' --no-pager 2>&1 | grep -Ei 'out of memory|oom|killed process|nf_conntrack.*(full|drop)|TCP:.*memory' | tail -n 300 || true", supportCommandOutputLimit},

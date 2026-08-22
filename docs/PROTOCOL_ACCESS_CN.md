@@ -31,9 +31,10 @@
 服务，再由 ForwardX 用户和稳定 Token 输出客户端订阅。external 端点不进入 Agent
 desired state，因此登记现有 Mieru 不会重复启动或编译一份 Mieru 运行时。
 
-标准 Shadowsocks 还支持 `runtimeMode=managed`：端点直接合并进 Agent 已有的 GOST
-desired state，由同一个 `gost-runtime-sync` 原子应用和回滚，不增加进程、配置文件或任务队列。
-Mieru 和 Shadowsocks-over-SSH 当前只允许 external 模式。
+标准 Shadowsocks 和 Mieru 支持 `runtimeMode=managed`。Shadowsocks 端点直接合并进
+Agent 已有的 GOST desired state，由同一个 `gost-runtime-sync` 原子应用和回滚。
+Mieru 每台 Agent 主机最多启用一个托管端点，由唯一的 `forwardx-mita` 服务读取唯一配置；
+不会按用户创建进程或监听。Shadowsocks-over-SSH 仍只允许 external 模式。
 
 数据模型只有三个增量表：
 
@@ -47,24 +48,32 @@ Mieru 和 Shadowsocks-over-SSH 当前只允许 external 模式。
 - `/api/v1/access-feed/:token/mihomo`：Mihomo / OpenClash YAML。
 
 复合的 Shadowsocks-over-SSH 不能无损表示为普通 `ss://`，因此只进入 Mihomo 订阅。
-Mieru 同时输出官方简单分享链接和 Mihomo `type: mieru` 节点；用户名和密码可使用端点默认值，
-也可在同一份 `protocol_user_access.credentialJson` 中按 ForwardX 用户覆盖。
+Mieru 同时输出官方简单分享链接和 Mihomo `type: mieru` 节点。external 端点的用户名和密码
+可使用端点默认值，也可按 ForwardX 用户覆盖；managed 端点固定使用一份共享凭据，用户分配
+只控制订阅权限。
 若没有任何兼容节点，接口返回 404，而不是返回 HTTP 200 的空正文。
 
 外部端点的流量不经过 ForwardX，面板不会假装能够计量它。只有未来由 ForwardX
 转发规则承载的托管端点才进入现有用户流量与额度账本。
 
-## 后续 Mieru 托管阶段
+## Mieru 托管运行时
 
-Mieru 无法由 GOST 实现，未来托管时只会新增 Mieru 必需的 `mita` 二进制和配置，
+Mieru 无法由 GOST 实现，托管模式只新增 Mieru 必需的 `mita` 二进制和配置，
 控制面仍扩展 ForwardX 现有 desired state，不复制 TMS 的推送链路：
 
 1. 协议端点引用现有 `hostId`；
 2. 公网入口引用现有 `forwardRuleId`，不再编译一条转发链；
-3. Agent 原子写入并校验 Mieru 配置；
-4. 同一 Agent desired state 对账 `mita` 服务；
-5. 监听和握手健康后更新运行态；
-6. 失败继续使用 ForwardX 配置审计与上一个已应用快照恢复。
+3. Agent 以 `0600` 权限原子写入并校验 Mieru JSON 配置；
+4. 同一 Agent desired state 对账 `forwardx-mita` 服务；
+5. TCP 或 UDP 真实监听健康后更新运行态；
+6. 失败使用 ForwardX 上一个已应用快照自动恢复。
+
+首个托管版本固定使用已验证的 Mieru `3.35.0`，优先复用主机已有的同版本 `mita`，缺失时
+按 CPU 架构从官方 Release 安装到独立的 `/usr/local/bin/forwardx-mita`。服务配置通过
+`MITA_CONFIG_JSON_FILE` 和独立 UDS 路径运行，不覆盖系统已有的 `/etc/mita` 配置或 `mita` 服务。
+
+服务端只编译 `portBindings`、共享 `users`、`mtu` 与日志级别。多路复用、握手模式、
+Traffic Pattern 和“允许客户端 UDP”属于客户端订阅选项，不会生成第二个服务端监听。
 
 端口预留、多跳链、限速、用户停用、到期和流量封禁仍由 ForwardX 原生资源处理。
 协议模块只负责生成本地协议监听和客户端凭据。
@@ -76,4 +85,5 @@ Mieru 无法由 GOST 实现，未来托管时只会新增 Mieru 必需的 `mita`
 - 无效、停用或过期用户统一返回 404；
 - SSH 私钥只会进入该用户的 Mihomo 订阅，不进入 URI 订阅；
 - 配置审计对密码、Token、私钥和 credential 字段自动脱敏；
-- API 只允许标准 Shadowsocks 使用 `runtimeMode=managed`；Mieru 不会误入 GOST 编译结果。
+- API 只允许标准 Shadowsocks 和 Mieru 使用 `runtimeMode=managed`；Mieru 永远不会误入 GOST 编译结果。
+- 同一 Agent 主机最多启用一个托管 Mieru 端点，且 managed 用户分配不得覆盖共享凭据。

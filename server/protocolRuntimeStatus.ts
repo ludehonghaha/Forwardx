@@ -1,8 +1,9 @@
 import { isAgentVersionAtLeast } from "./agentRouteUtils";
 import type { AgentLocalRuntimeState } from "./agentHeartbeatRoute";
-import { managedProtocolListenPort, parseProtocolAccessConfig, protocolConfigBool } from "../shared/protocolAccess";
+import { managedProtocolListenPort, parseProtocolAccessConfig, protocolConfigBool, protocolConfigText } from "../shared/protocolAccess";
 
 export const AGENT_PROTOCOL_LISTENER_STATE_VERSION = "2.2.191";
+export const AGENT_MIERU_LISTENER_STATE_VERSION = "2.2.192";
 
 export type ProtocolEndpointRuntimeState =
   | "external"
@@ -96,11 +97,13 @@ export function projectProtocolEndpointRuntimeStatus(input: RuntimeStatusInput):
       checkedAt,
     });
   }
-  if (!isAgentVersionAtLeast(String(host.agentVersion || ""), AGENT_PROTOCOL_LISTENER_STATE_VERSION)) {
+  const isMieru = String(endpoint.protocol || "") === "mieru";
+  const listenerStateVersion = isMieru ? AGENT_MIERU_LISTENER_STATE_VERSION : AGENT_PROTOCOL_LISTENER_STATE_VERSION;
+  if (!isAgentVersionAtLeast(String(host.agentVersion || ""), listenerStateVersion)) {
     return status("unsupported", "待升级 Agent", {
       applied,
       listenerHealthy: null,
-      message: `升级到 Agent v${AGENT_PROTOCOL_LISTENER_STATE_VERSION} 后可核对真实监听状态`,
+      message: `升级到 Agent v${listenerStateVersion} 后可核对真实监听状态`,
       lastError: null,
       checkedAt,
     });
@@ -115,9 +118,10 @@ export function projectProtocolEndpointRuntimeStatus(input: RuntimeStatusInput):
     });
   }
 
-  const runtimeService = input.localState.services.find((item) => item.name === "forwardx-runtime");
+  const runtimeServiceName = isMieru ? "forwardx-mita" : "forwardx-runtime";
+  const runtimeService = input.localState.services.find((item) => item.name === runtimeServiceName);
   if (runtimeService?.hasWork && !runtimeService.active) {
-    const message = runtimeService.message || "forwardx-runtime 服务未运行";
+    const message = runtimeService.message || `${runtimeServiceName} 服务未运行`;
     return status("unhealthy", "运行异常", {
       applied,
       listenerHealthy: false,
@@ -129,9 +133,11 @@ export function projectProtocolEndpointRuntimeStatus(input: RuntimeStatusInput):
 
   const config = parseProtocolAccessConfig(endpoint.configJson);
   const listenPort = managedProtocolListenPort(config, Number(endpoint.publicPort || 0));
-  const requiredProtocols = protocolConfigBool(config, "udp", false) ? ["tcp", "udp"] as const : ["tcp"] as const;
+  const requiredProtocols = isMieru
+    ? [protocolConfigText(config, "transport").toLowerCase() === "udp" ? "udp" : "tcp"] as const
+    : protocolConfigBool(config, "udp", false) ? ["tcp", "udp"] as const : ["tcp"] as const;
   const missing = requiredProtocols.filter((protocol) => !input.localState?.listeners.some((listener) => (
-    listener.runtime === "gost"
+    listener.runtime === (isMieru ? "mieru" : "gost")
     && listener.port === listenPort
     && listener.protocol === protocol
     && listener.ready

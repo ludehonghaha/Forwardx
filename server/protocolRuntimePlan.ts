@@ -26,6 +26,18 @@ export type ManagedProtocolGostService = {
   listener: { type: "tcp" | "udp" };
 };
 
+export type ManagedMieruRuntimePlan = {
+  endpointId: number;
+  listenPort: number;
+  transport: "TCP" | "UDP";
+  config: {
+    portBindings: Array<{ port: number; protocol: "TCP" | "UDP" }>;
+    users: Array<{ name: string; password: string }>;
+    loggingLevel: "INFO";
+    mtu: number;
+  };
+};
+
 /**
  * Compile managed protocol endpoints into the existing shared GOST runtime.
  * The protocol layer deliberately does not create another Agent task, config
@@ -57,4 +69,39 @@ export function buildManagedProtocolGostServices(rows: ManagedProtocolEndpointRo
     }
   }
   return services;
+}
+
+/**
+ * Compile the single managed Mieru endpoint on a host into one mita config.
+ * Client-only settings intentionally stay in subscriptions and never create
+ * additional server listeners.
+ */
+export function buildManagedMieruRuntimePlan(rows: ManagedProtocolEndpointRow[]): ManagedMieruRuntimePlan | null {
+  const candidates = [...rows]
+    .filter((row) => row?.isEnabled && row.runtimeMode === "managed" && row.protocol === "mieru")
+    .sort((left, right) => Number(left.id) - Number(right.id));
+  if (candidates.length !== 1) return null;
+
+  const row = candidates[0];
+  const config = parseProtocolAccessConfig(row.configJson);
+  const username = protocolConfigText(config, "username");
+  const password = protocolConfigSecret(config, "password");
+  const listenPort = managedProtocolListenPort(config, Number(row.publicPort));
+  const transport = protocolConfigText(config, "transport");
+  const mtu = Number(config.mtu ?? 1400);
+  if (!username || !password || listenPort < 1 || listenPort > 65535) return null;
+  if (transport !== "TCP" && transport !== "UDP") return null;
+  if (!Number.isInteger(mtu) || mtu < 1280 || mtu > 1400) return null;
+
+  return {
+    endpointId: Number(row.id),
+    listenPort,
+    transport,
+    config: {
+      portBindings: [{ port: listenPort, protocol: transport }],
+      users: [{ name: username, password }],
+      loggingLevel: "INFO",
+      mtu,
+    },
+  };
 }
