@@ -78,6 +78,9 @@ export const MIGRATION_TABLES = [
   "plugin_assets",
   "plugin_agent_states",
   "config_audit_events",
+  "protocol_endpoints",
+  "protocol_user_access",
+  "protocol_feed_tokens",
 ] as const;
 
 const LAST_AUTO_TRAFFIC_RESET_BACKFILL_MARKER = "last-auto-traffic-reset-backfill-v1";
@@ -382,6 +385,37 @@ const tables: TableDef[] = [
   { name: "plugin_assets", columns: [c("id", "id"), c("pluginId", "varchar", { length: 128, notNull: true }), c("path", "text", { notNull: true }), c("contentType", "varchar", { length: 128 }), c("size", "int", { notNull: true, default: 0 }), c("sha256", "varchar", { length: 64 }), c("content", "text"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["pluginId", "path"]], indexes: [["pluginId"]] },
   { name: "plugin_agent_states", columns: [c("id", "id"), c("pluginId", "varchar", { length: 128, notNull: true }), c("resourceViewId", "varchar", { length: 128, notNull: true }), c("hostId", "int", { notNull: true }), c("pluginVersion", "varchar", { length: 64 }), c("actionId", "varchar", { length: 128 }), c("groupId", "varchar", { length: 64 }), c("taskId", "varchar", { length: 64 }), c("status", "varchar", { length: 32, notNull: true, default: "idle" }), c("dataJson", "text"), c("output", "text"), c("error", "text"), c("startedAt", "epoch"), c("finishedAt", "epoch"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" })], unique: [["pluginId", "resourceViewId", "hostId"]], indexes: [["hostId"], ["pluginId", "resourceViewId"], ["groupId"]] },
   { name: "config_audit_events", columns: [c("id", "id"), c("resourceType", "varchar", { length: 32, notNull: true }), c("resourceId", "int", { notNull: true }), c("hostId", "int"), c("action", "varchar", { length: 32, notNull: true }), c("source", "varchar", { length: 64, notNull: true, default: "system" }), c("actorUserId", "int"), c("actorName", "text"), c("requestId", "varchar", { length: 64 }), c("requestPath", "text"), c("beforeJson", "text"), c("afterJson", "text"), c("diffJson", "text"), c("configHash", "varchar", { length: 64, notNull: true }), c("createdAt", "epoch", { notNull: true, default: "now" })], indexes: [["resourceType", "resourceId", "id"], ["hostId", "id"], ["actorUserId", "id"]] },
+  {
+    name: "protocol_endpoints",
+    columns: [
+      c("id", "id"), c("name", "text", { notNull: true }), c("protocol", "varchar", { length: 32, notNull: true }),
+      c("runtimeMode", "varchar", { length: 32, notNull: true, default: "external" }), c("hostId", "int"), c("forwardRuleId", "int"),
+      c("publicHost", "text", { notNull: true }), c("publicPort", "int", { notNull: true }), c("configJson", "longtext", { notNull: true }),
+      c("isEnabled", "bool", { notNull: true, default: false }), c("sortOrder", "int", { notNull: true, default: 0 }),
+      c("createdByUserId", "int"), c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    indexes: [["protocol", "isEnabled"], ["hostId"], ["forwardRuleId"], ["sortOrder", "id"]],
+  },
+  {
+    name: "protocol_user_access",
+    columns: [
+      c("id", "id"), c("endpointId", "int", { notNull: true }), c("userId", "int", { notNull: true }),
+      c("credentialJson", "longtext", { notNull: true }), c("isEnabled", "bool", { notNull: true, default: true }),
+      c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    unique: [["endpointId", "userId"]],
+    indexes: [["userId", "isEnabled"], ["endpointId", "isEnabled"]],
+  },
+  {
+    name: "protocol_feed_tokens",
+    columns: [
+      c("id", "id"), c("userId", "int", { notNull: true }), c("token", "varchar", { length: 64, notNull: true }),
+      c("isEnabled", "bool", { notNull: true, default: true }), c("lastUsedAt", "epoch"),
+      c("createdAt", "epoch", { notNull: true, default: "now" }), c("updatedAt", "epoch", { notNull: true, default: "now" }),
+    ],
+    unique: [["userId"], ["token"]],
+    indexes: [["isEnabled", "lastUsedAt"]],
+  },
 ];
 
 const seedSettings = [

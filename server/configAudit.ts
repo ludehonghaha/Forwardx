@@ -13,7 +13,7 @@ export type ConfigAuditContext = {
   requestPath?: string | null;
 };
 
-type AuditResourceType = "host" | "tunnel" | "forward_rule" | "runtime";
+type AuditResourceType = "host" | "tunnel" | "forward_rule" | "protocol_endpoint" | "runtime";
 type AuditAction = "create" | "update" | "delete" | "dispatch";
 
 const auditContext = new AsyncLocalStorage<ConfigAuditContext>();

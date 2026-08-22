@@ -19,6 +19,7 @@ import { startBackgroundServices } from "./backgroundServices";
 import { initializePanelClock } from "./panelClock";
 import { ENV } from "./env";
 import { resolveTrustProxySetting } from "./trustProxy";
+import { protocolFeedRouter } from "./protocolFeedRoutes";
 
 installPanelLogger();
 
@@ -118,6 +119,7 @@ async function startServer() {
   installMobileCors(app);
   app.use(agentRouter);
   app.use(migrationRouter);
+  app.use(protocolFeedRouter);
   app.use(
     "/api/trpc",
     createExpressMiddleware({

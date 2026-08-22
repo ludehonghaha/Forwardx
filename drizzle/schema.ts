@@ -1162,6 +1162,53 @@ export const configAuditEvents = table("config_audit_events", {
 export type ConfigAuditEvent = typeof configAuditEvents.$inferSelect;
 export type InsertConfigAuditEvent = typeof configAuditEvents.$inferInsert;
 
+// ===== Protocol access =====
+// Protocol access reuses ForwardX users, hosts, forward rules, tunnels and
+// traffic accounting. These tables contain only the missing protocol/feed
+// domain and deliberately do not mirror the legacy TMS node/forward models.
+export const protocolEndpoints = table("protocol_endpoints", {
+  id: serial("id"),
+  name: text("name").notNull(),
+  protocol: varchar("protocol", { length: 32 }).notNull(),
+  runtimeMode: varchar("runtimeMode", { length: 32 }).notNull().default("external"), // external | managed
+  hostId: int("hostId"),
+  forwardRuleId: int("forwardRuleId"),
+  publicHost: text("publicHost").notNull(),
+  publicPort: int("publicPort").notNull(),
+  configJson: longtext("configJson").notNull(),
+  isEnabled: boolean("isEnabled").notNull().default(false),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdByUserId: int("createdByUserId"),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProtocolEndpoint = typeof protocolEndpoints.$inferSelect;
+export type InsertProtocolEndpoint = typeof protocolEndpoints.$inferInsert;
+
+export const protocolUserAccess = table("protocol_user_access", {
+  id: serial("id"),
+  endpointId: int("endpointId").notNull(),
+  userId: int("userId").notNull(),
+  credentialJson: longtext("credentialJson").notNull(),
+  isEnabled: boolean("isEnabled").notNull().default(true),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProtocolUserAccess = typeof protocolUserAccess.$inferSelect;
+export type InsertProtocolUserAccess = typeof protocolUserAccess.$inferInsert;
+
+export const protocolFeedTokens = table("protocol_feed_tokens", {
+  id: serial("id"),
+  userId: int("userId").notNull().unique(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  isEnabled: boolean("isEnabled").notNull().default(true),
+  lastUsedAt: epoch("lastUsedAt"),
+  createdAt: epoch("createdAt").notNull().default(nowDefault()),
+  updatedAt: epoch("updatedAt").notNull().default(nowDefault()),
+});
+export type ProtocolFeedToken = typeof protocolFeedTokens.$inferSelect;
+export type InsertProtocolFeedToken = typeof protocolFeedTokens.$inferInsert;
+
 // ===== 用户-主机权限表（管理员指定用户可使用哪些 Agent/主机） =====
 export const userHostPermissions = table("user_host_permissions", {
   id: serial("id"),
