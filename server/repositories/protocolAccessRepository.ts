@@ -43,6 +43,16 @@ export async function listProtocolEndpoints() {
   return db.select().from(protocolEndpoints).orderBy(asc(protocolEndpoints.sortOrder), asc(protocolEndpoints.id));
 }
 
+export async function listManagedProtocolEndpointsForHost(hostId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(protocolEndpoints).where(and(
+    eq(protocolEndpoints.hostId, hostId),
+    eq(protocolEndpoints.runtimeMode, "managed"),
+    eq(protocolEndpoints.isEnabled, true),
+  )).orderBy(asc(protocolEndpoints.id));
+}
+
 export async function createProtocolEndpoint(data: Omit<InsertProtocolEndpoint, "configJson"> & { configJson: unknown }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

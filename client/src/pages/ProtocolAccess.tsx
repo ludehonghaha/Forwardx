@@ -13,7 +13,12 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
-import { parseProtocolAccessConfig, type ProtocolAccessProtocol } from "@shared/protocolAccess";
+import {
+  MANAGED_SHADOWSOCKS_CIPHERS,
+  parseProtocolAccessConfig,
+  type ProtocolAccessProtocol,
+  type ProtocolAccessRuntimeMode,
+} from "@shared/protocolAccess";
 import {
   Check,
   Copy,
@@ -35,6 +40,10 @@ type EndpointForm = {
   id?: number;
   name: string;
   protocol: ProtocolAccessProtocol;
+  runtimeMode: ProtocolAccessRuntimeMode;
+  hostId: string;
+  listenPort: string;
+  forwardRuleId: string;
   publicHost: string;
   publicPort: string;
   cipher: string;
@@ -50,6 +59,10 @@ type EndpointForm = {
 const emptyEndpointForm: EndpointForm = {
   name: "",
   protocol: "shadowsocks",
+  runtimeMode: "external",
+  hostId: "",
+  listenPort: "",
+  forwardRuleId: "",
   publicHost: "",
   publicPort: "",
   cipher: "chacha20-ietf-poly1305",
@@ -96,6 +109,10 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
     id: Number(endpoint.id),
     name: String(endpoint.name || ""),
     protocol: endpoint.protocol === "shadowsocks_ssh" ? "shadowsocks_ssh" : "shadowsocks",
+    runtimeMode: endpoint.runtimeMode === "managed" ? "managed" : "external",
+    hostId: endpoint.hostId ? String(endpoint.hostId) : "",
+    listenPort: config.listenPort ? String(config.listenPort) : String(endpoint.publicPort || ""),
+    forwardRuleId: endpoint.forwardRuleId ? String(endpoint.forwardRuleId) : "",
     publicHost: String(endpoint.publicHost || ""),
     publicPort: String(endpoint.publicPort || ""),
     cipher: String(config.cipher || "chacha20-ietf-poly1305"),
@@ -153,6 +170,11 @@ export default function ProtocolAccessPage() {
     staleTime: 30_000,
     placeholderData: (previousData: any) => previousData,
   });
+  const hostsQuery = trpc.hosts.options.useQuery(undefined, {
+    enabled: isAdmin,
+    staleTime: 30_000,
+    placeholderData: (previousData: any) => previousData,
+  });
   const assignmentsQuery = trpc.protocolAccess.listAssignments.useQuery(
     { endpointId: Number(assignmentEndpoint?.id || 1) },
     { enabled: isAdmin && !!assignmentEndpoint, placeholderData: (previousData: any) => previousData },
@@ -165,12 +187,14 @@ export default function ProtocolAccessPage() {
 
   const endpoints = (endpointsQuery.data || []) as any[];
   const users = (usersQuery.data || []) as any[];
+  const hosts = (hostsQuery.data || []) as any[];
   const assignments = (assignmentsQuery.data || []) as any[];
   const assignedUserIds = useMemo(
     () => new Set(assignments.map((item) => Number(item.user?.id || item.access?.userId))),
     [assignments],
   );
   const selectedFeedUser = users.find((item) => Number(item.id) === feedUserId);
+  const hostById = useMemo(() => new Map(hosts.map((item) => [Number(item.id), item])), [hosts]);
 
   const refreshEndpoints = () => utils.protocolAccess.listEndpoints.invalidate();
   const createEndpoint = trpc.protocolAccess.createEndpoint.useMutation({
@@ -238,6 +262,7 @@ export default function ProtocolAccessPage() {
 
   const saveEndpoint = () => {
     const publicPort = Number(endpointForm.publicPort);
+    const listenPort = Number(endpointForm.listenPort || endpointForm.publicPort);
     const remotePort = Number(endpointForm.remotePort);
     if (!endpointForm.name.trim() || !endpointForm.publicHost.trim()) {
       toast.error("请填写名称和公网地址");
@@ -246,6 +271,20 @@ export default function ProtocolAccessPage() {
     if (!Number.isInteger(publicPort) || publicPort < 1 || publicPort > 65535) {
       toast.error("公网端口必须是 1-65535");
       return;
+    }
+    if (endpointForm.runtimeMode === "managed") {
+      if (!Number(endpointForm.hostId)) {
+        toast.error("请选择 Agent 主机");
+        return;
+      }
+      if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+        toast.error("Agent 监听端口必须是 1-65535");
+        return;
+      }
+      if (!endpointForm.password) {
+        toast.error("Agent 托管端点必须设置共享 SS 密码");
+        return;
+      }
     }
     if (endpointForm.protocol === "shadowsocks_ssh" && (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535)) {
       toast.error("SSH 内部 SS 端口必须是 1-65535");
@@ -256,6 +295,7 @@ export default function ProtocolAccessPage() {
       password: endpointForm.password,
       udp: endpointForm.protocol === "shadowsocks" && endpointForm.udp,
     };
+    if (endpointForm.runtimeMode === "managed") config.listenPort = listenPort;
     if (endpointForm.protocol === "shadowsocks_ssh") {
       config.remotePort = remotePort;
       config.sshUsername = endpointForm.sshUsername;
@@ -264,9 +304,11 @@ export default function ProtocolAccessPage() {
     const input = {
       name: endpointForm.name.trim(),
       protocol: endpointForm.protocol,
-      runtimeMode: "external" as const,
-      hostId: null,
-      forwardRuleId: null,
+      runtimeMode: endpointForm.runtimeMode,
+      hostId: endpointForm.runtimeMode === "managed" ? Number(endpointForm.hostId) : null,
+      forwardRuleId: endpointForm.runtimeMode === "managed" && Number(endpointForm.forwardRuleId)
+        ? Number(endpointForm.forwardRuleId)
+        : null,
       publicHost: endpointForm.publicHost.trim(),
       publicPort,
       config,
@@ -440,7 +482,7 @@ export default function ProtocolAccessPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">协议端点</h2>
-                <p className="text-xs text-muted-foreground">当前仅登记已有 external 端点，不会下发或重启 Agent。</p>
+                <p className="text-xs text-muted-foreground">external 只登记；managed 复用现有 Agent 与 GOST 原子下发。</p>
               </div>
               <Badge variant="outline">{endpoints.length} 个</Badge>
             </div>
@@ -452,7 +494,7 @@ export default function ProtocolAccessPage() {
                   <RadioTower className="h-8 w-8 text-muted-foreground" />
                   <div>
                     <p className="font-medium">还没有协议端点</p>
-                    <p className="text-sm text-muted-foreground">先登记已经运行的 SS 或 SS over SSH 服务。</p>
+                    <p className="text-sm text-muted-foreground">可登记现有服务，或让 ForwardX Agent 托管标准 Shadowsocks。</p>
                   </div>
                   <Button variant="outline" onClick={openCreateEndpoint}><Plus className="mr-2 h-4 w-4" /> 新增端点</Button>
                 </CardContent>
@@ -479,12 +521,18 @@ export default function ProtocolAccessPage() {
                       <CardContent className="space-y-4">
                         <div className="flex flex-wrap gap-2">
                           <Badge>{protocolLabel(endpoint.protocol)}</Badge>
-                          <Badge variant="outline">external</Badge>
+                          <Badge variant="outline">{endpoint.runtimeMode === "managed" ? "Agent 托管" : "external"}</Badge>
                           <Badge variant={endpoint.isEnabled ? "default" : "secondary"}>{endpoint.isEnabled ? "已启用" : "已停用"}</Badge>
                         </div>
                         <div className="grid gap-2 rounded-lg bg-muted/30 p-3 text-sm sm:grid-cols-2">
                           <div><span className="text-muted-foreground">加密：</span>{String(config.cipher || "-")}</div>
                           <div><span className="text-muted-foreground">密码：</span>{config.password ? "共享密码" : "按用户分配"}</div>
+                          {endpoint.runtimeMode === "managed" && (
+                            <>
+                              <div><span className="text-muted-foreground">Agent：</span>{String(hostById.get(Number(endpoint.hostId))?.name || `#${endpoint.hostId}`)}</div>
+                              <div><span className="text-muted-foreground">监听：</span>{String(config.listenPort || endpoint.publicPort)}</div>
+                            </>
+                          )}
                           {endpoint.protocol === "shadowsocks_ssh" && (
                             <>
                               <div><span className="text-muted-foreground">SSH 用户：</span>{String(config.sshUsername || "-")}</div>
@@ -517,7 +565,7 @@ export default function ProtocolAccessPage() {
         <DialogContent className="flex max-h-[92svh] w-[calc(100vw-1rem)] max-w-[95vw] flex-col overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="px-4 pt-4 sm:px-5 sm:pt-5">
             <DialogTitle>{endpointForm.id ? "编辑协议端点" : "新增协议端点"}</DialogTitle>
-            <DialogDescription>只登记现有服务；本阶段不会在 Agent 上安装或重启协议进程。</DialogDescription>
+            <DialogDescription>托管模式直接合并进 ForwardX 现有 GOST desired-state，不创建第二套运行时。</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4 sm:px-5">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -526,8 +574,31 @@ export default function ProtocolAccessPage() {
                 <Input value={endpointForm.name} onChange={(event) => setEndpointForm({ ...endpointForm, name: event.target.value })} placeholder="例如：7CM SS" />
               </div>
               <div className="space-y-2">
+                <Label>运行模式</Label>
+                <Select
+                  value={endpointForm.runtimeMode}
+                  onValueChange={(runtimeMode) => setEndpointForm({
+                    ...endpointForm,
+                    runtimeMode: runtimeMode as ProtocolAccessRuntimeMode,
+                    ...(runtimeMode === "managed" ? {
+                      protocol: "shadowsocks",
+                      cipher: (MANAGED_SHADOWSOCKS_CIPHERS as readonly string[]).includes(endpointForm.cipher)
+                        ? endpointForm.cipher
+                        : MANAGED_SHADOWSOCKS_CIPHERS[0],
+                      listenPort: endpointForm.listenPort || endpointForm.publicPort,
+                    } : {}),
+                  })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="external">登记现有服务</SelectItem>
+                    <SelectItem value="managed">ForwardX Agent 托管</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label>协议</Label>
-                <Select value={endpointForm.protocol} onValueChange={(protocol) => setEndpointForm({ ...endpointForm, protocol: protocol as ProtocolAccessProtocol })}>
+                <Select disabled={endpointForm.runtimeMode === "managed"} value={endpointForm.protocol} onValueChange={(protocol) => setEndpointForm({ ...endpointForm, protocol: protocol as ProtocolAccessProtocol })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="shadowsocks">Shadowsocks</SelectItem>
@@ -540,7 +611,9 @@ export default function ProtocolAccessPage() {
                 <Select value={endpointForm.cipher} onValueChange={(cipher) => setEndpointForm({ ...endpointForm, cipher })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {cipherOptions.map((cipher) => <SelectItem key={cipher} value={cipher}>{cipher}</SelectItem>)}
+                    {cipherOptions
+                      .filter((cipher) => endpointForm.runtimeMode !== "managed" || (MANAGED_SHADOWSOCKS_CIPHERS as readonly string[]).includes(cipher))
+                      .map((cipher) => <SelectItem key={cipher} value={cipher}>{cipher}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -552,10 +625,38 @@ export default function ProtocolAccessPage() {
                 <Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : "SS 公网端口"}</Label>
                 <Input type="number" min={1} max={65535} value={endpointForm.publicPort} onChange={(event) => setEndpointForm({ ...endpointForm, publicPort: event.target.value })} />
               </div>
+              {endpointForm.runtimeMode === "managed" && (
+                <>
+                  <div className="space-y-2">
+                    <Label>Agent 主机</Label>
+                    <Select value={endpointForm.hostId} onValueChange={(hostId) => setEndpointForm({ ...endpointForm, hostId })}>
+                      <SelectTrigger><SelectValue placeholder="选择主机" /></SelectTrigger>
+                      <SelectContent>
+                        {hosts.map((host) => (
+                          <SelectItem key={host.id} value={String(host.id)}>
+                            {host.name || `主机 #${host.id}`}{host.isOnline ? " · 在线" : " · 离线"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Agent 监听端口</Label>
+                    <Input type="number" min={1} max={65535} value={endpointForm.listenPort} onChange={(event) => setEndpointForm({ ...endpointForm, listenPort: event.target.value })} />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>关联 ForwardX 规则 ID（可选）</Label>
+                    <Input type="number" min={1} value={endpointForm.forwardRuleId} onChange={(event) => setEndpointForm({ ...endpointForm, forwardRuleId: event.target.value })} placeholder="公网入口经过现有链路时填写" />
+                    <p className="text-xs text-muted-foreground">填写后只引用现有转发规则，不会再编译一条重复链路；规则源端口需等于公网端口，目标端口需等于 Agent 监听端口。</p>
+                  </div>
+                </>
+              )}
               <div className="space-y-2 sm:col-span-2">
-                <Label>共享 SS 密码（可选）</Label>
+                <Label>共享 SS 密码{endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>
                 <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />
-                <p className="text-xs text-muted-foreground">留空时必须在“用户分配”中为每个用户填写独立密码。</p>
+                <p className="text-xs text-muted-foreground">
+                  {endpointForm.runtimeMode === "managed" ? "托管运行时只编译这一份共享密码；用户分配只控制订阅权限。" : "留空时必须在“用户分配”中为每个用户填写独立密码。"}
+                </p>
               </div>
               {endpointForm.protocol === "shadowsocks_ssh" ? (
                 <>
@@ -575,7 +676,12 @@ export default function ProtocolAccessPage() {
                 </>
               ) : (
                 <div className="flex items-center justify-between gap-3 rounded-lg border p-3 sm:col-span-2">
-                  <div><p className="text-sm font-medium">UDP</p><p className="text-xs text-muted-foreground">仅在现有 SS 服务确实支持时开启。</p></div>
+                  <div>
+                    <p className="text-sm font-medium">UDP</p>
+                    <p className="text-xs text-muted-foreground">
+                      {endpointForm.runtimeMode === "managed" ? "在同一 GOST 配置中追加独立 SSU 监听。" : "仅在现有 SS 服务确实支持时开启。"}
+                    </p>
+                  </div>
                   <Switch checked={endpointForm.udp} onCheckedChange={(udp) => setEndpointForm({ ...endpointForm, udp })} />
                 </div>
               )}
@@ -622,7 +728,8 @@ export default function ProtocolAccessPage() {
               </div>
               <div className="space-y-2">
                 <Label>独立 SS 密码（可选）</Label>
-                <Input type="password" value={assignmentPassword} onChange={(event) => setAssignmentPassword(event.target.value)} autoComplete="new-password" />
+                <Input disabled={assignmentEndpoint?.runtimeMode === "managed"} type="password" value={assignmentPassword} onChange={(event) => setAssignmentPassword(event.target.value)} autoComplete="new-password" />
+                {assignmentEndpoint?.runtimeMode === "managed" && <p className="text-xs text-muted-foreground">托管端点固定使用共享密码，避免重复编译用户监听。</p>}
               </div>
               <Button onClick={saveAssignment} disabled={!assignmentUserId || setAssignment.isPending}>
                 <UserPlus className="mr-2 h-4 w-4" /> 保存分配

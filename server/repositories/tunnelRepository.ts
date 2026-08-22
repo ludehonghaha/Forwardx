@@ -13,6 +13,7 @@ import {
   forwardGroupMembers,
   forwardGroups,
   tunnelLatencyStats,
+  protocolEndpoints,
 } from "../../drizzle/schema";
 import { executeRaw, getDatabaseKind, getDb, insertAndGetId, nowDate, queryRaw, withDatabaseTransaction } from "../dbRuntime";
 import { boolValue, quoteIdentifier, sqlCountAll } from "../dbCompat";
@@ -32,6 +33,7 @@ import {
 import { resolveRuleProxyProtocolOptions } from "../gostProxyProtocol";
 import { HOST_ONLINE_TTL_MS } from "../hostHeartbeatPolicy";
 import { LINK_PROBE_FRESH_MS, LINK_PROBE_MAX_FUTURE_SKEW_MS } from "../../shared/linkProbePolicy";
+import { managedProtocolListenPort, parseProtocolAccessConfig } from "../../shared/protocolAccess";
 
 // ==================== Tunnel Queries ====================
 
@@ -1138,6 +1140,7 @@ export async function isPortUsedOnHost(
   protocol?: unknown,
   excludeTunnelId?: number,
   excludeRuleExitPorts = true,
+  excludeProtocolEndpointId?: number,
 ): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
@@ -1204,7 +1207,20 @@ export async function isPortUsedOnHost(
     eq(tunnelHops.hostId, hostId),
     sql`(${tunnelHops.listenPort} = ${sourcePort} OR ${tunnelHops.mimicPort} = ${sourcePort})`,
   ));
-  return hopRows.some((row: any) => Number(row.tunnelId) !== excludedTunnelId);
+  if (hopRows.some((row: any) => Number(row.tunnelId) !== excludedTunnelId)) return true;
+  const managedEndpointRows = await db.select({
+    id: protocolEndpoints.id,
+    publicPort: protocolEndpoints.publicPort,
+    configJson: protocolEndpoints.configJson,
+  }).from(protocolEndpoints).where(and(
+    eq(protocolEndpoints.hostId, hostId),
+    eq(protocolEndpoints.runtimeMode, "managed"),
+    eq(protocolEndpoints.isEnabled, true),
+  ));
+  return managedEndpointRows.some((row: any) => (
+    Number(row.id) !== Number(excludeProtocolEndpointId || 0)
+    && managedProtocolListenPort(parseProtocolAccessConfig(row.configJson), Number(row.publicPort)) === sourcePort
+  ));
 }
 
 /** 在主机端口区间内找一个未被占用的随机端口 */
@@ -1755,4 +1771,3 @@ export async function getTunnelsByHopHost(hostId: number) {
   if (ids.length === 0) return [];
   return db.select().from(tunnels).where(sql`${tunnels.id} IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`);
 }
-
