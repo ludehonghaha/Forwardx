@@ -12,7 +12,7 @@ ForwardX 通过轻量 Agent 统一管理多台 Linux 服务器上的端口转发
 - [使用文档](https://poouo.github.io/Forwardx/)
 - [GitHub Releases](https://github.com/ludehonghaha/Forwardx/releases/latest)
 - [Telegram 群组](https://t.me/ForwardX_panel)
-- [Android APK](https://github.com/ludehonghaha/Forwardx/releases/latest)
+- [Android APK](https://github.com/poouo/Forwardx/releases/latest)
 
 ## 主要功能
 

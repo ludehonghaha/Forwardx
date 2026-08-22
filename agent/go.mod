@@ -1,4 +1,4 @@
-module github.com/ludehonghaha/Forwardx/agent
+module github.com/poouo/Forwardx/agent
 
 go 1.23.1
 
