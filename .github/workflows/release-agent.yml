@@ -13,7 +13,6 @@ on:
       - "shared/versions.ts"
       - "scripts/build-agent-release.sh"
       - "THIRD_PARTY_NOTICES.md"
-      - ".github/workflows/release-agent.yml"
 
 permissions:
   contents: write
@@ -95,16 +94,12 @@ jobs:
             fi
           done
 
-          attempt=1
-          until gh release view "$RELEASE_VERSION" >/dev/null 2>&1; do
-            if [ "$attempt" -ge 120 ]; then
-              echo "::error::GitHub Release $RELEASE_VERSION was not created by the panel workflow within 30 minutes"
-              exit 1
-            fi
-            echo "Waiting for panel workflow to create GitHub Release $RELEASE_VERSION (attempt ${attempt}/120)..."
-            sleep 15
-            attempt=$((attempt + 1))
-          done
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release create "$RELEASE_VERSION" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_VERSION" \
+              --notes "ForwardX $RELEASE_VERSION"
+          fi
 
           upload_with_retry() {
             local attempt=1
