@@ -97,6 +97,13 @@ function endpointAddress(endpoint: any) {
   return `${host.includes(":") ? `[${host}]` : host}:${Number(endpoint?.publicPort || 0)}`;
 }
 
+function runtimeBadgeVariant(state?: string): "default" | "secondary" | "destructive" | "outline" {
+  if (state === "healthy") return "default";
+  if (state === "unhealthy" || state === "offline") return "destructive";
+  if (state === "pending" || state === "unsupported" || state === "unknown") return "secondary";
+  return "outline";
+}
+
 function fullFeedUrl(path?: string) {
   const value = String(path || "");
   if (!value || typeof window === "undefined") return value;
@@ -164,6 +171,7 @@ export default function ProtocolAccessPage() {
   const endpointsQuery = trpc.protocolAccess.listEndpoints.useQuery(undefined, {
     enabled: isAdmin,
     placeholderData: (previousData: any) => previousData,
+    refetchInterval: isAdmin ? 10_000 : false,
   });
   const usersQuery = trpc.users.options.useQuery(undefined, {
     enabled: isAdmin,
@@ -503,6 +511,7 @@ export default function ProtocolAccessPage() {
               <div className="grid gap-4 lg:grid-cols-2">
                 {endpoints.map((endpoint) => {
                   const config = parseProtocolAccessConfig(endpoint.configJson);
+                  const runtimeStatus = endpoint.runtimeStatus;
                   return (
                     <Card key={endpoint.id}>
                       <CardHeader className="pb-3">
@@ -523,6 +532,9 @@ export default function ProtocolAccessPage() {
                           <Badge>{protocolLabel(endpoint.protocol)}</Badge>
                           <Badge variant="outline">{endpoint.runtimeMode === "managed" ? "Agent 托管" : "external"}</Badge>
                           <Badge variant={endpoint.isEnabled ? "default" : "secondary"}>{endpoint.isEnabled ? "已启用" : "已停用"}</Badge>
+                          {endpoint.runtimeMode === "managed" && (
+                            <Badge variant={runtimeBadgeVariant(runtimeStatus?.state)}>{String(runtimeStatus?.label || "等待状态")}</Badge>
+                          )}
                         </div>
                         <div className="grid gap-2 rounded-lg bg-muted/30 p-3 text-sm sm:grid-cols-2">
                           <div><span className="text-muted-foreground">加密：</span>{String(config.cipher || "-")}</div>
@@ -531,6 +543,15 @@ export default function ProtocolAccessPage() {
                             <>
                               <div><span className="text-muted-foreground">Agent：</span>{String(hostById.get(Number(endpoint.hostId))?.name || `#${endpoint.hostId}`)}</div>
                               <div><span className="text-muted-foreground">监听：</span>{String(config.listenPort || endpoint.publicPort)}</div>
+                              <div className="sm:col-span-2">
+                                <span className="text-muted-foreground">运行态：</span>
+                                <span className={runtimeStatus?.lastError ? "text-destructive" : ""}>{String(runtimeStatus?.message || "等待 Agent 状态")}</span>
+                              </div>
+                              {runtimeStatus?.lastError && (
+                                <div className="text-destructive sm:col-span-2">
+                                  <span className="font-medium">最后错误：</span>{String(runtimeStatus.lastError)}
+                                </div>
+                              )}
                             </>
                           )}
                           {endpoint.protocol === "shadowsocks_ssh" && (

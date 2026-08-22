@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.190"
+var Version = "2.2.191"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -885,9 +885,10 @@ type heartbeatStateSnapshot struct {
 }
 
 type localRuntimeStatePayload struct {
-	Rules    []localRuntimeRuleState    `json:"rules,omitempty"`
-	Tunnels  []localRuntimeTunnelState  `json:"tunnels,omitempty"`
-	Services []localRuntimeServiceState `json:"services,omitempty"`
+	Rules     []localRuntimeRuleState     `json:"rules,omitempty"`
+	Tunnels   []localRuntimeTunnelState   `json:"tunnels,omitempty"`
+	Services  []localRuntimeServiceState  `json:"services,omitempty"`
+	Listeners []localRuntimeListenerState `json:"listeners,omitempty"`
 }
 
 type localRuntimeRuleState struct {
@@ -918,6 +919,13 @@ type localRuntimeServiceState struct {
 	Message         string `json:"message,omitempty"`
 	HooksReady      *bool  `json:"hooksReady,omitempty"`
 	ConnectionState string `json:"connectionState,omitempty"`
+}
+
+type localRuntimeListenerState struct {
+	Runtime  string `json:"runtime"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	Ready    bool   `json:"ready"`
 }
 
 type localRuntimeReadiness struct {
@@ -2143,7 +2151,47 @@ func readLocalRuntimeStatePayload() localRuntimeStatePayload {
 		}
 		return tunnels[i].Port < tunnels[j].Port
 	})
-	return localRuntimeStatePayload{Rules: rules, Tunnels: tunnels, Services: readiness.serviceStates}
+	return localRuntimeStatePayload{
+		Rules:     rules,
+		Tunnels:   tunnels,
+		Services:  readiness.serviceStates,
+		Listeners: localRuntimeListenerStates(&readiness),
+	}
+}
+
+func localRuntimeListenerStates(readiness *localRuntimeReadiness) []localRuntimeListenerState {
+	if readiness == nil {
+		return nil
+	}
+	listeners := []localRuntimeListenerState{}
+	appendStates := func(runtime string, ports map[int]map[string]bool, ready func(int, string) bool) {
+		for port, protocols := range ports {
+			for protocol, configured := range protocols {
+				if port <= 0 || !configured {
+					continue
+				}
+				listeners = append(listeners, localRuntimeListenerState{
+					Runtime:  runtime,
+					Port:     port,
+					Protocol: normalizeRuntimeProtocol(protocol),
+					Ready:    ready(port, protocol),
+				})
+			}
+		}
+	}
+	appendStates("gost", readiness.gostRuntimePortProtocols, readiness.gostMainReadyForPort)
+	appendStates("tunnel-gost", readiness.tunnelRuntimePortProtocols, readiness.gostTunnelReadyForPort)
+	appendStates("nginx", readiness.nginxRuntimePortProtocols, readiness.nginxReadyForPort)
+	sort.Slice(listeners, func(i, j int) bool {
+		if listeners[i].Runtime != listeners[j].Runtime {
+			return listeners[i].Runtime < listeners[j].Runtime
+		}
+		if listeners[i].Port != listeners[j].Port {
+			return listeners[i].Port < listeners[j].Port
+		}
+		return listeners[i].Protocol < listeners[j].Protocol
+	})
+	return listeners
 }
 
 func activeFXPEntrySpecsSnapshot() []fxpSpec {
