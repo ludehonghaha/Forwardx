@@ -1,0 +1,407 @@
+name: Codex Entry Protocol Integration
+
+on:
+  push:
+    branches:
+      - codex/feature-managed-entry-protocols
+    paths:
+      - .github/workflows/codex-entry-protocols.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: codex/feature-managed-entry-protocols
+          fetch-depth: 0
+      - name: Apply targeted integration patch
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f"{path}: expected {count} occurrence(s), found {actual}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, count))
+
+          # Small TypeScript compatibility fixes.
+          p = Path("server/routers/protocolAccess.ts")
+          text = p.read_text()
+          actual = text.count("as JsonWebKey")
+          if actual != 2:
+              raise SystemExit(f"protocolAccess.ts: expected 2 JsonWebKey casts, found {actual}")
+          text = text.replace("as JsonWebKey", "as { d?: string; x?: string }")
+          p.write_text(text)
+
+          replace(
+              "server/protocolSubscription.ts",
+              '  const suffix = query.size > 0 ? `?${query.toString()}` : "";\n',
+              '  const queryText = query.toString();\n  const suffix = queryText ? `?${queryText}` : "";\n',
+          )
+
+          # Heartbeat desired-state: add one shared Mihomo runtime for Snell/Reality/HY2.
+          replace(
+              "server/agentHeartbeatRoute.ts",
+              'import { buildManagedMieruRuntimePlan, buildManagedProtocolGostServices } from "./protocolRuntimePlan";\n',
+              'import { buildManagedMieruRuntimePlan, buildManagedMihomoRuntimePlan, buildManagedProtocolGostServices } from "./protocolRuntimePlan";\n'
+              'import {\n'
+              '  MIHOMO_CONFIG_DIR,\n'
+              '  MIHOMO_CONFIG_PATH,\n'
+              '  MIHOMO_SERVICE_NAME,\n'
+              '  ensureMihomoBinaryCmd,\n'
+              '  ensureMihomoCertificateCmds,\n'
+              '  mihomoServiceUnit,\n'
+              '  verifyMihomoRuntimeCmd,\n'
+              '} from "./protocolMihomoRuntime";\n',
+          )
+          replace(
+              "server/agentHeartbeatRoute.ts",
+              'const AGENT_MIERU_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;\n',
+              'const AGENT_MIERU_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;\nconst AGENT_MIHOMO_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;\n',
+          )
+          replace(
+              "server/agentHeartbeatRoute.ts",
+              'const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision] = await Promise.all([\n'
+              '      db.getForwardRulesForAgent(host.id),\n'
+              '      db.getTunnelsByHost(host.id),\n'
+              '      getForwardProtocolSettings(),\n'
+              '      latestConfigRevision(),\n'
+              '      db.listManagedProtocolEndpointsForHost(host.id),\n'
+              '      latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),\n'
+              '      latestHostProtocolAccessRevision(Number(host.id), "mieru"),\n'
+              '    ]);',
+              'const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, mihomoAccessRevision] = await Promise.all([\n'
+              '      db.getForwardRulesForAgent(host.id),\n'
+              '      db.getTunnelsByHost(host.id),\n'
+              '      getForwardProtocolSettings(),\n'
+              '      latestConfigRevision(),\n'
+              '      db.listManagedProtocolEndpointsForHost(host.id),\n'
+              '      latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),\n'
+              '      latestHostProtocolAccessRevision(Number(host.id), "mieru"),\n'
+              '      latestHostProtocolAccessRevision(Number(host.id)),\n'
+              '    ]);',
+          )
+          replace(
+              "server/agentHeartbeatRoute.ts",
+              '    const managedProtocolGostServices = buildManagedProtocolGostServices(managedProtocolEndpoints as any[]);\n'
+              '    const managedMieruRuntimePlan = buildManagedMieruRuntimePlan(managedProtocolEndpoints as any[]);\n',
+              '    const managedProtocolGostServices = buildManagedProtocolGostServices(managedProtocolEndpoints as any[]);\n'
+              '    const managedMieruRuntimePlan = buildManagedMieruRuntimePlan(managedProtocolEndpoints as any[]);\n'
+              '    const managedMihomoRuntimePlan = buildManagedMihomoRuntimePlan(managedProtocolEndpoints as any[]);\n',
+          )
+          replace(
+              "server/agentHeartbeatRoute.ts",
+              '      return commands;\n'
+              '    };\n'
+              '    const gostServiceConfig = [\n'
+              '      ...gostRuleServiceConfig,\n'
+              '      ...managedProtocolGostServices,\n'
+              '    ];',
+              '      return commands;\n'
+              '    };\n'
+              '    const mihomoServerConfig = managedMihomoRuntimePlan?.config || {\n'
+              '      mode: "rule",\n'
+              '      "log-level": "warning",\n'
+              '      ipv6: true,\n'
+              '      listeners: [],\n'
+              '      rules: ["MATCH,DIRECT"],\n'
+              '    };\n'
+              '    const mihomoManagedConfigs = [{\n'
+              '      path: MIHOMO_CONFIG_PATH,\n'
+              '      contentBase64: Buffer.from(JSON.stringify(mihomoServerConfig, null, 2), "utf8").toString("base64"),\n'
+              '      format: "json",\n'
+              '      mode: 0o600,\n'
+              '      serviceName: MIHOMO_SERVICE_NAME,\n'
+              '    }];\n'
+              '    const buildMihomoRuntimePreCmds = () => managedMihomoRuntimePlan\n'
+              '      ? [ensureMihomoBinaryCmd(), ...ensureMihomoCertificateCmds(managedMihomoRuntimePlan)]\n'
+              '      : [];\n'
+              '    const buildMihomoRuntimeSyncCmds = () => {\n'
+              '      const commands = [\n'
+              '        `mkdir -p ${shQuote(MIHOMO_CONFIG_DIR)}`,\n'
+              '        writeManagedServiceCmd(MIHOMO_SERVICE_NAME, mihomoServiceUnit()),\n'
+              '      ];\n'
+              '      if (managedMihomoRuntimePlan) {\n'
+              '        commands.push(\n'
+              '          restartManagedServiceIfConfigChangedCmd(MIHOMO_SERVICE_NAME, MIHOMO_CONFIG_PATH),\n'
+              '          verifyMihomoRuntimeCmd(managedMihomoRuntimePlan),\n'
+              '        );\n'
+              '      } else {\n'
+              '        commands.push(stopManagedServiceCmd(MIHOMO_SERVICE_NAME));\n'
+              '      }\n'
+              '      return commands;\n'
+              '    };\n'
+              '    const gostServiceConfig = [\n'
+              '      ...gostRuleServiceConfig,\n'
+              '      ...managedProtocolGostServices,\n'
+              '    ];',
+          )
+          replace(
+              "server/agentHeartbeatRoute.ts",
+              '    const gostProtocolRuntimeConfigChanged = shadowsocksAccessRevision > Number(agentLastAppliedRevision || 0);\n'
+              '    const mieruRuntimeConfigChanged = mieruAccessRevision > Number(agentLastAppliedRevision || 0);\n',
+              '    const gostProtocolRuntimeConfigChanged = shadowsocksAccessRevision > Number(agentLastAppliedRevision || 0);\n'
+              '    const mieruRuntimeConfigChanged = mieruAccessRevision > Number(agentLastAppliedRevision || 0);\n'
+              '    const mihomoRuntimeConfigChanged = mihomoAccessRevision > Number(agentLastAppliedRevision || 0);\n',
+          )
+          replace(
+              "server/agentHeartbeatRoute.ts",
+              '    if (!deferActionsForLocalState && mimicRuntimeSyncWanted) {\n',
+              '    const mihomoDesiredRelevant = !!managedMihomoRuntimePlan;\n'
+              '    const mihomoPeriodicReconcileDue = mihomoDesiredRelevant && runtimeSyncReconcileDue(\n'
+              '      Number(host.id),\n'
+              '      "mihomo-runtime-sync",\n'
+              '      responseIssuedAt,\n'
+              '      AGENT_MIHOMO_RUNTIME_RECONCILE_MS,\n'
+              '    );\n'
+              '    if (!deferActionsForLocalState && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {\n'
+              '      const mihomoRuntimeSyncAction = {\n'
+              '        statusType: "runtime",\n'
+              '        ruleId: 0,\n'
+              '        tunnelId: 0,\n'
+              '        op: "apply",\n'
+              '        forwardType: "mihomo-runtime-sync",\n'
+              '        sourcePort: 0,\n'
+              '        targetIp: "",\n'
+              '        targetPort: 0,\n'
+              '        protocol: managedMihomoRuntimePlan?.sockets[0]?.transport || "tcp",\n'
+              '        knownRunning: false,\n'
+              '        forceRuntimeSync: true,\n'
+              '        preCommands: buildMihomoRuntimePreCmds(),\n'
+              '        commands: buildMihomoRuntimeSyncCmds(),\n'
+              '        managedConfigs: mihomoManagedConfigs,\n'
+              '      } as any;\n'
+              '      if (shouldSendRuntimeSyncAction(\n'
+              '        Number(host.id),\n'
+              '        mihomoRuntimeSyncAction,\n'
+              '        mihomoRuntimeConfigChanged || runtimeSyncBootstrap,\n'
+              '        responseIssuedAt,\n'
+              '        AGENT_MIHOMO_RUNTIME_RECONCILE_MS,\n'
+              '      )) actions.push(mihomoRuntimeSyncAction);\n'
+              '    }\n'
+              '    if (!deferActionsForLocalState && mimicRuntimeSyncWanted) {\n',
+          )
+
+          # UI: expose the three new managed entry protocols without copying TMS forms.
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '  isEnabled: boolean;\n};',
+              '  isEnabled: boolean;\n  sourceConfig: Record<string, unknown>;\n};',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '  isEnabled: false,\n};',
+              '  isEnabled: false,\n  sourceConfig: {},\n};',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              'function protocolLabel(protocol?: string) {\n'
+              '  if (protocol === "shadowsocks_ssh") return "SS over SSH";\n'
+              '  if (protocol === "mieru") return "Mieru";\n'
+              '  return "Shadowsocks";\n'
+              '}',
+              'function protocolLabel(protocol?: string) {\n'
+              '  if (protocol === "shadowsocks_ssh") return "SS over SSH";\n'
+              '  if (protocol === "mieru") return "Mieru";\n'
+              '  if (protocol === "snell") return "Snell";\n'
+              '  if (protocol === "vless_reality") return "VLESS + Reality";\n'
+              '  if (protocol === "hysteria2") return "Hysteria2";\n'
+              '  return "Shadowsocks";\n'
+              '}',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '    protocol: endpoint.protocol === "shadowsocks_ssh" || endpoint.protocol === "mieru"\n'
+              '      ? endpoint.protocol\n'
+              '      : "shadowsocks",',
+              '    protocol: (["shadowsocks", "shadowsocks_ssh", "mieru", "snell", "vless_reality", "hysteria2"] as string[]).includes(String(endpoint.protocol))\n'
+              '      ? endpoint.protocol as ProtocolAccessProtocol\n'
+              '      : "shadowsocks",',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '    isEnabled: endpoint.isEnabled === true,\n  };',
+              '    isEnabled: endpoint.isEnabled === true,\n    sourceConfig: config,\n  };',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '      if (!endpointForm.password || (endpointForm.protocol === "mieru" && !endpointForm.mieruUsername.trim())) {\n'
+              '        toast.error(endpointForm.protocol === "mieru" ? "托管 Mieru 必须设置共享用户名和密码" : "Agent 托管端点必须设置共享 SS 密码");\n'
+              '        return;\n'
+              '      }',
+              '      if (endpointForm.protocol === "shadowsocks" && !endpointForm.password) {\n'
+              '        toast.error("Agent 托管 Shadowsocks 必须设置共享密码");\n'
+              '        return;\n'
+              '      }\n'
+              '      if (endpointForm.protocol === "mieru" && (!endpointForm.password || !endpointForm.mieruUsername.trim())) {\n'
+              '        toast.error("托管 Mieru 必须设置共享用户名和密码");\n'
+              '        return;\n'
+              '      }',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '    const config: Record<string, unknown> = endpointForm.protocol === "mieru" ? {\n'
+              '      username: endpointForm.mieruUsername,\n'
+              '      password: endpointForm.password,\n'
+              '      transport: endpointForm.mieruTransport,\n'
+              '      mtu: Number(endpointForm.mieruMtu),\n'
+              '      multiplexing: endpointForm.mieruMultiplexing,\n'
+              '      handshakeMode: endpointForm.mieruHandshakeMode,\n'
+              '      trafficPattern: endpointForm.mieruTrafficPattern.trim(),\n'
+              '      udp: endpointForm.udp,\n'
+              '    } : {\n'
+              '      cipher: endpointForm.cipher,\n'
+              '      password: endpointForm.password,\n'
+              '      udp: endpointForm.protocol === "shadowsocks" && endpointForm.udp,\n'
+              '    };',
+              '    const config: Record<string, unknown> = endpointForm.protocol === "mieru" ? {\n'
+              '      username: endpointForm.mieruUsername,\n'
+              '      password: endpointForm.password,\n'
+              '      transport: endpointForm.mieruTransport,\n'
+              '      mtu: Number(endpointForm.mieruMtu),\n'
+              '      multiplexing: endpointForm.mieruMultiplexing,\n'
+              '      handshakeMode: endpointForm.mieruHandshakeMode,\n'
+              '      trafficPattern: endpointForm.mieruTrafficPattern.trim(),\n'
+              '      udp: endpointForm.udp,\n'
+              '    } : endpointForm.protocol === "snell" || endpointForm.protocol === "vless_reality" || endpointForm.protocol === "hysteria2" ? {\n'
+              '      ...endpointForm.sourceConfig,\n'
+              '      ...(endpointForm.protocol !== "vless_reality" ? { password: endpointForm.password } : {}),\n'
+              '      ...(endpointForm.protocol !== "hysteria2" ? { udp: endpointForm.udp } : {}),\n'
+              '    } : {\n'
+              '      cipher: endpointForm.cipher,\n'
+              '      password: endpointForm.password,\n'
+              '      udp: endpointForm.protocol === "shadowsocks" && endpointForm.udp,\n'
+              '    };',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '        description="包含 SIP002 Shadowsocks 和 Mieru 简单链接；SS over SSH 仅进入 Mihomo 订阅。"',
+              '        description="包含 SS、Mieru、VLESS Reality 和 Hysteria2；Snell 与 SS over SSH 仅进入 Mihomo 订阅。"',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '        description="适用于 OpenClash、Clash Meta，可包含 SS、SS over SSH 和 Mieru。"',
+              '        description="适用于 OpenClash、Clash Meta，可包含 SS、Mieru、Snell、VLESS Reality、Hysteria2 与 SS over SSH。"',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '                <p className="text-xs text-muted-foreground">external 只登记；managed 复用 Agent desired-state。SS 合并进 GOST，Mieru 每台主机只使用一个 mita 实例。</p>',
+              '                <p className="text-xs text-muted-foreground">external 只登记；managed 复用 Agent desired-state。SS 合并 GOST；Mieru 独立 mita；Snell / Reality / Hysteria2 每台主机共用一个 Mihomo。</p>',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '                    <p className="text-sm text-muted-foreground">可登记现有服务，或让 ForwardX Agent 托管标准 Shadowsocks / Mieru。</p>',
+              '                    <p className="text-sm text-muted-foreground">可登记现有服务，或让 ForwardX Agent 一键托管 SS / Mieru / Snell / VLESS Reality / Hysteria2。</p>',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '            <DialogDescription>托管 SS 合并进现有 GOST；托管 Mieru 每台主机只生成一个 mita 配置与服务，避免重复监听。</DialogDescription>',
+              '            <DialogDescription>SS 复用 GOST；Mieru 使用独立 mita；Snell / VLESS Reality / Hysteria2 在同一主机共用一个 forwardx-mihomo，避免重复运行时。</DialogDescription>',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '                    ...(runtimeMode === "managed" ? {\n'
+              '                      protocol: endpointForm.protocol === "shadowsocks_ssh" ? "shadowsocks" : endpointForm.protocol,',
+              '                    ...(runtimeMode === "managed" ? {\n'
+              '                      protocol: endpointForm.protocol === "shadowsocks_ssh" ? "shadowsocks" : endpointForm.protocol,\n'
+              '                    } : {\n'
+              '                      protocol: (["snell", "vless_reality", "hysteria2"] as string[]).includes(endpointForm.protocol) ? "shadowsocks" : endpointForm.protocol,\n'
+              '                    }),\n'
+              '                    ...(runtimeMode === "managed" ? {',
+          )
+          # The previous replacement intentionally splits the original managed object; normalize its closing below.
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '                      listenPort: endpointForm.listenPort || endpointForm.publicPort,\n                    } : {}),',
+              '                      listenPort: endpointForm.listenPort || endpointForm.publicPort,\n                    } : {}),',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '                    const crossesMieruBoundary = protocol === "mieru" || endpointForm.protocol === "mieru";\n'
+              '                    setEndpointForm({\n'
+              '                      ...endpointForm,\n'
+              '                      protocol,\n'
+              '                      ...(crossesMieruBoundary ? { password: "", udp: protocol === "mieru" } : {}),\n'
+              '                    });',
+              '                    const changesRuntimeFamily = protocol !== endpointForm.protocol;\n'
+              '                    setEndpointForm({\n'
+              '                      ...endpointForm,\n'
+              '                      protocol,\n'
+              '                      ...(changesRuntimeFamily ? {\n'
+              '                        password: "",\n'
+              '                        sourceConfig: {},\n'
+              '                        udp: ["mieru", "snell", "vless_reality"].includes(protocol),\n'
+              '                      } : {}),\n'
+              '                    });',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '                    <SelectItem value="mieru">Mieru</SelectItem>\n',
+              '                    <SelectItem value="mieru">Mieru</SelectItem>\n'
+              '                    {endpointForm.runtimeMode === "managed" && <SelectItem value="snell">Snell</SelectItem>}\n'
+              '                    {endpointForm.runtimeMode === "managed" && <SelectItem value="vless_reality">VLESS + Reality</SelectItem>}\n'
+              '                    {endpointForm.runtimeMode === "managed" && <SelectItem value="hysteria2">Hysteria2</SelectItem>}\n',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '              {endpointForm.protocol !== "mieru" && <div className="space-y-2">',
+              '              {(endpointForm.protocol === "shadowsocks" || endpointForm.protocol === "shadowsocks_ssh") && <div className="space-y-2">',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '<Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : endpointForm.protocol === "mieru" ? "Mieru 公网端口" : "SS 公网端口"}</Label>',
+              '<Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : `${protocolLabel(endpointForm.protocol)} 公网端口`}</Label>',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '              ) : (\n                <div className="space-y-2 sm:col-span-2">\n                  <Label>共享 SS 密码{endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>\n                  <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />\n                  <p className="text-xs text-muted-foreground">\n                    {endpointForm.runtimeMode === "managed" ? "托管运行时只编译这一份共享密码；用户分配只控制订阅权限。" : "留空时必须在“用户分配”中为每个用户填写独立密码。"}\n                  </p>\n                </div>\n              )}',
+              '              ) : endpointForm.protocol === "vless_reality" ? (\n'
+              '                <div className="rounded-lg border p-3 text-xs leading-5 text-muted-foreground sm:col-span-2">\n'
+              '                  托管 Reality 会自动生成 UUID、X25519 密钥和 Short ID；默认伪装目标为 www.cloudflare.com:443。保存后订阅自动包含客户端公钥参数。\n'
+              '                </div>\n'
+              '              ) : (\n'
+              '                <div className="space-y-2 sm:col-span-2">\n'
+              '                  <Label>{endpointForm.protocol === "snell" ? "共享 Snell PSK" : endpointForm.protocol === "hysteria2" ? "共享 Hysteria2 密码" : "共享 SS 密码"}{endpointForm.runtimeMode === "managed" && (endpointForm.protocol === "snell" || endpointForm.protocol === "hysteria2") ? "（留空自动生成）" : endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>\n'
+              '                  <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />\n'
+              '                  <p className="text-xs text-muted-foreground">\n'
+              '                    {endpointForm.runtimeMode === "managed" ? "托管运行时只保存这一份共享凭据；用户分配只控制订阅权限。" : "留空时必须在“用户分配”中为每个用户填写独立密码。"}\n'
+              '                  </p>\n'
+              '                </div>\n'
+              '              )}',
+          )
+          replace(
+              "client/src/pages/ProtocolAccess.tsx",
+              '              ) : (\n                <div className="flex items-center justify-between gap-3 rounded-lg border p-3 sm:col-span-2">\n                  <div>\n                    <p className="text-sm font-medium">UDP</p>\n                    <p className="text-xs text-muted-foreground">\n                      {endpointForm.runtimeMode === "managed" ? "在同一 GOST 配置中追加独立 SSU 监听。" : "仅在现有 SS 服务确实支持时开启。"}\n                    </p>\n                  </div>\n                  <Switch checked={endpointForm.udp} onCheckedChange={(udp) => setEndpointForm({ ...endpointForm, udp })} />\n                </div>\n              )}',
+              '              ) : endpointForm.protocol === "hysteria2" ? (\n'
+              '                <div className="rounded-lg border p-3 text-xs leading-5 text-muted-foreground sm:col-span-2">Hysteria2 固定使用 UDP/QUIC；托管模式自动生成自签证书并默认启用 Salamander 混淆。</div>\n'
+              '              ) : (\n'
+              '                <div className="flex items-center justify-between gap-3 rounded-lg border p-3 sm:col-span-2">\n'
+              '                  <div>\n'
+              '                    <p className="text-sm font-medium">UDP</p>\n'
+              '                    <p className="text-xs text-muted-foreground">\n'
+              '                      {endpointForm.protocol === "snell" ? "使用 Snell UDP over TCP。" : endpointForm.protocol === "vless_reality" ? "允许客户端通过 VLESS/XUDP 传递 UDP。" : endpointForm.runtimeMode === "managed" ? "在同一 GOST 配置中追加独立 SSU 监听。" : "仅在现有 SS 服务确实支持时开启。"}\n'
+              '                    </p>\n'
+              '                  </div>\n'
+              '                  <Switch checked={endpointForm.udp} onCheckedChange={(udp) => setEndpointForm({ ...endpointForm, udp })} />\n'
+              '                </div>\n'
+              '              )}',
+          )
+
+          # Remove this one-shot workflow from the resulting branch commit.
+          Path(".github/workflows/codex-entry-protocols.yml").unlink()
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(protocol): integrate managed Snell Reality and Hysteria2"
+          git push origin HEAD:codex/feature-managed-entry-protocols
