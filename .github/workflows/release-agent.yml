@@ -3,8 +3,17 @@ name: Release Agent
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
+    paths:
+      - "agent/**"
+      - "forwardx-fxp/**"
+      - "shared/versions.ts"
+      - "scripts/build-agent-release.sh"
+      - "THIRD_PARTY_NOTICES.md"
+      - ".github/workflows/release-agent.yml"
 
 permissions:
   contents: write
