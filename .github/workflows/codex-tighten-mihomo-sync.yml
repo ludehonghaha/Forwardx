@@ -1,0 +1,72 @@
+name: Codex Tighten Mihomo Sync
+
+on:
+  push:
+    branches:
+      - codex/feature-managed-entry-protocols
+    paths:
+      - .github/workflows/codex-tighten-mihomo-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: codex/feature-managed-entry-protocols
+          fetch-depth: 0
+      - name: Patch Mihomo revision scoping
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("server/agentHeartbeatRoute.ts")
+          s = p.read_text()
+
+          old = '''const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, mihomoAccessRevision] = await Promise.all([
+              db.getForwardRulesForAgent(host.id),
+              db.getTunnelsByHost(host.id),
+              getForwardProtocolSettings(),
+              latestConfigRevision(),
+              db.listManagedProtocolEndpointsForHost(host.id),
+              latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),
+              latestHostProtocolAccessRevision(Number(host.id), "mieru"),
+              latestHostProtocolAccessRevision(Number(host.id)),
+            ]);'''
+          new = '''const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, snellAccessRevision, realityAccessRevision, hysteria2AccessRevision] = await Promise.all([
+              db.getForwardRulesForAgent(host.id),
+              db.getTunnelsByHost(host.id),
+              getForwardProtocolSettings(),
+              latestConfigRevision(),
+              db.listManagedProtocolEndpointsForHost(host.id),
+              latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),
+              latestHostProtocolAccessRevision(Number(host.id), "mieru"),
+              latestHostProtocolAccessRevision(Number(host.id), "snell"),
+              latestHostProtocolAccessRevision(Number(host.id), "vless_reality"),
+              latestHostProtocolAccessRevision(Number(host.id), "hysteria2"),
+            ]);
+            const mihomoAccessRevision = Math.max(snellAccessRevision, realityAccessRevision, hysteria2AccessRevision);'''
+          if s.count(old) != 1:
+              raise SystemExit(f"revision block mismatch: {s.count(old)}")
+          s = s.replace(old, new, 1)
+
+          old = '''    if (!deferActionsForLocalState && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {'''
+          new = '''    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
+            if (!deferActionsForLocalState && mihomoRuntimeRelevant
+              && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {'''
+          if s.count(old) != 1:
+              raise SystemExit(f"action condition mismatch: {s.count(old)}")
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          Path(".github/workflows/codex-tighten-mihomo-sync.yml").unlink()
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(protocol): scope Mihomo sync to Mihomo entry protocols"
+          git push origin HEAD:codex/feature-managed-entry-protocols
