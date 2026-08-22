@@ -109,10 +109,10 @@ async function validateEndpoint(input: {
 export const protocolAccessRouter = router({
   listEndpoints: adminProcedure.query(async () => {
     const endpoints = await db.listProtocolEndpoints();
-    const hostIds = Array.from(new Set(endpoints
+    const hostIds = Array.from(new Set<number>(endpoints
       .filter((endpoint: any) => endpoint.runtimeMode === "managed")
       .map((endpoint: any) => Number(endpoint.hostId || 0))
-      .filter((hostId) => hostId > 0)));
+      .filter((hostId: number) => hostId > 0)));
     const hostEntries = await Promise.all(hostIds.map(async (hostId) => {
       const [host, revision] = await Promise.all([
         db.getHostById(hostId),
