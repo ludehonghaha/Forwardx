@@ -398,10 +398,17 @@ type AgentLocalRuntimeServiceState = {
   hooksReady?: boolean;
   connectionState?: string;
 };
-type AgentLocalRuntimeState = {
+export type AgentLocalRuntimeListenerState = {
+  runtime: string;
+  port: number;
+  protocol: "tcp" | "udp";
+  ready: boolean;
+};
+export type AgentLocalRuntimeState = {
   rules: AgentLocalRuntimeRuleState[];
   tunnels: AgentLocalRuntimeTunnelState[];
   services: AgentLocalRuntimeServiceState[];
+  listeners: AgentLocalRuntimeListenerState[];
 };
 const agentLocalRuntimeStateCache = new Map<number, { signature: string; state: AgentLocalRuntimeState; updatedAt: number }>();
 
@@ -633,7 +640,17 @@ function normalizeAgentLocalRuntimeState(input: any): AgentLocalRuntimeState | n
       }))
       .filter((item: AgentLocalRuntimeServiceState) => !!item.name)
     : [];
-  return { rules, tunnels, services };
+  const listeners = Array.isArray(input.listeners)
+    ? input.listeners
+      .map((item: any) => ({
+        runtime: normalizeAgentText(item?.runtime, 32),
+        port: Number(item?.port || 0),
+        protocol: String(item?.protocol || "").trim().toLowerCase() === "udp" ? "udp" as const : "tcp" as const,
+        ready: item?.ready === true,
+      }))
+      .filter((item: AgentLocalRuntimeListenerState) => !!item.runtime && item.port > 0 && item.port <= 65535)
+    : [];
+  return { rules, tunnels, services, listeners };
 }
 
 function resolveAgentLocalRuntimeState(hostId: number, signature: string, reported: AgentLocalRuntimeState | null) {
@@ -650,6 +667,14 @@ function resolveAgentLocalRuntimeState(hostId: number, signature: string, report
     return { state: cached.state, requestLocalState: false };
   }
   return { state: null as AgentLocalRuntimeState | null, requestLocalState: true };
+}
+
+export function getAgentLocalRuntimeStateSnapshot(hostId: number) {
+  const id = Number(hostId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const cached = agentLocalRuntimeStateCache.get(id);
+  if (!cached || Date.now() - cached.updatedAt >= AGENT_CACHE_IDLE_TTL_MS) return null;
+  return { state: cached.state, updatedAt: cached.updatedAt };
 }
 
 function buildAgentStateResponseSections(sections: Record<AgentStateSectionName, any[]>, clientSignatures: AgentStateSignatures) {

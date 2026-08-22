@@ -13,6 +13,9 @@ import {
 } from "../../shared/protocolAccess";
 import { ensureAdminOrSelf } from "./helpers";
 import { reserveSpecificHostPort, type HostPortReservation } from "../portReservations";
+import { latestHostProtocolAccessRevision } from "../configAudit";
+import { getAgentLocalRuntimeStateSnapshot } from "../agentHeartbeatRoute";
+import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
 
 const protocolSchema = z.enum(["shadowsocks", "shadowsocks_ssh"]);
 const runtimeModeSchema = z.enum(["external", "managed"]);
@@ -104,7 +107,34 @@ async function validateEndpoint(input: {
 }
 
 export const protocolAccessRouter = router({
-  listEndpoints: adminProcedure.query(() => db.listProtocolEndpoints()),
+  listEndpoints: adminProcedure.query(async () => {
+    const endpoints = await db.listProtocolEndpoints();
+    const hostIds = Array.from(new Set<number>(endpoints
+      .filter((endpoint: any) => endpoint.runtimeMode === "managed")
+      .map((endpoint: any) => Number(endpoint.hostId || 0))
+      .filter((hostId: number) => hostId > 0)));
+    const hostEntries = await Promise.all(hostIds.map(async (hostId) => {
+      const [host, revision] = await Promise.all([
+        db.getHostById(hostId),
+        latestHostProtocolAccessRevision(hostId),
+      ]);
+      return [hostId, { host, revision, snapshot: getAgentLocalRuntimeStateSnapshot(hostId) }] as const;
+    }));
+    const runtimeByHostId = new Map(hostEntries);
+    return endpoints.map((endpoint: any) => {
+      const runtime = runtimeByHostId.get(Number(endpoint.hostId || 0));
+      return {
+        ...endpoint,
+        runtimeStatus: projectProtocolEndpointRuntimeStatus({
+          endpoint,
+          host: runtime?.host,
+          hostProtocolRevision: Number(runtime?.revision || 0),
+          localState: runtime?.snapshot?.state,
+          localStateUpdatedAt: runtime?.snapshot?.updatedAt,
+        }),
+      };
+    });
+  }),
 
   createEndpoint: adminProcedure.input(endpointCreateSchema).mutation(async ({ ctx, input }) => {
     const validated = await validateEndpoint(input);

@@ -5,6 +5,7 @@
 ### 新增
 
 - 增加管理员密码本机与容器重置命令，重置后自动吊销已有会话。
+- 协议接入页面显示 Agent 配置应用、GOST TCP/UDP 监听健康和最后错误状态，复用现有心跳运行态快照。
 
 ### 修复与优化
 
@@ -14,7 +15,7 @@
 
 ### 版本
 
-- 面板与 APK Release `2.3.276`，Agent `2.2.190`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+- 面板与 APK Release `2.3.276`，Agent `2.2.191`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
 
 ## [2.3.275] - 2026-08-13
 

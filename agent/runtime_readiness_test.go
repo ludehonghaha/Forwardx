@@ -77,6 +77,36 @@ func TestGostTLSListenerIsClassifiedAsTCP(t *testing.T) {
 	}
 }
 
+func TestLocalRuntimeStateReportsConfiguredListenerReadiness(t *testing.T) {
+	const port = 24567
+	snapshot := &runtimeListenSnapshot{
+		tcpPorts: map[int][]string{
+			port: {`tcp LISTEN 0 4096 *:24567 *:* users:(("forwardx-runtim",pid=42,fd=3))`},
+		},
+		udpPorts: map[int][]string{},
+		usable:   true,
+	}
+	readiness := localRuntimeReadiness{
+		gostRuntimePorts: map[int]bool{port: true},
+		gostRuntimePortProtocols: map[int]map[string]bool{
+			port: {"tcp": true, "udp": true},
+		},
+		gostRuntimeReady:           true,
+		tunnelRuntimePortProtocols: map[int]map[string]bool{},
+		nginxRuntimePortProtocols:  map[int]map[string]bool{},
+		listenSnapshot:             snapshot,
+	}
+
+	got := localRuntimeListenerStates(&readiness)
+	want := []localRuntimeListenerState{
+		{Runtime: "gost", Port: port, Protocol: "tcp", Ready: true},
+		{Runtime: "gost", Port: port, Protocol: "udp", Ready: false},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("listener states = %#v, want %#v", got, want)
+	}
+}
+
 func TestGostRuntimeReadinessCacheSeparatesMainAndTunnelScopes(t *testing.T) {
 	mainKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostMainRuntimeScope)
 	tunnelKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostTunnelRuntimeScope)
