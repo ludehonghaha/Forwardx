@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.192"
+var Version = "2.2.193"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -165,10 +165,12 @@ const runtimeServiceName = "forwardx-runtime"
 const tunnelRuntimeServiceName = "forwardx-tunnel-runtime"
 const nginxServiceName = "forwardx-nginx"
 const mieruServiceName = "forwardx-mita"
+const mihomoServiceName = "forwardx-mihomo"
 const runtimeConfigPath = "/etc/forwardx/runtime/gost.json"
 const tunnelRuntimeConfigPath = "/etc/forwardx/runtime/tunnel-gost.json"
 const nginxConfigPath = "/etc/forwardx/nginx/nginx.conf"
 const mieruConfigPath = "/etc/forwardx/mita/server.json"
+const mihomoConfigPath = "/etc/forwardx/mihomo/config.yaml"
 const mimicConfigDir = "/etc/mimic"
 const legacyGostServiceName = "forwardx-gost"
 const legacyTunnelServiceName = "forwardx-tunnels"
@@ -936,14 +938,17 @@ type localRuntimeReadiness struct {
 	tunnelRuntimePorts         map[int]bool
 	nginxRuntimePorts          map[int]bool
 	mieruRuntimePorts          map[int]bool
+	mihomoRuntimePorts         map[int]bool
 	gostRuntimePortProtocols   map[int]map[string]bool
 	tunnelRuntimePortProtocols map[int]map[string]bool
 	nginxRuntimePortProtocols  map[int]map[string]bool
 	mieruRuntimePortProtocols  map[int]map[string]bool
+	mihomoRuntimePortProtocols map[int]map[string]bool
 	gostRuntimeReady           bool
 	tunnelRuntimeReady         bool
 	nginxRuntimeReady          bool
 	mieruRuntimeReady          bool
+	mihomoRuntimeReady         bool
 	sharedRuntimeReady         bool
 	serviceStates              []localRuntimeServiceState
 	serviceActiveCache         map[string]bool
@@ -1039,14 +1044,17 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		tunnelRuntimePorts:         map[int]bool{},
 		nginxRuntimePorts:          map[int]bool{},
 		mieruRuntimePorts:          map[int]bool{},
+		mihomoRuntimePorts:         map[int]bool{},
 		gostRuntimePortProtocols:   map[int]map[string]bool{},
 		tunnelRuntimePortProtocols: map[int]map[string]bool{},
 		nginxRuntimePortProtocols:  map[int]map[string]bool{},
 		mieruRuntimePortProtocols:  map[int]map[string]bool{},
+		mihomoRuntimePortProtocols: map[int]map[string]bool{},
 		gostRuntimeReady:           true,
 		tunnelRuntimeReady:         true,
 		nginxRuntimeReady:          true,
 		mieruRuntimeReady:          true,
+		mihomoRuntimeReady:         true,
 		sharedRuntimeReady:         true,
 		serviceActiveCache:         map[string]bool{},
 		kernelSnapshot:             newKernelForwardSnapshot(),
@@ -1061,6 +1069,7 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		{tunnelRuntimeConfigPath, tunnelRuntimeServiceName, "tunnel-gost"},
 		{nginxConfigPath, nginxServiceName, "nginx"},
 		{mieruConfigPath, mieruServiceName, "mieru"},
+		{mihomoConfigPath, mihomoServiceName, "mihomo"},
 	}
 	for _, cfg := range configs {
 		var listens []runtimeListenConfig
@@ -1069,6 +1078,8 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 			listens, ok = nginxRuntimeListenConfigs(cfg.path)
 		} else if cfg.kind == "mieru" {
 			listens, ok = readMieruRuntimeServiceListens(cfg.path)
+		} else if cfg.kind == "mihomo" {
+			listens, ok = readMihomoRuntimeServiceListens(cfg.path)
 		} else {
 			listens, ok = readGostRuntimeServiceListens(cfg.path)
 		}
@@ -1081,6 +1092,9 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 				case "mieru":
 					readiness.mieruRuntimePorts[port] = true
 					addRuntimePortProtocol(readiness.mieruRuntimePortProtocols, port, protocol)
+				case "mihomo":
+					readiness.mihomoRuntimePorts[port] = true
+					addRuntimePortProtocol(readiness.mihomoRuntimePortProtocols, port, protocol)
 				case "nginx":
 					readiness.nginxRuntimePorts[port] = true
 					addRuntimePortProtocol(readiness.nginxRuntimePortProtocols, port, protocol)
@@ -1099,10 +1113,14 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		}
 		readiness.serviceActiveCache[cfg.service] = active
 		if hasWork && !active {
-			readiness.sharedRuntimeReady = false
+			if cfg.kind != "mihomo" {
+				readiness.sharedRuntimeReady = false
+			}
 			switch cfg.kind {
 			case "mieru":
 				readiness.mieruRuntimeReady = false
+			case "mihomo":
+				readiness.mihomoRuntimeReady = false
 			case "nginx":
 				readiness.nginxRuntimeReady = false
 			case "tunnel-gost":
@@ -1275,6 +1293,16 @@ func (r *localRuntimeReadiness) mieruReadyForPort(port int, protocol string) boo
 		r.mieruRuntimePorts[port] &&
 		runtimePortProtocolConfigured(r.mieruRuntimePortProtocols, port, protocol) &&
 		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"mita", "forwardx-mita"})
+}
+
+func (r *localRuntimeReadiness) mihomoReadyForPort(port int, protocol string) bool {
+	if r == nil || port <= 0 {
+		return false
+	}
+	return r.mihomoRuntimeReady &&
+		r.mihomoRuntimePorts[port] &&
+		runtimePortProtocolConfigured(r.mihomoRuntimePortProtocols, port, protocol) &&
+		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"mihomo", "forwardx-mihomo"})
 }
 
 func addrPort(addr string) int {
@@ -2209,6 +2237,7 @@ func localRuntimeListenerStates(readiness *localRuntimeReadiness) []localRuntime
 	appendStates("tunnel-gost", readiness.tunnelRuntimePortProtocols, readiness.gostTunnelReadyForPort)
 	appendStates("nginx", readiness.nginxRuntimePortProtocols, readiness.nginxReadyForPort)
 	appendStates("mieru", readiness.mieruRuntimePortProtocols, readiness.mieruReadyForPort)
+	appendStates("mihomo", readiness.mihomoRuntimePortProtocols, readiness.mihomoReadyForPort)
 	sort.Slice(listeners, func(i, j int) bool {
 		if listeners[i].Runtime != listeners[j].Runtime {
 			return listeners[i].Runtime < listeners[j].Runtime
@@ -5526,6 +5555,8 @@ func runtimeActionServicesHealthy(a action) bool {
 	switch strings.TrimSpace(a.ForwardType) {
 	case "mieru-runtime-sync":
 		services = requiredMieruRuntimeServicesFromLocalConfig()
+	case "mihomo-runtime-sync":
+		services = requiredMihomoRuntimeServicesFromLocalConfig()
 	case "nginx-runtime-sync":
 		services = requiredNginxRuntimeServicesFromLocalConfig()
 	case "gost-runtime-sync":
@@ -5556,7 +5587,7 @@ func shouldVerifyManagedRuntimeSync(a action) bool {
 		return false
 	}
 	switch strings.TrimSpace(a.ForwardType) {
-	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync":
+	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync", "mihomo-runtime-sync":
 		return true
 	default:
 		return false
@@ -5600,6 +5631,8 @@ func managedRuntimeSyncReady(a action) bool {
 		needles := []string{"gost", "forwardx-runt"}
 		if strings.Contains(strings.ToLower(service), "mita") || strings.Contains(strings.ToLower(spec.Path), "mieru") || strings.Contains(strings.ToLower(spec.Path), "/mita/") {
 			needles = []string{"mita", "forwardx-mita"}
+		} else if strings.Contains(strings.ToLower(service), "mihomo") || strings.Contains(strings.ToLower(spec.Path), "/mihomo/") {
+			needles = []string{"mihomo", "forwardx-mihomo"}
 		} else if strings.Contains(strings.ToLower(service), "nginx") || strings.Contains(strings.ToLower(spec.Path), "nginx") {
 			needles = []string{"nginx"}
 		}
@@ -5613,10 +5646,41 @@ func managedRuntimeSyncReady(a action) bool {
 	return true
 }
 
+func readMihomoRuntimeServiceListens(path string) ([]runtimeListenConfig, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var cfg struct {
+		Listeners []struct {
+			Type string `json:"type"`
+			Port int    `json:"port"`
+		} `json:"listeners"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return nil, false
+	}
+	listens := make([]runtimeListenConfig, 0, len(cfg.Listeners))
+	for _, listener := range cfg.Listeners {
+		if listener.Port <= 0 || listener.Port > 65535 {
+			continue
+		}
+		protocol := "tcp"
+		if strings.EqualFold(strings.TrimSpace(listener.Type), "hysteria2") {
+			protocol = "udp"
+		}
+		listens = append(listens, runtimeListenConfig{Addr: fmt.Sprintf(":%d", listener.Port), Protocol: protocol})
+	}
+	return listens, true
+}
+
 func managedConfigRuntimeListens(spec managedConfigSpec) ([]runtimeListenConfig, bool) {
 	path := strings.TrimSpace(spec.Path)
 	if strings.Contains(strings.ToLower(spec.ServiceName), "mita") || strings.Contains(strings.ToLower(path), "mieru") || strings.Contains(strings.ToLower(path), "/mita/") {
 		return readMieruRuntimeServiceListens(path)
+	}
+	if strings.Contains(strings.ToLower(spec.ServiceName), "mihomo") || strings.Contains(strings.ToLower(path), "/mihomo/") {
+		return readMihomoRuntimeServiceListens(path)
 	}
 	if strings.HasSuffix(strings.ToLower(path), ".json") {
 		return readGostRuntimeServiceListens(path)
@@ -5643,6 +5707,7 @@ func mimicRuntimeDiagnostics() string {
 func requiredRuntimeServicesFromLocalConfig() []string {
 	services := requiredSharedRuntimeServicesFromLocalConfig()
 	services = append(services, requiredMieruRuntimeServicesFromLocalConfig()...)
+	services = append(services, requiredMihomoRuntimeServicesFromLocalConfig()...)
 	services = append(services, managedMimicServicesFromLocalConfig()...)
 	return services
 }
@@ -5668,6 +5733,14 @@ func requiredMieruRuntimeServicesFromLocalConfig() []string {
 	listens, ok := readMieruRuntimeServiceListens(mieruConfigPath)
 	if ok && len(listens) > 0 {
 		return []string{mieruServiceName}
+	}
+	return nil
+}
+
+func requiredMihomoRuntimeServicesFromLocalConfig() []string {
+	listens, ok := readMihomoRuntimeServiceListens(mihomoConfigPath)
+	if ok && len(listens) > 0 {
+		return []string{mihomoServiceName}
 	}
 	return nil
 }

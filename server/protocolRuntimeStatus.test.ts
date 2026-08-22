@@ -34,6 +34,18 @@ function localState(listeners: Array<{ runtime: string; port: number; protocol: 
   };
 }
 
+function mihomoState(
+  listeners: Array<{ runtime: string; port: number; protocol: "tcp" | "udp"; ready: boolean }>,
+  active = true,
+) {
+  return {
+    rules: [],
+    tunnels: [],
+    services: [{ name: "forwardx-mihomo", active, hasWork: true }],
+    listeners,
+  };
+}
+
 test("checks managed Mieru against the single mita transport listener", () => {
   const result = projectProtocolEndpointRuntimeStatus({
     endpoint: endpoint({
@@ -148,25 +160,78 @@ test("keeps external endpoints outside Agent runtime status", () => {
   assert.equal(result.applied, null);
 });
 
-test("new entry protocols report applied after the generic Agent runtime action succeeds", () => {
+test("Mihomo entry protocols require Agent 2.2.193 runtime reporting", () => {
   for (const protocol of ["snell", "vless_reality", "hysteria2"]) {
     const result = projectProtocolEndpointRuntimeStatus({
       endpoint: endpoint({ protocol }),
       host: host({ agentVersion: "2.2.192", agentLastAppliedRevision: 12 }),
       hostProtocolRevision: 12,
-      localState: null,
+      localState: mihomoState([]),
     });
-    assert.equal(result.state, "healthy", protocol);
-    assert.equal(result.applied, true, protocol);
+    assert.equal(result.state, "unsupported", protocol);
     assert.equal(result.listenerHealthy, null, protocol);
-    assert.match(result.message, /forwardx-mihomo/, protocol);
+    assert.match(result.message, /2\.2\.193/, protocol);
   }
 });
 
-test("new entry protocols stay pending until the Agent applies their revision", () => {
+test("Snell and Reality require a real Mihomo TCP listener", () => {
+  for (const protocol of ["snell", "vless_reality"]) {
+    const healthy = projectProtocolEndpointRuntimeStatus({
+      endpoint: endpoint({ protocol, configJson: { listenPort: 24567, udp: true } }),
+      host: host({ agentVersion: "2.2.193" }),
+      hostProtocolRevision: 12,
+      localState: mihomoState([{ runtime: "mihomo", port: 24567, protocol: "tcp", ready: true }]),
+    });
+    assert.equal(healthy.state, "healthy", protocol);
+    assert.equal(healthy.listenerHealthy, true, protocol);
+    assert.match(healthy.message, /TCP.*24567/, protocol);
+
+    const wrongTransport = projectProtocolEndpointRuntimeStatus({
+      endpoint: endpoint({ protocol, configJson: { listenPort: 24567, udp: true } }),
+      host: host({ agentVersion: "2.2.193" }),
+      hostProtocolRevision: 12,
+      localState: mihomoState([{ runtime: "mihomo", port: 24567, protocol: "udp", ready: true }]),
+    });
+    assert.equal(wrongTransport.state, "unhealthy", protocol);
+    assert.match(wrongTransport.lastError || "", /TCP/, protocol);
+  }
+});
+
+test("Hysteria2 requires a real Mihomo UDP listener", () => {
+  const healthy = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "hysteria2", configJson: { listenPort: 24443 } }),
+    host: host({ agentVersion: "2.2.193" }),
+    hostProtocolRevision: 12,
+    localState: mihomoState([{ runtime: "mihomo", port: 24443, protocol: "udp", ready: true }]),
+  });
+  assert.equal(healthy.state, "healthy");
+  assert.match(healthy.message, /UDP.*24443/);
+
+  const tcpOnly = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "hysteria2", configJson: { listenPort: 24443 } }),
+    host: host({ agentVersion: "2.2.193" }),
+    hostProtocolRevision: 12,
+    localState: mihomoState([{ runtime: "mihomo", port: 24443, protocol: "tcp", ready: true }]),
+  });
+  assert.equal(tcpOnly.state, "unhealthy");
+  assert.match(tcpOnly.lastError || "", /UDP/);
+});
+
+test("Mihomo service failure is reported as runtime unhealthy", () => {
+  const result = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "snell", configJson: { listenPort: 13501 } }),
+    host: host({ agentVersion: "2.2.193" }),
+    hostProtocolRevision: 12,
+    localState: mihomoState([{ runtime: "mihomo", port: 13501, protocol: "tcp", ready: false }], false),
+  });
+  assert.equal(result.state, "unhealthy");
+  assert.match(result.lastError || "", /forwardx-mihomo/);
+});
+
+test("Mihomo entry protocols stay pending until the Agent applies their revision", () => {
   const result = projectProtocolEndpointRuntimeStatus({
     endpoint: endpoint({ protocol: "vless_reality" }),
-    host: host({ agentVersion: "2.2.192", agentLastAppliedRevision: 11 }),
+    host: host({ agentVersion: "2.2.193", agentLastAppliedRevision: 11 }),
     hostProtocolRevision: 12,
   });
   assert.equal(result.state, "pending");
