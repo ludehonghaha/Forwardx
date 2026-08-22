@@ -62,6 +62,7 @@ type EndpointForm = {
   mieruTrafficPattern: string;
   sortOrder: string;
   isEnabled: boolean;
+  sourceConfig: Record<string, unknown>;
 };
 
 const emptyEndpointForm: EndpointForm = {
@@ -87,6 +88,7 @@ const emptyEndpointForm: EndpointForm = {
   mieruTrafficPattern: "",
   sortOrder: "0",
   isEnabled: false,
+  sourceConfig: {},
 };
 
 const cipherOptions = [
@@ -99,6 +101,9 @@ const cipherOptions = [
 function protocolLabel(protocol?: string) {
   if (protocol === "shadowsocks_ssh") return "SS over SSH";
   if (protocol === "mieru") return "Mieru";
+  if (protocol === "snell") return "Snell";
+  if (protocol === "vless_reality") return "VLESS + Reality";
+  if (protocol === "hysteria2") return "Hysteria2";
   return "Shadowsocks";
 }
 
@@ -131,8 +136,8 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
   return {
     id: Number(endpoint.id),
     name: String(endpoint.name || ""),
-    protocol: endpoint.protocol === "shadowsocks_ssh" || endpoint.protocol === "mieru"
-      ? endpoint.protocol
+    protocol: (["shadowsocks", "shadowsocks_ssh", "mieru", "snell", "vless_reality", "hysteria2"] as string[]).includes(String(endpoint.protocol))
+      ? endpoint.protocol as ProtocolAccessProtocol
       : "shadowsocks",
     runtimeMode: endpoint.runtimeMode === "managed" ? "managed" : "external",
     hostId: endpoint.hostId ? String(endpoint.hostId) : "",
@@ -154,6 +159,7 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
     mieruTrafficPattern: typeof config.trafficPattern === "string" ? config.trafficPattern : "",
     sortOrder: String(endpoint.sortOrder || 0),
     isEnabled: endpoint.isEnabled === true,
+    sourceConfig: config,
   };
 }
 
@@ -316,8 +322,12 @@ export default function ProtocolAccessPage() {
         toast.error("Agent 监听端口必须是 1-65535");
         return;
       }
-      if (!endpointForm.password || (endpointForm.protocol === "mieru" && !endpointForm.mieruUsername.trim())) {
-        toast.error(endpointForm.protocol === "mieru" ? "托管 Mieru 必须设置共享用户名和密码" : "Agent 托管端点必须设置共享 SS 密码");
+      if (endpointForm.protocol === "shadowsocks" && !endpointForm.password) {
+        toast.error("Agent 托管 Shadowsocks 必须设置共享密码");
+        return;
+      }
+      if (endpointForm.protocol === "mieru" && (!endpointForm.password || !endpointForm.mieruUsername.trim())) {
+        toast.error("托管 Mieru 必须设置共享用户名和密码");
         return;
       }
     }
@@ -345,6 +355,10 @@ export default function ProtocolAccessPage() {
       handshakeMode: endpointForm.mieruHandshakeMode,
       trafficPattern: endpointForm.mieruTrafficPattern.trim(),
       udp: endpointForm.udp,
+    } : endpointForm.protocol === "snell" || endpointForm.protocol === "vless_reality" || endpointForm.protocol === "hysteria2" ? {
+      ...endpointForm.sourceConfig,
+      ...(endpointForm.protocol !== "vless_reality" ? { password: endpointForm.password } : {}),
+      ...(endpointForm.protocol !== "hysteria2" ? { udp: endpointForm.udp } : {}),
     } : {
       cipher: endpointForm.cipher,
       password: endpointForm.password,
@@ -458,12 +472,12 @@ export default function ProtocolAccessPage() {
     <div className="space-y-3">
       <FeedLink
         label="通用 URI 订阅"
-        description="包含 SIP002 Shadowsocks 和 Mieru 简单链接；SS over SSH 仅进入 Mihomo 订阅。"
+        description="包含 SS、Mieru、VLESS Reality 和 Hysteria2；Snell 与 SS over SSH 仅进入 Mihomo 订阅。"
         value={fullFeedUrl(feedQuery.data.uriPath)}
       />
       <FeedLink
         label="Mihomo / OpenClash 订阅"
-        description="适用于 OpenClash、Clash Meta，可包含 SS、SS over SSH 和 Mieru。"
+        description="适用于 OpenClash、Clash Meta，可包含 SS、Mieru、Snell、VLESS Reality、Hysteria2 与 SS over SSH。"
         value={fullFeedUrl(feedQuery.data.mihomoPath)}
       />
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -540,7 +554,7 @@ export default function ProtocolAccessPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">协议端点</h2>
-                <p className="text-xs text-muted-foreground">external 只登记；managed 复用 Agent desired-state。SS 合并进 GOST，Mieru 每台主机只使用一个 mita 实例。</p>
+                <p className="text-xs text-muted-foreground">external 只登记；managed 复用 Agent desired-state。SS 合并 GOST；Mieru 独立 mita；Snell / Reality / Hysteria2 每台主机共用一个 Mihomo。</p>
               </div>
               <Badge variant="outline">{endpoints.length} 个</Badge>
             </div>
@@ -552,7 +566,7 @@ export default function ProtocolAccessPage() {
                   <RadioTower className="h-8 w-8 text-muted-foreground" />
                   <div>
                     <p className="font-medium">还没有协议端点</p>
-                    <p className="text-sm text-muted-foreground">可登记现有服务，或让 ForwardX Agent 托管标准 Shadowsocks / Mieru。</p>
+                    <p className="text-sm text-muted-foreground">可登记现有服务，或让 ForwardX Agent 一键托管 SS / Mieru / Snell / VLESS Reality / Hysteria2。</p>
                   </div>
                   <Button variant="outline" onClick={openCreateEndpoint}><Plus className="mr-2 h-4 w-4" /> 新增端点</Button>
                 </CardContent>
@@ -647,7 +661,7 @@ export default function ProtocolAccessPage() {
         <DialogContent className="flex max-h-[92svh] w-[calc(100vw-1rem)] max-w-[95vw] flex-col overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="px-4 pt-4 sm:px-5 sm:pt-5">
             <DialogTitle>{endpointForm.id ? "编辑协议端点" : "新增协议端点"}</DialogTitle>
-            <DialogDescription>托管 SS 合并进现有 GOST；托管 Mieru 每台主机只生成一个 mita 配置与服务，避免重复监听。</DialogDescription>
+            <DialogDescription>SS 复用 GOST；Mieru 使用独立 mita；Snell / VLESS Reality / Hysteria2 在同一主机共用一个 forwardx-mihomo，避免重复运行时。</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4 sm:px-5">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -664,6 +678,10 @@ export default function ProtocolAccessPage() {
                     runtimeMode: runtimeMode as ProtocolAccessRuntimeMode,
                     ...(runtimeMode === "managed" ? {
                       protocol: endpointForm.protocol === "shadowsocks_ssh" ? "shadowsocks" : endpointForm.protocol,
+                    } : {
+                      protocol: (["snell", "vless_reality", "hysteria2"] as string[]).includes(endpointForm.protocol) ? "shadowsocks" : endpointForm.protocol,
+                    }),
+                    ...(runtimeMode === "managed" ? {
                       cipher: (MANAGED_SHADOWSOCKS_CIPHERS as readonly string[]).includes(endpointForm.cipher)
                         ? endpointForm.cipher
                         : MANAGED_SHADOWSOCKS_CIPHERS[0],
@@ -684,11 +702,15 @@ export default function ProtocolAccessPage() {
                   value={endpointForm.protocol}
                   onValueChange={(value) => {
                     const protocol = value as ProtocolAccessProtocol;
-                    const crossesMieruBoundary = protocol === "mieru" || endpointForm.protocol === "mieru";
+                    const changesRuntimeFamily = protocol !== endpointForm.protocol;
                     setEndpointForm({
                       ...endpointForm,
                       protocol,
-                      ...(crossesMieruBoundary ? { password: "", udp: protocol === "mieru" } : {}),
+                      ...(changesRuntimeFamily ? {
+                        password: "",
+                        sourceConfig: {},
+                        udp: ["mieru", "snell", "vless_reality"].includes(protocol),
+                      } : {}),
                     });
                   }}
                 >
@@ -697,10 +719,13 @@ export default function ProtocolAccessPage() {
                     <SelectItem value="shadowsocks">Shadowsocks</SelectItem>
                     {endpointForm.runtimeMode !== "managed" && <SelectItem value="shadowsocks_ssh">SS over SSH</SelectItem>}
                     <SelectItem value="mieru">Mieru</SelectItem>
+                    {endpointForm.runtimeMode === "managed" && <SelectItem value="snell">Snell</SelectItem>}
+                    {endpointForm.runtimeMode === "managed" && <SelectItem value="vless_reality">VLESS + Reality</SelectItem>}
+                    {endpointForm.runtimeMode === "managed" && <SelectItem value="hysteria2">Hysteria2</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>
-              {endpointForm.protocol !== "mieru" && <div className="space-y-2">
+              {(endpointForm.protocol === "shadowsocks" || endpointForm.protocol === "shadowsocks_ssh") && <div className="space-y-2">
                 <Label>加密方式</Label>
                 <Select value={endpointForm.cipher} onValueChange={(cipher) => setEndpointForm({ ...endpointForm, cipher })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -716,7 +741,7 @@ export default function ProtocolAccessPage() {
                 <Input value={endpointForm.publicHost} onChange={(event) => setEndpointForm({ ...endpointForm, publicHost: event.target.value })} placeholder="211.136.162.184" />
               </div>
               <div className="space-y-2">
-                <Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : endpointForm.protocol === "mieru" ? "Mieru 公网端口" : "SS 公网端口"}</Label>
+                <Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : `${protocolLabel(endpointForm.protocol)} 公网端口`}</Label>
                 <Input type="number" min={1} max={65535} value={endpointForm.publicPort} onChange={(event) => setEndpointForm({ ...endpointForm, publicPort: event.target.value })} />
               </div>
               {endpointForm.runtimeMode === "managed" && (
@@ -757,12 +782,16 @@ export default function ProtocolAccessPage() {
                   </div>
                   <p className="text-xs text-muted-foreground sm:col-span-2">{endpointForm.runtimeMode === "managed" ? "单一 mita 实例只编译这一份共享凭据；用户分配只控制订阅权限。" : "默认凭据必须成对填写；同时留空时，在“用户分配”中为每个用户设置独立凭据。"}</p>
                 </>
+              ) : endpointForm.protocol === "vless_reality" ? (
+                <div className="rounded-lg border p-3 text-xs leading-5 text-muted-foreground sm:col-span-2">
+                  托管 Reality 会自动生成 UUID、X25519 密钥和 Short ID；默认伪装目标为 www.cloudflare.com:443。保存后订阅自动包含客户端公钥参数。
+                </div>
               ) : (
                 <div className="space-y-2 sm:col-span-2">
-                  <Label>共享 SS 密码{endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>
+                  <Label>{endpointForm.protocol === "snell" ? "共享 Snell PSK" : endpointForm.protocol === "hysteria2" ? "共享 Hysteria2 密码" : "共享 SS 密码"}{endpointForm.runtimeMode === "managed" && (endpointForm.protocol === "snell" || endpointForm.protocol === "hysteria2") ? "（留空自动生成）" : endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>
                   <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />
                   <p className="text-xs text-muted-foreground">
-                    {endpointForm.runtimeMode === "managed" ? "托管运行时只编译这一份共享密码；用户分配只控制订阅权限。" : "留空时必须在“用户分配”中为每个用户填写独立密码。"}
+                    {endpointForm.runtimeMode === "managed" ? "托管运行时只保存这一份共享凭据；用户分配只控制订阅权限。" : "留空时必须在“用户分配”中为每个用户填写独立密码。"}
                   </p>
                 </div>
               )}
@@ -818,12 +847,14 @@ export default function ProtocolAccessPage() {
                     <Switch checked={endpointForm.udp} onCheckedChange={(udp) => setEndpointForm({ ...endpointForm, udp })} />
                   </div>
                 </>
+              ) : endpointForm.protocol === "hysteria2" ? (
+                <div className="rounded-lg border p-3 text-xs leading-5 text-muted-foreground sm:col-span-2">Hysteria2 固定使用 UDP/QUIC；托管模式自动生成自签证书并默认启用 Salamander 混淆。</div>
               ) : (
                 <div className="flex items-center justify-between gap-3 rounded-lg border p-3 sm:col-span-2">
                   <div>
                     <p className="text-sm font-medium">UDP</p>
                     <p className="text-xs text-muted-foreground">
-                      {endpointForm.runtimeMode === "managed" ? "在同一 GOST 配置中追加独立 SSU 监听。" : "仅在现有 SS 服务确实支持时开启。"}
+                      {endpointForm.protocol === "snell" ? "使用 Snell UDP over TCP。" : endpointForm.protocol === "vless_reality" ? "允许客户端通过 VLESS/XUDP 传递 UDP。" : endpointForm.runtimeMode === "managed" ? "在同一 GOST 配置中追加独立 SSU 监听。" : "仅在现有 SS 服务确实支持时开启。"}
                     </p>
                   </div>
                   <Switch checked={endpointForm.udp} onCheckedChange={(udp) => setEndpointForm({ ...endpointForm, udp })} />

@@ -73,7 +73,8 @@ function renderHysteria2Uri(entry: ProtocolFeedEntry, name: string) {
     query.set("obfs", obfsMode);
     query.set("obfs-password", protocolConfigSecret(entry.endpointConfig, "obfsPassword"));
   }
-  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  const queryText = query.toString();
+  const suffix = queryText ? `?${queryText}` : "";
   return `hysteria2://${uriComponent(effectiveProtocolSecret(entry))}@${uriHost(entry.publicHost)}:${entry.publicPort}/${suffix}`
     + `#${encodeURIComponent(name)}`;
 }

@@ -42,8 +42,8 @@ function randomProtocolSecret() {
 
 function realityKeyPair() {
   const { privateKey, publicKey } = generateKeyPairSync("x25519");
-  const privateJwk = privateKey.export({ format: "jwk" }) as JsonWebKey;
-  const publicJwk = publicKey.export({ format: "jwk" }) as JsonWebKey;
+  const privateJwk = privateKey.export({ format: "jwk" }) as { d?: string; x?: string };
+  const publicJwk = publicKey.export({ format: "jwk" }) as { d?: string; x?: string };
   if (!privateJwk.d || !publicJwk.x) throw new Error("Reality X25519 密钥生成失败");
   return { privateKey: privateJwk.d, publicKey: publicJwk.x };
 }
