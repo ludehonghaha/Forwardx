@@ -12,8 +12,8 @@
   "changelog": "移除上游白名单 shell 脚本运行时依赖，改为 ForwardX 自有防火墙适配，并补充第三方数据来源与许可证声明。",
   "tags": ["whitelist", "china-region", "firewall", "agent"],
   "license": "AGPL-3.0-only",
-  "homepage": "https://github.com/poouo/Forwardx",
-  "repository": "https://github.com/poouo/Forwardx",
+  "homepage": "https://github.com/ludehonghaha/Forwardx",
+  "repository": "https://github.com/ludehonghaha/Forwardx",
   "features": [
     {
       "title": "区域白名单",
@@ -348,7 +348,7 @@
   ],
   "data": {
     "type": "generic",
-    "repository": "https://github.com/poouo/Forwardx",
+    "repository": "https://github.com/ludehonghaha/Forwardx",
     "branch": "main",
     "files": [
       "data/asn/AS16509.txt",
