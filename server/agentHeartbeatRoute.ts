@@ -1722,7 +1722,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     // 获取该主机的转发规则
-    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, mihomoAccessRevision] = await Promise.all([
+    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, snellAccessRevision, realityAccessRevision, hysteria2AccessRevision] = await Promise.all([
       db.getForwardRulesForAgent(host.id),
       db.getTunnelsByHost(host.id),
       getForwardProtocolSettings(),
@@ -1730,8 +1730,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       db.listManagedProtocolEndpointsForHost(host.id),
       latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),
       latestHostProtocolAccessRevision(Number(host.id), "mieru"),
-      latestHostProtocolAccessRevision(Number(host.id)),
+      latestHostProtocolAccessRevision(Number(host.id), "snell"),
+      latestHostProtocolAccessRevision(Number(host.id), "vless_reality"),
+      latestHostProtocolAccessRevision(Number(host.id), "hysteria2"),
     ]);
+    const mihomoAccessRevision = Math.max(snellAccessRevision, realityAccessRevision, hysteria2AccessRevision);
     const rules = await gateForwardRulesForRuntime(rawRules as any[]);
     const actions: any[] = [];
     const dnsWatches = new Map<string, AgentDnsWatch>();
@@ -6247,7 +6250,9 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       responseIssuedAt,
       AGENT_MIHOMO_RUNTIME_RECONCILE_MS,
     );
-    if (!deferActionsForLocalState && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {
+    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
+    if (!deferActionsForLocalState && mihomoRuntimeRelevant
+      && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {
       const mihomoRuntimeSyncAction = {
         statusType: "runtime",
         ruleId: 0,
