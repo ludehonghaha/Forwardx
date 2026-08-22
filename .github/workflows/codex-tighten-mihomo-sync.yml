@@ -26,7 +26,7 @@ jobs:
           p = Path("server/agentHeartbeatRoute.ts")
           s = p.read_text()
 
-          old = '''const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, mihomoAccessRevision] = await Promise.all([
+          old = '''    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, mihomoAccessRevision] = await Promise.all([
               db.getForwardRulesForAgent(host.id),
               db.getTunnelsByHost(host.id),
               getForwardProtocolSettings(),
@@ -36,7 +36,7 @@ jobs:
               latestHostProtocolAccessRevision(Number(host.id), "mieru"),
               latestHostProtocolAccessRevision(Number(host.id)),
             ]);'''
-          new = '''const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, snellAccessRevision, realityAccessRevision, hysteria2AccessRevision] = await Promise.all([
+          new = '''    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision, snellAccessRevision, realityAccessRevision, hysteria2AccessRevision] = await Promise.all([
               db.getForwardRulesForAgent(host.id),
               db.getTunnelsByHost(host.id),
               getForwardProtocolSettings(),
@@ -53,7 +53,7 @@ jobs:
               raise SystemExit(f"revision block mismatch: {s.count(old)}")
           s = s.replace(old, new, 1)
 
-          old = '''    if (!deferActionsForLocalState && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {'''
+          old = '    if (!deferActionsForLocalState && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {'
           new = '''    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
             if (!deferActionsForLocalState && mihomoRuntimeRelevant
               && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {'''
