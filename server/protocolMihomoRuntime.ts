@@ -71,7 +71,7 @@ export function verifyMihomoRuntimeCmd(plan: ManagedMihomoRuntimePlan | null) {
   ];
   for (const socket of plan.sockets) {
     const ssFlag = socket.transport === "udp" ? "-H -lnu" : "-H -lnt";
-    checks.push(`ss ${ssFlag} | awk '{print $5}' | grep -Eq ${shQuote(`(^|:|\\])${socket.listenPort}$`)}`);
+    checks.push(`ss ${ssFlag} | awk '{print $4}' | grep -Eq ${shQuote(`(^|:|\\])${socket.listenPort}$`)}`);
   }
   return checks.join(" && ");
 }
