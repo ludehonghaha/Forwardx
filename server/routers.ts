@@ -17,6 +17,7 @@ import { telegramRouter } from "./routers/telegram";
 import { trafficBillingRouter } from "./routers/trafficBilling";
 import { tunnelsRouter } from "./routers/tunnels";
 import { usersRouter } from "./routers/users";
+import { protocolAccessRouter } from "./routers/protocolAccess";
 
 export const appRouter = router({
   system: systemRouter,
@@ -37,6 +38,7 @@ export const appRouter = router({
   trafficBilling: trafficBillingRouter,
   agentTokens: agentTokensRouter,
   announcements: announcementsRouter,
+  protocolAccess: protocolAccessRouter,
 });
 
 export type AppRouter = typeof appRouter;
