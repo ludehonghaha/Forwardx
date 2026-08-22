@@ -741,6 +741,9 @@ const IMPORT_TABLE_ORDER = [
   "plugin_store_sources",
   "plugin_assets",
   "plugin_agent_states",
+  "protocol_endpoints",
+  "protocol_user_access",
+  "protocol_feed_tokens",
   "config_audit_events",
   "system_settings",
 ] as const;
@@ -1395,6 +1398,21 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
           hostId: row.hostId,
         },
       };
+
+    case "protocol_endpoints":
+      row.hostId = mapOptionalId(maps, "hosts", source.hostId);
+      row.forwardRuleId = mapOptionalId(maps, "forward_rules", source.forwardRuleId);
+      row.createdByUserId = mapOptionalId(maps, "users", source.createdByUserId);
+      return { row };
+
+    case "protocol_user_access":
+      row.endpointId = mapRequiredId(maps, "protocol_endpoints", source.endpointId);
+      row.userId = mapRequiredId(maps, "users", source.userId);
+      return { row, existingWhere: { endpointId: row.endpointId, userId: row.userId } };
+
+    case "protocol_feed_tokens":
+      row.userId = mapRequiredId(maps, "users", source.userId);
+      return { row, existingWhere: { userId: row.userId } };
 
     case "system_settings": {
       const key = String(source.key || "");
