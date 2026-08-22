@@ -17,7 +17,7 @@ import { latestHostProtocolAccessRevision } from "../configAudit";
 import { getAgentLocalRuntimeStateSnapshot } from "../agentHeartbeatRoute";
 import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
 
-const protocolSchema = z.enum(["shadowsocks", "shadowsocks_ssh"]);
+const protocolSchema = z.enum(["shadowsocks", "shadowsocks_ssh", "mieru"]);
 const runtimeModeSchema = z.enum(["external", "managed"]);
 const configSchema = z.record(z.unknown());
 
@@ -54,7 +54,7 @@ async function validateEndpoint(input: {
     return { hostId: null, forwardRuleId: null, reservation: null as HostPortReservation | null };
   }
   if (input.protocol !== "shadowsocks") {
-    throw new Error("Agent 托管当前只支持标准 Shadowsocks；SS over SSH 请使用 external 模式");
+    throw new Error("Agent 托管当前只支持标准 Shadowsocks；SS over SSH 和 Mieru 请使用 external 模式");
   }
   const hostId = Number(input.hostId || 0);
   if (!Number.isInteger(hostId) || hostId <= 0 || !await db.getHostById(hostId)) {

@@ -1,4 +1,5 @@
 import {
+  effectiveProtocolUsername,
   effectiveProtocolSecret,
   protocolConfigBool,
   protocolConfigPort,
@@ -31,6 +32,10 @@ function sip002UserInfo(cipher: string, password: string) {
     .replace(/\//g, "_");
 }
 
+function uriComponent(value: string) {
+  return encodeURIComponent(value).replace(/'/g, "%27");
+}
+
 function uniqueEntryNames(entries: ProtocolFeedEntry[]) {
   const counts = new Map<string, number>();
   for (const entry of entries) {
@@ -54,13 +59,30 @@ export function renderProtocolUriSubscription(entries: ProtocolFeedEntry[]): Pro
       skipped.push({ assignmentId: entry.assignmentId, reason: errors.join("；") });
       continue;
     }
-    if (entry.protocol !== "shadowsocks") {
+    if (entry.protocol === "shadowsocks_ssh") {
       skipped.push({ assignmentId: entry.assignmentId, reason: "该复合协议只能输出 Mihomo 订阅" });
+      continue;
+    }
+    const name = names.get(entry.assignmentId) || entry.name.trim();
+    if (entry.protocol === "mieru") {
+      const query = [
+        ["handshake-mode", protocolConfigText(entry.endpointConfig, "handshakeMode")],
+        ["mtu", String(Number(entry.endpointConfig.mtu) || 1400)],
+        ["multiplexing", protocolConfigText(entry.endpointConfig, "multiplexing")],
+        ["port", String(entry.publicPort)],
+        ["profile", name],
+        ["protocol", protocolConfigText(entry.endpointConfig, "transport")],
+      ];
+      const trafficPattern = protocolConfigText(entry.endpointConfig, "trafficPattern");
+      if (trafficPattern) query.push(["traffic-pattern", trafficPattern]);
+      links.push(
+        `mierus://${uriComponent(effectiveProtocolUsername(entry))}:${uriComponent(effectiveProtocolSecret(entry))}`
+        + `@${uriHost(entry.publicHost)}?${query.map(([key, value]) => `${key}=${uriComponent(value)}`).join("&")}`,
+      );
       continue;
     }
     const cipher = protocolConfigText(entry.endpointConfig, "cipher");
     const password = effectiveProtocolSecret(entry);
-    const name = names.get(entry.assignmentId) || entry.name.trim();
     links.push(
       `ss://${sip002UserInfo(cipher, password)}@${uriHost(entry.publicHost)}:${entry.publicPort}`
       + `#${encodeURIComponent(name)}`,
@@ -72,6 +94,24 @@ export function renderProtocolUriSubscription(entries: ProtocolFeedEntry[]): Pro
     included: links.length,
     skipped,
   };
+}
+
+function renderMieruProxy(entry: ProtocolFeedEntry, name: string) {
+  const lines = [
+    `  - name: ${yamlString(name)}`,
+    "    type: mieru",
+    `    server: ${yamlString(entry.publicHost)}`,
+    `    port: ${entry.publicPort}`,
+    `    transport: ${protocolConfigText(entry.endpointConfig, "transport")}`,
+    `    udp: ${protocolConfigBool(entry.endpointConfig, "udp", true)}`,
+    `    username: ${yamlString(effectiveProtocolUsername(entry))}`,
+    `    password: ${yamlString(effectiveProtocolSecret(entry))}`,
+    `    multiplexing: ${protocolConfigText(entry.endpointConfig, "multiplexing")}`,
+    `    handshake-mode: ${protocolConfigText(entry.endpointConfig, "handshakeMode")}`,
+  ];
+  const trafficPattern = protocolConfigText(entry.endpointConfig, "trafficPattern");
+  if (trafficPattern) lines.push(`    traffic-pattern: ${yamlString(trafficPattern)}`);
+  return lines.join("\n");
 }
 
 function renderShadowsocksProxy(entry: ProtocolFeedEntry, name: string) {
@@ -133,7 +173,9 @@ export function renderProtocolMihomoSubscription(entries: ProtocolFeedEntry[]): 
     const name = names.get(entry.assignmentId) || entry.name.trim();
     blocks.push(entry.protocol === "shadowsocks_ssh"
       ? renderSshShadowsocksProxy(entry, name)
-      : renderShadowsocksProxy(entry, name));
+      : entry.protocol === "mieru"
+        ? renderMieruProxy(entry, name)
+        : renderShadowsocksProxy(entry, name));
   }
 
   return {

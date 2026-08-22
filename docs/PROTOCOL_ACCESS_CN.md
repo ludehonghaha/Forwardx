@@ -25,10 +25,15 @@
 
 这样生产构建仍然只有 ForwardX 的一套 Web/Server 和一套 Agent，不会重复编译两个面板。
 
-## 当前第一阶段
+## 当前能力
 
-第一阶段只开放 `runtimeMode=external`：把已经存在的 Shadowsocks 或
-Shadowsocks-over-SSH 接入登记到 ForwardX，再由 ForwardX 用户和稳定 Token 输出客户端订阅。
+`runtimeMode=external` 可登记已经存在的 Shadowsocks、Shadowsocks-over-SSH 或 Mieru
+服务，再由 ForwardX 用户和稳定 Token 输出客户端订阅。external 端点不进入 Agent
+desired state，因此登记现有 Mieru 不会重复启动或编译一份 Mieru 运行时。
+
+标准 Shadowsocks 还支持 `runtimeMode=managed`：端点直接合并进 Agent 已有的 GOST
+desired state，由同一个 `gost-runtime-sync` 原子应用和回滚，不增加进程、配置文件或任务队列。
+Mieru 和 Shadowsocks-over-SSH 当前只允许 external 模式。
 
 数据模型只有三个增量表：
 
@@ -38,23 +43,26 @@ Shadowsocks-over-SSH 接入登记到 ForwardX，再由 ForwardX 用户和稳定 
 
 订阅地址：
 
-- `/api/v1/access-feed/:token`：Base64 URI 列表；
+- `/api/v1/access-feed/:token`：Base64 URI 列表，包含 `ss://` 和 `mierus://`；
 - `/api/v1/access-feed/:token/mihomo`：Mihomo / OpenClash YAML。
 
 复合的 Shadowsocks-over-SSH 不能无损表示为普通 `ss://`，因此只进入 Mihomo 订阅。
+Mieru 同时输出官方简单分享链接和 Mihomo `type: mieru` 节点；用户名和密码可使用端点默认值，
+也可在同一份 `protocol_user_access.credentialJson` 中按 ForwardX 用户覆盖。
 若没有任何兼容节点，接口返回 404，而不是返回 HTTP 200 的空正文。
 
 外部端点的流量不经过 ForwardX，面板不会假装能够计量它。只有未来由 ForwardX
 转发规则承载的托管端点才进入现有用户流量与额度账本。
 
-## 后续托管阶段
+## 后续 Mieru 托管阶段
 
-托管协议不会复制 TMS 的推送链路，而会扩展 ForwardX 现有 desired state：
+Mieru 无法由 GOST 实现，未来托管时只会新增 Mieru 必需的 `mita` 二进制和配置，
+控制面仍扩展 ForwardX 现有 desired state，不复制 TMS 的推送链路：
 
 1. 协议端点引用现有 `hostId`；
-2. 每个用户的公网监听引用现有 `forwardRuleId`；
-3. Agent 原子写入并校验 sing-box 配置；
-4. desired state 对账运行服务；
+2. 公网入口引用现有 `forwardRuleId`，不再编译一条转发链；
+3. Agent 原子写入并校验 Mieru 配置；
+4. 同一 Agent desired state 对账 `mita` 服务；
 5. 监听和握手健康后更新运行态；
 6. 失败继续使用 ForwardX 配置审计与上一个已应用快照恢复。
 
@@ -68,4 +76,4 @@ Shadowsocks-over-SSH 接入登记到 ForwardX，再由 ForwardX 用户和稳定 
 - 无效、停用或过期用户统一返回 404；
 - SSH 私钥只会进入该用户的 Mihomo 订阅，不进入 URI 订阅；
 - 配置审计对密码、Token、私钥和 credential 字段自动脱敏；
-- 未实现托管运行态前，API 拒绝创建 `runtimeMode=managed` 端点。
+- API 只允许标准 Shadowsocks 使用 `runtimeMode=managed`；Mieru 不会误入 GOST 编译结果。
