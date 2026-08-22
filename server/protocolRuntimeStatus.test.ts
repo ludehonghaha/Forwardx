@@ -5,6 +5,7 @@ import { projectProtocolEndpointRuntimeStatus } from "./protocolRuntimeStatus";
 function endpoint(overrides: Record<string, unknown> = {}) {
   return {
     id: 7,
+    protocol: "shadowsocks",
     runtimeMode: "managed",
     publicPort: 24567,
     configJson: { listenPort: 24567, udp: false },
@@ -12,6 +13,43 @@ function endpoint(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+test("checks managed Mieru against the single mita transport listener", () => {
+  const result = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({
+      protocol: "mieru",
+      configJson: { listenPort: 22226, transport: "TCP", udp: true },
+    }),
+    host: host({ agentVersion: "2.2.192" }),
+    hostProtocolRevision: 12,
+    localState: {
+      rules: [],
+      tunnels: [],
+      services: [{ name: "forwardx-mita", active: true, hasWork: true }],
+      listeners: [{ runtime: "mieru", port: 22226, protocol: "tcp", ready: true }],
+    },
+  });
+  assert.equal(result.state, "healthy");
+  assert.match(result.message, /TCP.*22226/);
+});
+
+test("does not turn Mieru client UDP capability into a second server listener", () => {
+  const result = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({
+      protocol: "mieru",
+      configJson: { listenPort: 22226, transport: "TCP", udp: true },
+    }),
+    host: host({ agentVersion: "2.2.192" }),
+    hostProtocolRevision: 12,
+    localState: {
+      rules: [],
+      tunnels: [],
+      services: [{ name: "forwardx-mita", active: true, hasWork: true }],
+      listeners: [{ runtime: "mieru", port: 22226, protocol: "tcp", ready: true }],
+    },
+  });
+  assert.equal(result.state, "healthy");
+});
 
 function host(overrides: Record<string, unknown> = {}) {
   return {

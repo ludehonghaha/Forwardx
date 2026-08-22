@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.191"
+var Version = "2.2.192"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -164,9 +164,11 @@ const legacyConfigPath = "/etc/forwardx-agent/config.json"
 const runtimeServiceName = "forwardx-runtime"
 const tunnelRuntimeServiceName = "forwardx-tunnel-runtime"
 const nginxServiceName = "forwardx-nginx"
+const mieruServiceName = "forwardx-mita"
 const runtimeConfigPath = "/etc/forwardx/runtime/gost.json"
 const tunnelRuntimeConfigPath = "/etc/forwardx/runtime/tunnel-gost.json"
 const nginxConfigPath = "/etc/forwardx/nginx/nginx.conf"
+const mieruConfigPath = "/etc/forwardx/mita/server.json"
 const mimicConfigDir = "/etc/mimic"
 const legacyGostServiceName = "forwardx-gost"
 const legacyTunnelServiceName = "forwardx-tunnels"
@@ -933,12 +935,15 @@ type localRuntimeReadiness struct {
 	gostRuntimePorts           map[int]bool
 	tunnelRuntimePorts         map[int]bool
 	nginxRuntimePorts          map[int]bool
+	mieruRuntimePorts          map[int]bool
 	gostRuntimePortProtocols   map[int]map[string]bool
 	tunnelRuntimePortProtocols map[int]map[string]bool
 	nginxRuntimePortProtocols  map[int]map[string]bool
+	mieruRuntimePortProtocols  map[int]map[string]bool
 	gostRuntimeReady           bool
 	tunnelRuntimeReady         bool
 	nginxRuntimeReady          bool
+	mieruRuntimeReady          bool
 	sharedRuntimeReady         bool
 	serviceStates              []localRuntimeServiceState
 	serviceActiveCache         map[string]bool
@@ -1033,12 +1038,15 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		gostRuntimePorts:           map[int]bool{},
 		tunnelRuntimePorts:         map[int]bool{},
 		nginxRuntimePorts:          map[int]bool{},
+		mieruRuntimePorts:          map[int]bool{},
 		gostRuntimePortProtocols:   map[int]map[string]bool{},
 		tunnelRuntimePortProtocols: map[int]map[string]bool{},
 		nginxRuntimePortProtocols:  map[int]map[string]bool{},
+		mieruRuntimePortProtocols:  map[int]map[string]bool{},
 		gostRuntimeReady:           true,
 		tunnelRuntimeReady:         true,
 		nginxRuntimeReady:          true,
+		mieruRuntimeReady:          true,
 		sharedRuntimeReady:         true,
 		serviceActiveCache:         map[string]bool{},
 		kernelSnapshot:             newKernelForwardSnapshot(),
@@ -1052,12 +1060,15 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		{runtimeConfigPath, runtimeServiceName, "gost"},
 		{tunnelRuntimeConfigPath, tunnelRuntimeServiceName, "tunnel-gost"},
 		{nginxConfigPath, nginxServiceName, "nginx"},
+		{mieruConfigPath, mieruServiceName, "mieru"},
 	}
 	for _, cfg := range configs {
 		var listens []runtimeListenConfig
 		var ok bool
 		if cfg.kind == "nginx" {
 			listens, ok = nginxRuntimeListenConfigs(cfg.path)
+		} else if cfg.kind == "mieru" {
+			listens, ok = readMieruRuntimeServiceListens(cfg.path)
 		} else {
 			listens, ok = readGostRuntimeServiceListens(cfg.path)
 		}
@@ -1067,6 +1078,9 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 				readiness.runtimePorts[port] = true
 				protocol := normalizeRuntimeProtocol(listen.Protocol)
 				switch cfg.kind {
+				case "mieru":
+					readiness.mieruRuntimePorts[port] = true
+					addRuntimePortProtocol(readiness.mieruRuntimePortProtocols, port, protocol)
 				case "nginx":
 					readiness.nginxRuntimePorts[port] = true
 					addRuntimePortProtocol(readiness.nginxRuntimePortProtocols, port, protocol)
@@ -1087,6 +1101,8 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		if hasWork && !active {
 			readiness.sharedRuntimeReady = false
 			switch cfg.kind {
+			case "mieru":
+				readiness.mieruRuntimeReady = false
 			case "nginx":
 				readiness.nginxRuntimeReady = false
 			case "tunnel-gost":
@@ -1249,6 +1265,16 @@ func (r *localRuntimeReadiness) nginxReadyForPort(port int, protocol string) boo
 		r.nginxRuntimePorts[port] &&
 		runtimePortProtocolConfigured(r.nginxRuntimePortProtocols, port, protocol) &&
 		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"nginx"})
+}
+
+func (r *localRuntimeReadiness) mieruReadyForPort(port int, protocol string) bool {
+	if r == nil || port <= 0 {
+		return false
+	}
+	return r.mieruRuntimeReady &&
+		r.mieruRuntimePorts[port] &&
+		runtimePortProtocolConfigured(r.mieruRuntimePortProtocols, port, protocol) &&
+		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"mita", "forwardx-mita"})
 }
 
 func addrPort(addr string) int {
@@ -2182,6 +2208,7 @@ func localRuntimeListenerStates(readiness *localRuntimeReadiness) []localRuntime
 	appendStates("gost", readiness.gostRuntimePortProtocols, readiness.gostMainReadyForPort)
 	appendStates("tunnel-gost", readiness.tunnelRuntimePortProtocols, readiness.gostTunnelReadyForPort)
 	appendStates("nginx", readiness.nginxRuntimePortProtocols, readiness.nginxReadyForPort)
+	appendStates("mieru", readiness.mieruRuntimePortProtocols, readiness.mieruReadyForPort)
 	sort.Slice(listeners, func(i, j int) bool {
 		if listeners[i].Runtime != listeners[j].Runtime {
 			return listeners[i].Runtime < listeners[j].Runtime
@@ -5497,6 +5524,8 @@ func runtimeActionServicesHealthy(a action) bool {
 	}
 	services := requiredSharedRuntimeServicesFromLocalConfig()
 	switch strings.TrimSpace(a.ForwardType) {
+	case "mieru-runtime-sync":
+		services = requiredMieruRuntimeServicesFromLocalConfig()
 	case "nginx-runtime-sync":
 		services = requiredNginxRuntimeServicesFromLocalConfig()
 	case "gost-runtime-sync":
@@ -5527,7 +5556,7 @@ func shouldVerifyManagedRuntimeSync(a action) bool {
 		return false
 	}
 	switch strings.TrimSpace(a.ForwardType) {
-	case "gost-runtime-sync", "nginx-runtime-sync":
+	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync":
 		return true
 	default:
 		return false
@@ -5569,7 +5598,9 @@ func managedRuntimeSyncReady(a action) bool {
 			return false
 		}
 		needles := []string{"gost", "forwardx-runt"}
-		if strings.Contains(strings.ToLower(service), "nginx") || strings.Contains(strings.ToLower(spec.Path), "nginx") {
+		if strings.Contains(strings.ToLower(service), "mita") || strings.Contains(strings.ToLower(spec.Path), "mieru") || strings.Contains(strings.ToLower(spec.Path), "/mita/") {
+			needles = []string{"mita", "forwardx-mita"}
+		} else if strings.Contains(strings.ToLower(service), "nginx") || strings.Contains(strings.ToLower(spec.Path), "nginx") {
 			needles = []string{"nginx"}
 		}
 		for _, listen := range listens {
@@ -5584,6 +5615,9 @@ func managedRuntimeSyncReady(a action) bool {
 
 func managedConfigRuntimeListens(spec managedConfigSpec) ([]runtimeListenConfig, bool) {
 	path := strings.TrimSpace(spec.Path)
+	if strings.Contains(strings.ToLower(spec.ServiceName), "mita") || strings.Contains(strings.ToLower(path), "mieru") || strings.Contains(strings.ToLower(path), "/mita/") {
+		return readMieruRuntimeServiceListens(path)
+	}
 	if strings.HasSuffix(strings.ToLower(path), ".json") {
 		return readGostRuntimeServiceListens(path)
 	}
@@ -5608,6 +5642,7 @@ func mimicRuntimeDiagnostics() string {
 
 func requiredRuntimeServicesFromLocalConfig() []string {
 	services := requiredSharedRuntimeServicesFromLocalConfig()
+	services = append(services, requiredMieruRuntimeServicesFromLocalConfig()...)
 	services = append(services, managedMimicServicesFromLocalConfig()...)
 	return services
 }
@@ -5627,6 +5662,14 @@ func requiredGostRuntimeServicesFromLocalConfig() []string {
 		services = append(services, tunnelRuntimeServiceName)
 	}
 	return services
+}
+
+func requiredMieruRuntimeServicesFromLocalConfig() []string {
+	listens, ok := readMieruRuntimeServiceListens(mieruConfigPath)
+	if ok && len(listens) > 0 {
+		return []string{mieruServiceName}
+	}
+	return nil
 }
 
 func requiredNginxRuntimeServicesFromLocalConfig() []string {

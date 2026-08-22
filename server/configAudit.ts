@@ -144,13 +144,18 @@ export async function latestConfigRevision() {
   return Number(rows[0]?.id || 0);
 }
 
-export async function latestHostProtocolAccessRevision(hostId: number) {
+export async function latestHostProtocolAccessRevision(hostId: number, protocol?: string) {
   const db = await getDb();
   if (!db || !Number.isInteger(hostId) || hostId <= 0) return 0;
+  const normalizedProtocol = String(protocol || "").trim();
   const rows = await db.select({ id: configAuditEvents.id }).from(configAuditEvents)
     .where(and(
       eq(configAuditEvents.resourceType, "protocol_endpoint" as any),
       eq(configAuditEvents.hostId, hostId),
+      ...(normalizedProtocol ? [or(
+        like(configAuditEvents.beforeJson, `%\"protocol\":\"${normalizedProtocol}\"%`),
+        like(configAuditEvents.afterJson, `%\"protocol\":\"${normalizedProtocol}\"%`),
+      )] : []),
     ))
     .orderBy(desc(configAuditEvents.id))
     .limit(1);

@@ -82,8 +82,8 @@ const emptyEndpointForm: EndpointForm = {
   mieruUsername: "",
   mieruTransport: "TCP",
   mieruMtu: "1400",
-  mieruMultiplexing: "MULTIPLEXING_LOW",
-  mieruHandshakeMode: "HANDSHAKE_STANDARD",
+  mieruMultiplexing: "MULTIPLEXING_OFF",
+  mieruHandshakeMode: "HANDSHAKE_NO_WAIT",
   mieruTrafficPattern: "",
   sortOrder: "0",
   isEnabled: false,
@@ -149,8 +149,8 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
     mieruUsername: String(config.username || ""),
     mieruTransport: config.transport === "UDP" ? "UDP" : "TCP",
     mieruMtu: String(config.mtu || 1400),
-    mieruMultiplexing: String(config.multiplexing || "MULTIPLEXING_LOW"),
-    mieruHandshakeMode: String(config.handshakeMode || "HANDSHAKE_STANDARD"),
+    mieruMultiplexing: String(config.multiplexing || "MULTIPLEXING_OFF"),
+    mieruHandshakeMode: String(config.handshakeMode || "HANDSHAKE_NO_WAIT"),
     mieruTrafficPattern: typeof config.trafficPattern === "string" ? config.trafficPattern : "",
     sortOrder: String(endpoint.sortOrder || 0),
     isEnabled: endpoint.isEnabled === true,
@@ -316,8 +316,8 @@ export default function ProtocolAccessPage() {
         toast.error("Agent 监听端口必须是 1-65535");
         return;
       }
-      if (!endpointForm.password) {
-        toast.error("Agent 托管端点必须设置共享 SS 密码");
+      if (!endpointForm.password || (endpointForm.protocol === "mieru" && !endpointForm.mieruUsername.trim())) {
+        toast.error(endpointForm.protocol === "mieru" ? "托管 Mieru 必须设置共享用户名和密码" : "Agent 托管端点必须设置共享 SS 密码");
         return;
       }
     }
@@ -540,7 +540,7 @@ export default function ProtocolAccessPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">协议端点</h2>
-                <p className="text-xs text-muted-foreground">external 只登记；managed 复用现有 Agent 与 GOST 原子下发。</p>
+                <p className="text-xs text-muted-foreground">external 只登记；managed 复用 Agent desired-state。SS 合并进 GOST，Mieru 每台主机只使用一个 mita 实例。</p>
               </div>
               <Badge variant="outline">{endpoints.length} 个</Badge>
             </div>
@@ -552,7 +552,7 @@ export default function ProtocolAccessPage() {
                   <RadioTower className="h-8 w-8 text-muted-foreground" />
                   <div>
                     <p className="font-medium">还没有协议端点</p>
-                    <p className="text-sm text-muted-foreground">可登记现有服务，或让 ForwardX Agent 托管标准 Shadowsocks。</p>
+                    <p className="text-sm text-muted-foreground">可登记现有服务，或让 ForwardX Agent 托管标准 Shadowsocks / Mieru。</p>
                   </div>
                   <Button variant="outline" onClick={openCreateEndpoint}><Plus className="mr-2 h-4 w-4" /> 新增端点</Button>
                 </CardContent>
@@ -647,7 +647,7 @@ export default function ProtocolAccessPage() {
         <DialogContent className="flex max-h-[92svh] w-[calc(100vw-1rem)] max-w-[95vw] flex-col overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="px-4 pt-4 sm:px-5 sm:pt-5">
             <DialogTitle>{endpointForm.id ? "编辑协议端点" : "新增协议端点"}</DialogTitle>
-            <DialogDescription>托管模式直接合并进 ForwardX 现有 GOST desired-state，不创建第二套运行时。</DialogDescription>
+            <DialogDescription>托管 SS 合并进现有 GOST；托管 Mieru 每台主机只生成一个 mita 配置与服务，避免重复监听。</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4 sm:px-5">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -663,8 +663,7 @@ export default function ProtocolAccessPage() {
                     ...endpointForm,
                     runtimeMode: runtimeMode as ProtocolAccessRuntimeMode,
                     ...(runtimeMode === "managed" ? {
-                      protocol: "shadowsocks",
-                      password: endpointForm.protocol === "mieru" ? "" : endpointForm.password,
+                      protocol: endpointForm.protocol === "shadowsocks_ssh" ? "shadowsocks" : endpointForm.protocol,
                       cipher: (MANAGED_SHADOWSOCKS_CIPHERS as readonly string[]).includes(endpointForm.cipher)
                         ? endpointForm.cipher
                         : MANAGED_SHADOWSOCKS_CIPHERS[0],
@@ -682,7 +681,6 @@ export default function ProtocolAccessPage() {
               <div className="space-y-2">
                 <Label>协议</Label>
                 <Select
-                  disabled={endpointForm.runtimeMode === "managed"}
                   value={endpointForm.protocol}
                   onValueChange={(value) => {
                     const protocol = value as ProtocolAccessProtocol;
@@ -697,7 +695,7 @@ export default function ProtocolAccessPage() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="shadowsocks">Shadowsocks</SelectItem>
-                    <SelectItem value="shadowsocks_ssh">SS over SSH</SelectItem>
+                    {endpointForm.runtimeMode !== "managed" && <SelectItem value="shadowsocks_ssh">SS over SSH</SelectItem>}
                     <SelectItem value="mieru">Mieru</SelectItem>
                   </SelectContent>
                 </Select>
@@ -750,14 +748,14 @@ export default function ProtocolAccessPage() {
               {endpointForm.protocol === "mieru" ? (
                 <>
                   <div className="space-y-2">
-                    <Label>默认 Mieru 用户名（可选）</Label>
+                    <Label>共享 Mieru 用户名{endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>
                     <Input value={endpointForm.mieruUsername} onChange={(event) => setEndpointForm({ ...endpointForm, mieruUsername: event.target.value })} autoComplete="off" />
                   </div>
                   <div className="space-y-2">
-                    <Label>默认 Mieru 密码（可选）</Label>
+                    <Label>共享 Mieru 密码{endpointForm.runtimeMode === "managed" ? "" : "（可选）"}</Label>
                     <Input type="password" value={endpointForm.password} onChange={(event) => setEndpointForm({ ...endpointForm, password: event.target.value })} autoComplete="new-password" />
                   </div>
-                  <p className="text-xs text-muted-foreground sm:col-span-2">默认凭据必须成对填写；同时留空时，在“用户分配”中为每个用户设置独立凭据。</p>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">{endpointForm.runtimeMode === "managed" ? "单一 mita 实例只编译这一份共享凭据；用户分配只控制订阅权限。" : "默认凭据必须成对填写；同时留空时，在“用户分配”中为每个用户设置独立凭据。"}</p>
                 </>
               ) : (
                 <div className="space-y-2 sm:col-span-2">
@@ -875,13 +873,13 @@ export default function ProtocolAccessPage() {
               {assignmentEndpoint?.protocol === "mieru" && (
                 <div className="space-y-2">
                   <Label>独立 Mieru 用户名（可选）</Label>
-                  <Input value={assignmentUsername} onChange={(event) => setAssignmentUsername(event.target.value)} autoComplete="off" />
+                  <Input disabled={assignmentEndpoint?.runtimeMode === "managed"} value={assignmentUsername} onChange={(event) => setAssignmentUsername(event.target.value)} autoComplete="off" />
                 </div>
               )}
               <div className="space-y-2">
                 <Label>{assignmentEndpoint?.protocol === "mieru" ? "独立 Mieru 密码（可选）" : "独立 SS 密码（可选）"}</Label>
                 <Input disabled={assignmentEndpoint?.runtimeMode === "managed"} type="password" value={assignmentPassword} onChange={(event) => setAssignmentPassword(event.target.value)} autoComplete="new-password" />
-                {assignmentEndpoint?.runtimeMode === "managed" && <p className="text-xs text-muted-foreground">托管端点固定使用共享密码，避免重复编译用户监听。</p>}
+                {assignmentEndpoint?.runtimeMode === "managed" && <p className="text-xs text-muted-foreground">托管端点固定使用共享用户名和密码，用户分配只控制订阅权限。</p>}
               </div>
               <Button onClick={saveAssignment} disabled={!assignmentUserId || setAssignment.isPending}>
                 <UserPlus className="mr-2 h-4 w-4" /> 保存分配

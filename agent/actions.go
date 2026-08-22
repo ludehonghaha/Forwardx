@@ -1382,7 +1382,7 @@ func isSharedRuntimeSyncAction(a action) bool {
 		return false
 	}
 	switch strings.TrimSpace(a.ForwardType) {
-	case "gost-runtime-sync", "nginx-runtime-sync", "forwardx-wireguard":
+	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync", "forwardx-wireguard":
 		return true
 	default:
 		return false

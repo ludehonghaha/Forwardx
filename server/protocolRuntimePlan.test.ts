@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildManagedProtocolGostServices, type ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
+import { buildManagedMieruRuntimePlan, buildManagedProtocolGostServices, type ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
 
 function endpoint(overrides: Partial<ManagedProtocolEndpointRow> = {}): ManagedProtocolEndpointRow {
   return {
@@ -54,4 +54,45 @@ test("keeps external, unsupported and disabled endpoints out of Agent desired st
     endpoint({ id: 4, configJson: { cipher: "2022-blake3-aes-256-gcm", password: "secret" } }),
   ]);
   assert.deepEqual(services, []);
+});
+
+test("compiles one managed Mieru endpoint into one mita server config", () => {
+  const plan = buildManagedMieruRuntimePlan([endpoint({
+    protocol: "mieru",
+    publicPort: 22226,
+    configJson: {
+      username: "forwardx",
+      password: "managed-secret",
+      listenPort: 22226,
+      transport: "TCP",
+      mtu: 1400,
+      multiplexing: "MULTIPLEXING_OFF",
+      handshakeMode: "HANDSHAKE_NO_WAIT",
+      trafficPattern: "client-only",
+      udp: true,
+    },
+  })]);
+  assert.deepEqual(plan, {
+    endpointId: 7,
+    listenPort: 22226,
+    transport: "TCP",
+    config: {
+      portBindings: [{ port: 22226, protocol: "TCP" }],
+      users: [{ name: "forwardx", password: "managed-secret" }],
+      loggingLevel: "INFO",
+      mtu: 1400,
+    },
+  });
+  assert.equal(JSON.stringify(plan).includes("multiplexing"), false);
+  assert.equal(JSON.stringify(plan).includes("trafficPattern"), false);
+  assert.equal(buildManagedProtocolGostServices([endpoint({ protocol: "mieru" })]).length, 0);
+});
+
+test("refuses to compile duplicate or invalid managed Mieru runtimes", () => {
+  const valid = endpoint({
+    protocol: "mieru",
+    configJson: { username: "forwardx", password: "secret", transport: "TCP", mtu: 1400 },
+  });
+  assert.equal(buildManagedMieruRuntimePlan([valid, { ...valid, id: 8 }]), null);
+  assert.equal(buildManagedMieruRuntimePlan([{ ...valid, configJson: { username: "", password: "secret", transport: "TCP", mtu: 1400 } }]), null);
 });

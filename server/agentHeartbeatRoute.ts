@@ -108,7 +108,7 @@ import { gateForwardRulesForRuntime } from "./linkAccessView";
 import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity, registerPresenceCapableHost } from "./agentFastLiveness";
 import { recordAuthenticatedAgentActivity } from "./agentActivity";
-import { buildManagedProtocolGostServices } from "./protocolRuntimePlan";
+import { buildManagedMieruRuntimePlan, buildManagedProtocolGostServices } from "./protocolRuntimePlan";
 
 // DNS 解析缓存：ruleId → 主目标上次解析到的 IPv4 地址。
 // 备用出站策略里的域名由 Agent 的 TCP 拨号和健康检查动态解析。
@@ -169,11 +169,17 @@ const NGINX_CONFIG_PATH = "/etc/forwardx/nginx/nginx.conf";
 const NGINX_CERT_DIR = "/etc/forwardx/nginx/certs";
 const NGINX_ERROR_LOG_PATH = "/var/log/forwardx-agent/forwardx-nginx-error.log";
 const NGINX_SESSION_LOG_PATH = "/var/log/forwardx-agent/forwardx-nginx-session.log";
+const MIERU_VERSION = "3.35.0";
+const MIERU_BIN = "/usr/local/bin/forwardx-mita";
+const MIERU_SERVICE_NAME = "forwardx-mita";
+const MIERU_CONFIG_DIR = "/etc/forwardx/mita";
+const MIERU_CONFIG_PATH = `${MIERU_CONFIG_DIR}/server.json`;
 const REALM_CONFIG_DIR = "/etc/forwardx/realm";
 const LEGACY_GOST_SERVICE_NAME = "forwardx-gost";
 const LEGACY_TUNNEL_SERVICE_NAME = "forwardx-tunnels";
 const MIMIC_CONFIG_DIR = "/etc/mimic";
 const AGENT_FIREWALL_COUNTER_REFRESH_VERSION = "2.2.178";
+const AGENT_MIERU_RUNTIME_VERSION = "2.2.192";
 const AGENT_PROTOCOL_GUARD_BACKEND_VERSION = "2.2.127";
 export const AGENT_RATE_LIMIT_GUARD_VERSION = "2.2.187";
 const RATE_LIMIT_GUARD_FORWARD_TYPES = new Set(["iptables", "nftables", "realm", "socat", "nginx"]);
@@ -184,6 +190,7 @@ const AGENT_DESIRED_STATE_ACTIVE_RESEND_MS = 60 * 1000;
 const AGENT_RUNTIME_SYNC_REPAIR_RESEND_MS = 60 * 1000;
 const AGENT_GOST_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_NGINX_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
+const AGENT_MIERU_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_MIMIC_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_REBOOT_DETECTION_GRACE_MS = 1000;
 const AGENT_PLUGIN_SYNC_RESEND_MS = 5 * 60 * 1000;
@@ -1240,6 +1247,18 @@ function ensureNginxBinaryCmd() {
   return `if [ -e ${nginx} ]; then chmod 0755 ${nginx} 2>/dev/null || true; else for bin in /usr/sbin/nginx /usr/local/nginx/sbin/nginx $(command -v nginx 2>/dev/null || true); do [ -n "$bin" ] || continue; [ -x "$bin" ] || continue; install -m 0755 "$bin" ${nginx} && break; done; fi; [ -x ${nginx} ]`;
 }
 
+function ensureMieruBinaryCmd() {
+  const target = shQuote(MIERU_BIN);
+  const version = shQuote(MIERU_VERSION);
+  const releaseBase = shQuote(`https://github.com/enfein/mieru/releases/download/v${MIERU_VERSION}`);
+  return [
+    "mita_version_ok() { [ -x \"$1\" ] && \"$1\" version 2>&1 | grep -F -- " + version + " >/dev/null 2>&1; }",
+    `if ! mita_version_ok ${target}; then for bin in /usr/local/bin/mita /usr/bin/mita $(command -v mita 2>/dev/null || true); do [ -n "$bin" ] || continue; if mita_version_ok "$bin"; then install -m 0755 "$bin" ${target} && break; fi; done; fi`,
+    `if ! mita_version_ok ${target}; then case "$(uname -m)" in x86_64|amd64) mita_arch=amd64 ;; aarch64|arm64) mita_arch=arm64 ;; *) echo "[mieru] unsupported architecture: $(uname -m)"; exit 1 ;; esac; mita_tmp=$(mktemp -d /tmp/forwardx-mita.XXXXXX) || exit 1; mita_asset="mita_${MIERU_VERSION}_linux_${"$"}{mita_arch}.tar.gz"; mita_url=${releaseBase}/$mita_asset; if command -v curl >/dev/null 2>&1; then curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$mita_url" -o "$mita_tmp/$mita_asset"; elif command -v wget >/dev/null 2>&1; then wget -q --timeout=180 -O "$mita_tmp/$mita_asset" "$mita_url"; else echo "[mieru] curl or wget is required"; rm -rf "$mita_tmp"; exit 1; fi || { rm -rf "$mita_tmp"; exit 1; }; tar -xzf "$mita_tmp/$mita_asset" -C "$mita_tmp" || { rm -rf "$mita_tmp"; exit 1; }; mita_downloaded=$(find "$mita_tmp" -type f -name mita -perm -u+x | head -n 1); if ! mita_version_ok "$mita_downloaded"; then echo "[mieru] downloaded binary version check failed"; rm -rf "$mita_tmp"; exit 1; fi; install -m 0755 "$mita_downloaded" ${target}.new && mv -f ${target}.new ${target}; rm -rf "$mita_tmp"; fi`,
+    `mita_version_ok ${target}`,
+  ].join("; ");
+}
+
 export function buildNginxRuntimeRetirementPlan() {
   const processPattern = "[/]usr/local/bin/forwardx-nginx.*[/]etc/forwardx/nginx/nginx[.]conf";
   const persistentArtifacts = [
@@ -1693,13 +1712,14 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     // 获取该主机的转发规则
-    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, protocolAccessRevision] = await Promise.all([
+    const [rawRules, hostTunnels, forwardProtocolSettings, configRevision, managedProtocolEndpoints, shadowsocksAccessRevision, mieruAccessRevision] = await Promise.all([
       db.getForwardRulesForAgent(host.id),
       db.getTunnelsByHost(host.id),
       getForwardProtocolSettings(),
       latestConfigRevision(),
       db.listManagedProtocolEndpointsForHost(host.id),
-      latestHostProtocolAccessRevision(Number(host.id)),
+      latestHostProtocolAccessRevision(Number(host.id), "shadowsocks"),
+      latestHostProtocolAccessRevision(Number(host.id), "mieru"),
     ]);
     const rules = await gateForwardRulesForRuntime(rawRules as any[]);
     const actions: any[] = [];
@@ -3427,9 +3447,55 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       })))
       .flat()
       .filter(Boolean);
+    const managedProtocolGostServices = buildManagedProtocolGostServices(managedProtocolEndpoints as any[]);
+    const managedMieruRuntimePlan = buildManagedMieruRuntimePlan(managedProtocolEndpoints as any[]);
+    const mieruServerConfig = managedMieruRuntimePlan?.config || {
+      portBindings: [],
+      users: [],
+      loggingLevel: "INFO" as const,
+      mtu: 1400,
+    };
+    const mieruManagedConfigs = [{
+      path: MIERU_CONFIG_PATH,
+      contentBase64: Buffer.from(JSON.stringify(mieruServerConfig, null, 2), "utf8").toString("base64"),
+      format: "json",
+      mode: 0o600,
+      serviceName: MIERU_SERVICE_NAME,
+    }];
+    const mieruServiceUnit = [
+      "[Unit]",
+      "Description=ForwardX managed Mieru server",
+      "After=network.target",
+      "StartLimitIntervalSec=60",
+      "StartLimitBurst=5",
+      "",
+      "[Service]",
+      "Type=simple",
+      `ExecStart=/bin/sh -lc 'mkdir -p /run/forwardx-mita && exec /usr/bin/env MITA_CONFIG_JSON_FILE=${MIERU_CONFIG_PATH} MITA_LOG_NO_TIMESTAMP=1 MITA_UDS_PATH=/run/forwardx-mita/mita.sock MITA_INSECURE_UDS=1 ${MIERU_BIN} run'`,
+      "Restart=always",
+      "RestartSec=5",
+      "LimitNOFILE=65535",
+      "",
+      "[Install]",
+      "WantedBy=multi-user.target",
+      "",
+    ].join("\n");
+    const buildMieruRuntimeSyncCmds = () => {
+      const commands = [
+        `mkdir -p ${shQuote(MIERU_CONFIG_DIR)}`,
+        writeManagedServiceCmd(MIERU_SERVICE_NAME, mieruServiceUnit),
+      ];
+      if (managedMieruRuntimePlan) {
+        commands.unshift(ensureMieruBinaryCmd());
+        commands.push(restartManagedServiceIfConfigChangedCmd(MIERU_SERVICE_NAME, MIERU_CONFIG_PATH));
+      } else {
+        commands.push(stopManagedServiceCmd(MIERU_SERVICE_NAME));
+      }
+      return commands;
+    };
     const gostServiceConfig = [
       ...gostRuleServiceConfig,
-      ...buildManagedProtocolGostServices(managedProtocolEndpoints as any[]),
+      ...managedProtocolGostServices,
     ];
     const tunnelGostChains = (await Promise.all(gostRules
       .filter((r: any) => r.isEnabled && r.forwardType === "gost" && r.tunnelId)
@@ -4251,6 +4317,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       ));
     const gostRuntimeServiceUnhealthy = runtimeServiceUnhealthy(new Set([RUNTIME_SERVICE_NAME, TUNNEL_RUNTIME_SERVICE_NAME]));
     const nginxRuntimeServiceUnhealthy = runtimeServiceUnhealthy(new Set([NGINX_SERVICE_NAME]));
+    const mieruRuntimeServiceUnhealthy = runtimeServiceUnhealthy(new Set([MIERU_SERVICE_NAME]));
     const mimicRuntimeServiceUnhealthy = hasReportedRuntimeState && reportedRuntimeServices.some((service: AgentLocalRuntimeServiceState) => (
       String(service?.name || "").trim().startsWith("mimic@")
       && service.hasWork
@@ -5867,10 +5934,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     }
 
     const dnsRuntimeChanged = dnsChangedReports.length > 0;
-    const protocolRuntimeConfigChanged = protocolAccessRevision > Number(agentLastAppliedRevision || 0);
+    const gostProtocolRuntimeConfigChanged = shadowsocksAccessRevision > Number(agentLastAppliedRevision || 0);
+    const mieruRuntimeConfigChanged = mieruAccessRevision > Number(agentLastAppliedRevision || 0);
     const gostRuntimeConfigChanged = actions.some((action) => actionMayAffectRuntimeFamily(action, SHARED_GOST_FORWARD_TYPES))
       || dnsRuntimeChanged
-      || protocolRuntimeConfigChanged;
+      || gostProtocolRuntimeConfigChanged;
     const nginxRuntimeConfigChanged = actions.some((action) => actionMayAffectRuntimeFamily(action, SHARED_NGINX_FORWARD_TYPES)) || dnsRuntimeChanged;
     const reportedGostRuntimeServices = reportedRuntimeServices.filter((service: AgentLocalRuntimeServiceState) => {
       const name = String(service?.name || "").trim();
@@ -5892,6 +5960,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       String(service?.name || "").trim() === NGINX_SERVICE_NAME
     ));
     const reportedNginxHasWork = reportedNginxRuntimeService?.hasWork === true;
+    const reportedMieruRuntimeService = reportedRuntimeServices.find((service: AgentLocalRuntimeServiceState) => (
+      String(service?.name || "").trim() === MIERU_SERVICE_NAME
+    ));
+    const reportedMieruHasWork = reportedMieruRuntimeService?.hasWork === true;
     const nginxDesiredRelevant = (agentHostRules as any[]).some((rule: any) => {
       if (!rule || rule.pendingDelete || !rule.isEnabled) return false;
       if (rule.forwardType === "nginx") {
@@ -6063,6 +6135,63 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         actions.push(nginxRuntimeSyncAction);
         if (reportedNginxHasWork && !nginxDesiredRelevant) {
           appendPanelLog("warn", `[NginxRuntime] stale shared runtime cleanup queued host=${host.id} name=${String(host.name || "-")}`);
+        }
+      }
+    }
+    const mieruDesiredRelevant = !!managedMieruRuntimePlan;
+    const mieruReconcileCandidate = shouldReconcileGostRuntime({
+      configChanged: mieruRuntimeConfigChanged,
+      serviceUnhealthy: mieruRuntimeServiceUnhealthy,
+      bootstrap: runtimeSyncBootstrap,
+      desiredRelevant: mieruDesiredRelevant,
+      reportedHasWork: reportedMieruHasWork,
+    });
+    const mieruReconcileInterval = reportedMieruHasWork && !mieruDesiredRelevant
+      ? AGENT_RUNTIME_SYNC_REPAIR_RESEND_MS
+      : AGENT_MIERU_RUNTIME_RECONCILE_MS;
+    const mieruPeriodicReconcileDue = mieruReconcileCandidate && runtimeSyncReconcileDue(
+      Number(host.id),
+      "mieru-runtime-sync",
+      responseIssuedAt,
+      mieruReconcileInterval,
+    );
+    const mieruRuntimeRelevant = mieruDesiredRelevant || reportedMieruHasWork;
+    if (!deferActionsForLocalState
+      && isAgentVersionAtLeast(String(host.agentVersion || ""), AGENT_MIERU_RUNTIME_VERSION)
+      && mieruRuntimeRelevant && (
+      mieruRuntimeConfigChanged
+      || mieruRuntimeServiceUnhealthy
+      || runtimeSyncBootstrap
+      || mieruPeriodicReconcileDue
+    )) {
+      const mieruRuntimeSyncAction = {
+        statusType: "runtime",
+        ruleId: 0,
+        tunnelId: 0,
+        op: "apply",
+        forwardType: "mieru-runtime-sync",
+        sourcePort: 0,
+        targetIp: "",
+        targetPort: 0,
+        protocol: managedMieruRuntimePlan?.transport.toLowerCase() || "tcp",
+        knownRunning: false,
+        forceRuntimeSync: true,
+        commands: buildMieruRuntimeSyncCmds(),
+        managedConfigs: mieruManagedConfigs,
+      } as any;
+      const runtimeRepairResendMs = mieruRuntimeServiceUnhealthy
+        ? AGENT_RUNTIME_SYNC_REPAIR_RESEND_MS
+        : mieruReconcileInterval;
+      if (shouldSendRuntimeSyncAction(
+        Number(host.id),
+        mieruRuntimeSyncAction,
+        mieruRuntimeConfigChanged || runtimeSyncBootstrap,
+        responseIssuedAt,
+        runtimeRepairResendMs,
+      )) {
+        actions.push(mieruRuntimeSyncAction);
+        if (reportedMieruHasWork && !mieruDesiredRelevant) {
+          appendPanelLog("warn", `[MieruRuntime] stale managed runtime cleanup queued host=${host.id} name=${String(host.name || "-")}`);
         }
       }
     }
