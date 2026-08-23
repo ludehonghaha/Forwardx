@@ -20,14 +20,20 @@ export async function reserveManagedProtocolPort(
   options: ManagedProtocolPortAllocatorOptions,
 ): Promise<HostPortReservation | null> {
   const fixedExcluded = normalizeExcludedPorts(options.excludedPorts);
+  const rejectedPorts = new Set<number>();
   return reserveAvailableHostPort({
     hostId: options.hostId,
     protocol: options.protocol,
     findPort: async (reservedPorts) => options.findAvailablePort(normalizeExcludedPorts([
       ...fixedExcluded,
+      ...rejectedPorts,
       ...reservedPorts,
     ])),
-    isUsed: options.isPortUsed,
+    isUsed: async (port) => {
+      const used = await options.isPortUsed(port);
+      if (used) rejectedPorts.add(port);
+      return used;
+    },
     maxAttempts: 128,
   });
 }
