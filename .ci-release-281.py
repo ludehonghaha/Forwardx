@@ -41,24 +41,4 @@ if heading not in changelog:
 """
     changelog_path.write_text(anchor + section + changelog[len(anchor):])
 
-ci_path = root / ".github/workflows/ci.yml"
-ci = ci_path.read_text()
-ci = ci.replace("permissions:\n  contents: write\n", "permissions:\n  contents: read\n", 1)
-step = '''      - name: Apply staged v2.3.281 release metadata
-        if: ${{ github.event_name == 'pull_request' && hashFiles('.ci-release-281.py') != '' }}
-        run: |
-          python3 .ci-release-281.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(release): v2.3.281"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
-
-'''
-if step not in ci:
-    raise SystemExit("temporary CI release step anchor missing")
-ci_path.write_text(ci.replace(step, "", 1))
-
 Path(__file__).unlink()
