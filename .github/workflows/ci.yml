@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: forwardx-ci-${{ github.ref }}
@@ -19,6 +19,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Apply Mihomo shell and QR patch once
+        if: github.event_name == 'pull_request' && hashFiles('scripts/.tmp-fix-mihomo-qr.py') != ''
+        run: |
+          python3 scripts/.tmp-fix-mihomo-qr.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(protocol): parse Mihomo shell and add subscription QR'
+          git push origin HEAD:${{ github.head_ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
