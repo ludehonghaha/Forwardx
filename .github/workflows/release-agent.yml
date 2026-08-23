@@ -165,7 +165,21 @@ jobs:
           for name in "${asset_names[@]}"; do
             gh release download "$source_release" --pattern "$name" --dir dist/agent
           done
-          (cd dist/agent && sha256sum -c SHA256SUMS)
+
+          while read -r expected recorded_path; do
+            [ -n "${expected:-}" ] || continue
+            name="$(basename "$recorded_path")"
+            if [ ! -f "dist/agent/$name" ]; then
+              echo "::error::Checksum references missing reused asset: $name"
+              exit 1
+            fi
+            actual="$(sha256sum "dist/agent/$name" | awk '{print $1}')"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::Checksum mismatch for reused asset: $name"
+              exit 1
+            fi
+            echo "$name: OK"
+          done < dist/agent/SHA256SUMS
 
       - name: Upload Agent assets to GitHub Release
         shell: bash
