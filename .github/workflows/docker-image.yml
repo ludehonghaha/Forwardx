@@ -35,10 +35,13 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.package.outputs.version }}
+      should_build: ${{ steps.decision.outputs.should_build }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Read package version
         id: package
@@ -47,8 +50,31 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Decide whether this workflow should build
+        id: decision
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          VERSION: ${{ steps.package.outputs.version }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          set -euo pipefail
+          should_build=true
+          if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ] && [ "${PUBLISH_RELEASE:-false}" != "true" ]; then
+            if [ -n "${BEFORE_SHA:-}" ] && ! [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+              previous_version="$(git show "${BEFORE_SHA}:package.json" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(s ? JSON.parse(s).version : ""))')"
+              if [ -n "$previous_version" ] && [ "$previous_version" != "$VERSION" ]; then
+                should_build=false
+                echo "Panel version changed ${previous_version} -> ${VERSION}; skip duplicate main image and let Release Panel publish the formal image once."
+              fi
+            fi
+          fi
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+
   build:
     needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -149,6 +175,7 @@ jobs:
     needs:
       - prepare
       - build
+    if: needs.prepare.outputs.should_build == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
