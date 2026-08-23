@@ -48,6 +48,7 @@ type EndpointForm = {
   forwardRuleId: string;
   publicHost: string;
   publicPort: string;
+  autoPort: boolean;
   cipher: string;
   password: string;
   udp: boolean;
@@ -74,6 +75,7 @@ const emptyEndpointForm: EndpointForm = {
   forwardRuleId: "",
   publicHost: "",
   publicPort: "",
+  autoPort: true,
   cipher: "chacha20-ietf-poly1305",
   password: "",
   udp: false,
@@ -145,6 +147,7 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
     forwardRuleId: endpoint.forwardRuleId ? String(endpoint.forwardRuleId) : "",
     publicHost: String(endpoint.publicHost || ""),
     publicPort: String(endpoint.publicPort || ""),
+    autoPort: false,
     cipher: String(config.cipher || "chacha20-ietf-poly1305"),
     password: typeof config.password === "string" ? config.password : "",
     udp: config.udp === true,
@@ -302,6 +305,7 @@ export default function ProtocolAccessPage() {
   };
 
   const saveEndpoint = () => {
+    const autoManagedPort = endpointForm.runtimeMode === "managed" && !endpointForm.id && endpointForm.autoPort;
     const publicPort = Number(endpointForm.publicPort);
     const listenPort = Number(endpointForm.listenPort || endpointForm.publicPort);
     const remotePort = Number(endpointForm.remotePort);
@@ -309,7 +313,7 @@ export default function ProtocolAccessPage() {
       toast.error("请填写名称和公网地址");
       return;
     }
-    if (!Number.isInteger(publicPort) || publicPort < 1 || publicPort > 65535) {
+    if (!autoManagedPort && (!Number.isInteger(publicPort) || publicPort < 1 || publicPort > 65535)) {
       toast.error("公网端口必须是 1-65535");
       return;
     }
@@ -318,8 +322,12 @@ export default function ProtocolAccessPage() {
         toast.error("请选择 Agent 主机");
         return;
       }
-      if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+      if (!autoManagedPort && (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535)) {
         toast.error("Agent 监听端口必须是 1-65535");
+        return;
+      }
+      if (autoManagedPort && Number(endpointForm.forwardRuleId)) {
+        toast.error("自动分配端口不能同时关联现有 ForwardX 规则");
         return;
       }
       if (endpointForm.protocol === "shadowsocks" && !endpointForm.password) {
@@ -364,7 +372,7 @@ export default function ProtocolAccessPage() {
       password: endpointForm.password,
       udp: endpointForm.protocol === "shadowsocks" && endpointForm.udp,
     };
-    if (endpointForm.runtimeMode === "managed") config.listenPort = listenPort;
+    if (endpointForm.runtimeMode === "managed" && !autoManagedPort) config.listenPort = listenPort;
     if (endpointForm.protocol === "shadowsocks_ssh") {
       config.remotePort = remotePort;
       config.sshUsername = endpointForm.sshUsername;
@@ -379,7 +387,8 @@ export default function ProtocolAccessPage() {
         ? Number(endpointForm.forwardRuleId)
         : null,
       publicHost: endpointForm.publicHost.trim(),
-      publicPort,
+      publicPort: autoManagedPort ? undefined : publicPort,
+      autoPort: autoManagedPort,
       config,
       isEnabled: endpointForm.isEnabled,
       sortOrder: Math.max(0, Number.parseInt(endpointForm.sortOrder, 10) || 0),
@@ -686,7 +695,8 @@ export default function ProtocolAccessPage() {
                         ? endpointForm.cipher
                         : MANAGED_SHADOWSOCKS_CIPHERS[0],
                       listenPort: endpointForm.listenPort || endpointForm.publicPort,
-                    } : {}),
+                      autoPort: !endpointForm.id,
+                    } : { autoPort: false }),
                   })}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -740,12 +750,23 @@ export default function ProtocolAccessPage() {
                 <Label>公网域名或 IP</Label>
                 <Input value={endpointForm.publicHost} onChange={(event) => setEndpointForm({ ...endpointForm, publicHost: event.target.value })} placeholder="211.136.162.184" />
               </div>
-              <div className="space-y-2">
-                <Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : `${protocolLabel(endpointForm.protocol)} 公网端口`}</Label>
-                <Input type="number" min={1} max={65535} value={endpointForm.publicPort} onChange={(event) => setEndpointForm({ ...endpointForm, publicPort: event.target.value })} />
-              </div>
+              {!(endpointForm.runtimeMode === "managed" && !endpointForm.id && endpointForm.autoPort) && (
+                <div className="space-y-2">
+                  <Label>{endpointForm.protocol === "shadowsocks_ssh" ? "SSH 公网端口" : `${protocolLabel(endpointForm.protocol)} 公网端口`}</Label>
+                  <Input type="number" min={1} max={65535} value={endpointForm.publicPort} onChange={(event) => setEndpointForm({ ...endpointForm, publicPort: event.target.value })} />
+                </div>
+              )}
               {endpointForm.runtimeMode === "managed" && (
                 <>
+                  {!endpointForm.id && (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border p-3 sm:col-span-2">
+                      <div>
+                        <p className="text-sm font-medium">自动分配端口（推荐）</p>
+                        <p className="text-xs leading-5 text-muted-foreground">保存时由服务端按主机端口策略自动预约空闲端口，并避开现有转发、协议端点和 Agent 已上报监听；公网端口与 Agent 监听端口保持一致。</p>
+                      </div>
+                      <Switch checked={endpointForm.autoPort} onCheckedChange={(autoPort) => setEndpointForm({ ...endpointForm, autoPort })} />
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label>Agent 主机</Label>
                     <Select value={endpointForm.hostId} onValueChange={(hostId) => setEndpointForm({ ...endpointForm, hostId })}>
@@ -759,15 +780,19 @@ export default function ProtocolAccessPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Agent 监听端口</Label>
-                    <Input type="number" min={1} max={65535} value={endpointForm.listenPort} onChange={(event) => setEndpointForm({ ...endpointForm, listenPort: event.target.value })} />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>关联 ForwardX 规则 ID（可选）</Label>
-                    <Input type="number" min={1} value={endpointForm.forwardRuleId} onChange={(event) => setEndpointForm({ ...endpointForm, forwardRuleId: event.target.value })} placeholder="公网入口经过现有链路时填写" />
-                    <p className="text-xs text-muted-foreground">填写后只引用现有转发规则，不会再编译一条重复链路；规则源端口需等于公网端口，目标端口需等于 Agent 监听端口。</p>
-                  </div>
+                  {(!endpointForm.autoPort || !!endpointForm.id) && (
+                    <div className="space-y-2">
+                      <Label>Agent 监听端口</Label>
+                      <Input type="number" min={1} max={65535} value={endpointForm.listenPort} onChange={(event) => setEndpointForm({ ...endpointForm, listenPort: event.target.value })} />
+                    </div>
+                  )}
+                  {(!endpointForm.autoPort || !!endpointForm.id) && (
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label>关联 ForwardX 规则 ID（可选）</Label>
+                      <Input type="number" min={1} value={endpointForm.forwardRuleId} onChange={(event) => setEndpointForm({ ...endpointForm, forwardRuleId: event.target.value })} placeholder="公网入口经过现有链路时填写" />
+                      <p className="text-xs text-muted-foreground">填写后只引用现有转发规则，不会再编译一条重复链路；规则源端口需等于公网端口，目标端口需等于 Agent 监听端口。</p>
+                    </div>
+                  )}
                 </>
               )}
               {endpointForm.protocol === "mieru" ? (

@@ -15,6 +15,7 @@ import {
 } from "../../shared/protocolAccess";
 import { ensureAdminOrSelf } from "./helpers";
 import { reserveSpecificHostPort, type HostPortReservation } from "../portReservations";
+import { reserveManagedProtocolPort } from "../protocolManagedPort";
 import { latestHostProtocolAccessRevision } from "../configAudit";
 import { getAgentLocalRuntimeStateSnapshot } from "../agentHeartbeatRoute";
 import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
@@ -30,7 +31,8 @@ const endpointCreateSchema = z.object({
   hostId: z.number().int().positive().nullable().optional(),
   forwardRuleId: z.number().int().positive().nullable().optional(),
   publicHost: z.string().trim().min(1).max(253),
-  publicPort: z.number().int().min(1).max(65535),
+  publicPort: z.number().int().min(1).max(65535).nullable().optional(),
+  autoPort: z.boolean().optional().default(false),
   config: configSchema,
   isEnabled: z.boolean().default(false),
   sortOrder: z.number().int().min(0).default(0),
@@ -95,7 +97,11 @@ async function validateEndpoint(input: {
   publicPort: number;
   config: Record<string, unknown>;
   isEnabled: boolean;
+  preReservation?: HostPortReservation | null;
 }) {
+  if (!Number.isInteger(input.publicPort) || input.publicPort < 1 || input.publicPort > 65535) {
+    throw new Error("公网端口必须是 1-65535");
+  }
   if (/\s|:\/\//.test(input.publicHost)) {
     throw new Error("publicHost 只能填写域名或 IP，不能包含协议头或空格");
   }
@@ -154,6 +160,12 @@ async function validateEndpoint(input: {
     if (serverProtocol === "tcp" && ruleProtocol !== "tcp" && ruleProtocol !== "both") throw new Error("关联规则必须包含 TCP 转发");
     if (serverProtocol === "udp" && ruleProtocol !== "udp" && ruleProtocol !== "both") throw new Error("关联规则必须包含 UDP 转发");
   }
+  if (input.preReservation) {
+    if (input.preReservation.hostId !== hostId || input.preReservation.port !== listenPort || input.preReservation.protocol !== serverProtocol) {
+      throw new Error("自动分配端口预约与端点配置不一致");
+    }
+    return { hostId, forwardRuleId, reservation: input.preReservation };
+  }
   if (!input.isEnabled) return { hostId, forwardRuleId, reservation: null as HostPortReservation | null };
   const reservation = await reserveSpecificHostPort({
     hostId,
@@ -197,8 +209,51 @@ export const protocolAccessRouter = router({
 
   createEndpoint: adminProcedure.input(endpointCreateSchema).mutation(async ({ ctx, input }) => {
     const config = provisionManagedProtocolConfig(input.protocol, input.runtimeMode, input.config);
-    const validated = await validateEndpoint({ ...input, config });
+    let publicPort = Number(input.publicPort || 0);
+    let reservation: HostPortReservation | null = null;
     try {
+      if (input.autoPort) {
+        if (input.runtimeMode !== "managed") throw new Error("自动分配端口仅支持 Agent 托管端点");
+        if (input.forwardRuleId) throw new Error("关联现有 ForwardX 规则时不能自动分配端口");
+        const hostId = Number(input.hostId || 0);
+        if (!Number.isInteger(hostId) || hostId <= 0 || !await db.getHostById(hostId)) {
+          throw new Error("请选择有效的 ForwardX Agent 主机");
+        }
+        const serverProtocol = managedProtocolSocketProtocol(input.protocol, config);
+        const runtimeState = getAgentLocalRuntimeStateSnapshot(hostId)?.state;
+        const runtimePorts = (runtimeState?.listeners || [])
+          .filter((listener) => listener.ready)
+          .map((listener) => Number(listener.port || 0))
+          .filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
+        reservation = await reserveManagedProtocolPort({
+          hostId,
+          protocol: serverProtocol,
+          excludedPorts: runtimePorts,
+          findAvailablePort: (excludedPorts) => db.findAvailablePort(
+            hostId,
+            undefined,
+            undefined,
+            serverProtocol,
+            excludedPorts,
+            [],
+            [],
+          ),
+          isPortUsed: (port) => db.isPortUsedOnHost(
+            hostId,
+            port,
+            undefined,
+            serverProtocol,
+            undefined,
+            true,
+          ),
+        });
+        if (!reservation) throw new Error("该 Agent 主机端口区间内已无可用端口");
+        publicPort = reservation.port;
+        config.listenPort = reservation.port;
+      }
+      if (!publicPort) throw new Error("请填写公网端口，或开启自动分配端口");
+      const validated = await validateEndpoint({ ...input, publicPort, config, preReservation: reservation });
+      reservation = validated.reservation;
       return await db.createProtocolEndpoint({
         name: input.name,
         protocol: input.protocol,
@@ -206,14 +261,14 @@ export const protocolAccessRouter = router({
         hostId: validated.hostId,
         forwardRuleId: validated.forwardRuleId,
         publicHost: input.publicHost,
-        publicPort: input.publicPort,
+        publicPort,
         configJson: config,
         isEnabled: input.isEnabled,
         sortOrder: input.sortOrder,
         createdByUserId: ctx.user.id,
       } as any);
     } finally {
-      validated.reservation?.release();
+      reservation?.release();
     }
   }),
 
@@ -222,6 +277,7 @@ export const protocolAccessRouter = router({
   })).mutation(async ({ input }) => {
     const current = await db.getProtocolEndpointById(input.id);
     if (!current) throw new Error("协议接入端点不存在");
+    if (input.autoPort) throw new Error("自动分配端口仅用于新建托管端点；编辑时请保留现有端口或手动修改");
     const protocol = (input.protocol || current.protocol) as ProtocolAccessProtocol;
     const runtimeMode = input.runtimeMode || current.runtimeMode as "external" | "managed";
     const publicHost = input.publicHost || current.publicHost;
@@ -255,7 +311,7 @@ export const protocolAccessRouter = router({
       config,
       isEnabled,
     });
-    const { id, config: _config, ...patch } = input;
+    const { id, config: _config, autoPort: _autoPort, ...patch } = input;
     try {
       return await db.updateProtocolEndpoint(id, {
         ...patch,
