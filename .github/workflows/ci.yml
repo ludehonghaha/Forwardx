@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: forwardx-ci-${{ github.ref }}
@@ -19,26 +19,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: codex/release-2.3.279
-          fetch-depth: 0
-
-      - name: Apply release metadata and clean temporary patch
-        if: ${{ !contains(github.event.pull_request.head.sha || github.sha, 'never') }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f .ci-release-279.py ]; then
-            python3 .ci-release-279.py
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git fetch origin main
-            git checkout origin/main -- .github/workflows/ci.yml
-            git rm .ci-release-279.py
-            git add package.json shared/versions.ts CHANGELOG.md .github/workflows/ci.yml
-            git commit -m "chore(release): v2.3.279"
-            git push origin HEAD:codex/release-2.3.279
-          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
