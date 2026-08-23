@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.280] - 2026-08-23
+
+### 修复
+
+- 修复 Agent 托管 Snell / VLESS + Reality / Hysteria2 首次安装 Mihomo 时生成的 POSIX shell 命令缺少复合命令分隔符，导致 `/bin/sh` 报 `Syntax error: "if" unexpected`、Mihomo 未下载且协议端口不监听的问题。
+- 协议运行时测试新增真实 `sh -n` 语法校验，后续生成的 Mihomo 安装命令若无法被 `/bin/sh` 解析会直接在 CI 阶段失败。
+
+### 新增
+
+- 「协议接入」用户订阅地址增加浏览器本地生成的二维码，可直接使用支持订阅扫码的客户端导入；订阅 Token 不会发送到第三方二维码服务。
+
+### 版本
+
+- 面板与 APK Release `2.3.280`，Agent `2.2.193`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.279] - 2026-08-23
 
 ### 新增

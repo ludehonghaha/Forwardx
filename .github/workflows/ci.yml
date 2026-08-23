@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: forwardx-ci-${{ github.ref }}
@@ -19,18 +19,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-
-      - name: Apply v2.3.280 release metadata once
-        if: github.event_name == 'pull_request' && hashFiles('scripts/.tmp-release-2.3.280.py') != ''
-        run: |
-          python3 scripts/.tmp-release-2.3.280.py
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'chore(release): v2.3.280'
-          git push origin HEAD:${{ github.head_ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
