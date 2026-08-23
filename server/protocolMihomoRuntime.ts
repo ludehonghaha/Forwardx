@@ -24,7 +24,7 @@ export function ensureMihomoBinaryCmd() {
     `  gzip -dc "$tmp_gz" > "$tmp_bin"; chmod 0755 "$tmp_bin"; mihomo_version_ok "$tmp_bin"; install -m 0755 "$tmp_bin" ${target};`,
     `  rm -f "$tmp_gz" "$tmp_bin"; trap - EXIT;`,
     `fi; mihomo_version_ok ${target}`,
-  ].join(" ");
+  ].join("\n");
 }
 
 export function mihomoServiceUnit() {
