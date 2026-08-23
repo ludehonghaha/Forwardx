@@ -85,6 +85,7 @@ jobs:
             org.opencontainers.image.title=ForwardX
             org.opencontainers.image.description=ForwardX port forwarding panel
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
             org.forwardx.version=${{ needs.prepare.outputs.version }}
           build-args: |
             FORWARDX_VERSION=${{ needs.prepare.outputs.version }}
@@ -180,20 +181,30 @@ jobs:
             sources+=("${IMAGE_NAME}@sha256:$(basename "${digest_file}")")
           done
 
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            primary_tag="${IMAGE_NAME}:v${VERSION}"
+            secondary_tag="${IMAGE_NAME}:latest"
+            publish_mode="release"
+          else
+            primary_tag="${IMAGE_NAME}:main"
+            secondary_tag="${IMAGE_NAME}:sha-${GITHUB_SHA:0:12}"
+            publish_mode="main"
+          fi
+
           docker buildx imagetools create \
-            -t "${IMAGE_NAME}:v${VERSION}" \
-            -t "${IMAGE_NAME}:latest" \
+            -t "${primary_tag}" \
+            -t "${secondary_tag}" \
             "${sources[@]}"
 
-          manifest_json="$(docker buildx imagetools inspect "${IMAGE_NAME}:v${VERSION}" --raw)"
+          manifest_json="$(docker buildx imagetools inspect "${primary_tag}" --raw)"
           echo "${manifest_json}" | jq -e '
             ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1
             and
             ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1
           '
 
-          version_digest="$(docker buildx imagetools inspect "${IMAGE_NAME}:v${VERSION}" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
-          latest_digest="$(docker buildx imagetools inspect "${IMAGE_NAME}:latest" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
-          test -n "${version_digest}"
-          test "${version_digest}" = "${latest_digest}"
-          echo "Published ${IMAGE_NAME}:v${VERSION} and latest at ${version_digest}"
+          primary_digest="$(docker buildx imagetools inspect "${primary_tag}" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
+          secondary_digest="$(docker buildx imagetools inspect "${secondary_tag}" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
+          test -n "${primary_digest}"
+          test "${primary_digest}" = "${secondary_digest}"
+          echo "Published ${publish_mode} image ${primary_tag} and ${secondary_tag} at ${primary_digest}"
