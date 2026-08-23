@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.281] - 2026-08-23
+
+### 修复
+
+- 修复 Agent 托管 Mihomo 在 `systemctl restart` 后立即只检查一次监听端口造成的启动竞态：Reality / Snell / Hysteria2 现在会在配置校验通过后等待服务与预期 TCP/UDP socket 就绪，再决定是否回滚，避免 Mihomo 已正常启动却因监听尚未完成而被错误停止。
+- Mihomo 运行时测试新增 POSIX `/bin/sh` 语法覆盖，并验证就绪检测包含有限次数重试、真实 TCP/UDP socket 检查及失败退出。
+
+### 版本
+
+- 面板与 APK Release `2.3.281`，Agent `2.2.193`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.280] - 2026-08-23
 
 ### 修复
