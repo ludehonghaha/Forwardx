@@ -61,6 +61,8 @@ type EndpointForm = {
   mieruMultiplexing: string;
   mieruHandshakeMode: string;
   mieruTrafficPattern: string;
+  realityServerName: string;
+  realityDest: string;
   sortOrder: string;
   isEnabled: boolean;
   sourceConfig: Record<string, unknown>;
@@ -88,6 +90,8 @@ const emptyEndpointForm: EndpointForm = {
   mieruMultiplexing: "MULTIPLEXING_OFF",
   mieruHandshakeMode: "HANDSHAKE_NO_WAIT",
   mieruTrafficPattern: "",
+  realityServerName: "www.cloudflare.com",
+  realityDest: "www.cloudflare.com:443",
   sortOrder: "0",
   isEnabled: false,
   sourceConfig: {},
@@ -113,6 +117,17 @@ function userLabel(user: any) {
   const name = String(user?.name || "").trim();
   const username = String(user?.username || "").trim();
   return name && name !== username ? `${name}（${username}）` : username || `用户 #${user?.id}`;
+}
+
+function recommendedHostAddress(host: any) {
+  const candidates = [
+    host?.ddnsEnabled ? host?.ddnsDomain : "",
+    host?.entryIp,
+    host?.ipv4,
+    host?.ip,
+    host?.ipv6,
+  ];
+  return candidates.map((value) => String(value || "").trim()).find(Boolean) || "";
 }
 
 function endpointAddress(endpoint: any) {
@@ -160,6 +175,8 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
     mieruMultiplexing: String(config.multiplexing || "MULTIPLEXING_OFF"),
     mieruHandshakeMode: String(config.handshakeMode || "HANDSHAKE_NO_WAIT"),
     mieruTrafficPattern: typeof config.trafficPattern === "string" ? config.trafficPattern : "",
+    realityServerName: typeof config.serverName === "string" && config.serverName.trim() ? config.serverName : "www.cloudflare.com",
+    realityDest: typeof config.realityDest === "string" && config.realityDest.trim() ? config.realityDest : "www.cloudflare.com:443",
     sortOrder: String(endpoint.sortOrder || 0),
     isEnabled: endpoint.isEnabled === true,
     sourceConfig: config,
@@ -339,6 +356,10 @@ export default function ProtocolAccessPage() {
         return;
       }
     }
+    if (endpointForm.protocol === "vless_reality" && (!endpointForm.realityServerName.trim() || !endpointForm.realityDest.trim())) {
+      toast.error("Reality SNI 和 Dest 不能为空");
+      return;
+    }
     if (endpointForm.protocol === "mieru") {
       const mtu = Number(endpointForm.mieruMtu);
       if (!Number.isInteger(mtu) || mtu < 1280 || mtu > 1400) {
@@ -367,6 +388,10 @@ export default function ProtocolAccessPage() {
       ...endpointForm.sourceConfig,
       ...(endpointForm.protocol !== "vless_reality" ? { password: endpointForm.password } : {}),
       ...(endpointForm.protocol !== "hysteria2" ? { udp: endpointForm.udp } : {}),
+      ...(endpointForm.protocol === "vless_reality" ? {
+        serverName: endpointForm.realityServerName.trim(),
+        realityDest: endpointForm.realityDest.trim(),
+      } : {}),
     } : {
       cipher: endpointForm.cipher,
       password: endpointForm.password,
@@ -720,6 +745,10 @@ export default function ProtocolAccessPage() {
                         password: "",
                         sourceConfig: {},
                         udp: ["mieru", "snell", "vless_reality"].includes(protocol),
+                        ...(protocol === "vless_reality" ? {
+                          realityServerName: "www.cloudflare.com",
+                          realityDest: "www.cloudflare.com:443",
+                        } : {}),
                       } : {}),
                     });
                   }}
@@ -769,7 +798,18 @@ export default function ProtocolAccessPage() {
                   )}
                   <div className="space-y-2">
                     <Label>Agent 主机</Label>
-                    <Select value={endpointForm.hostId} onValueChange={(hostId) => setEndpointForm({ ...endpointForm, hostId })}>
+                    <Select
+                      value={endpointForm.hostId}
+                      onValueChange={(hostId) => {
+                        const host = hosts.find((item) => Number(item.id) === Number(hostId));
+                        const publicHost = recommendedHostAddress(host);
+                        setEndpointForm({
+                          ...endpointForm,
+                          hostId,
+                          ...(publicHost ? { publicHost } : {}),
+                        });
+                      }}
+                    >
                       <SelectTrigger><SelectValue placeholder="选择主机" /></SelectTrigger>
                       <SelectContent>
                         {hosts.map((host) => (
@@ -808,8 +848,28 @@ export default function ProtocolAccessPage() {
                   <p className="text-xs text-muted-foreground sm:col-span-2">{endpointForm.runtimeMode === "managed" ? "单一 mita 实例只编译这一份共享凭据；用户分配只控制订阅权限。" : "默认凭据必须成对填写；同时留空时，在“用户分配”中为每个用户设置独立凭据。"}</p>
                 </>
               ) : endpointForm.protocol === "vless_reality" ? (
-                <div className="rounded-lg border p-3 text-xs leading-5 text-muted-foreground sm:col-span-2">
-                  托管 Reality 会自动生成 UUID、X25519 密钥和 Short ID；默认伪装目标为 www.cloudflare.com:443。保存后订阅自动包含客户端公钥参数。
+                <div className="grid gap-3 rounded-lg border p-3 sm:col-span-2 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Reality Server Name（SNI）</Label>
+                    <Input
+                      value={endpointForm.realityServerName}
+                      onChange={(event) => setEndpointForm({ ...endpointForm, realityServerName: event.target.value })}
+                      placeholder="www.cloudflare.com"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Reality Dest</Label>
+                    <Input
+                      value={endpointForm.realityDest}
+                      onChange={(event) => setEndpointForm({ ...endpointForm, realityDest: event.target.value })}
+                      placeholder="www.cloudflare.com:443"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+                    默认使用 Cloudflare；你可以直接改成自己的 SNI 和目标域名:端口。UUID、X25519 密钥与 Short ID 仍由 ForwardX 自动生成。
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-2 sm:col-span-2">
