@@ -2,6 +2,12 @@ name: Docker Image
 
 on:
   workflow_call:
+    inputs:
+      publish_release:
+        description: Publish immutable version and latest tags
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
   push:
     branches:
@@ -29,10 +35,13 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.package.outputs.version }}
+      should_build: ${{ steps.decision.outputs.should_build }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Read package version
         id: package
@@ -41,8 +50,31 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Decide whether this workflow should build
+        id: decision
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          VERSION: ${{ steps.package.outputs.version }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          set -euo pipefail
+          should_build=true
+          if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ] && [ "${PUBLISH_RELEASE:-false}" != "true" ]; then
+            if [ -n "${BEFORE_SHA:-}" ] && ! [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+              previous_version="$(git show "${BEFORE_SHA}:package.json" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(s ? JSON.parse(s).version : ""))')"
+              if [ -n "$previous_version" ] && [ "$previous_version" != "$VERSION" ]; then
+                should_build=false
+                echo "Panel version changed ${previous_version} -> ${VERSION}; skip duplicate main image and let Release Panel publish the formal image once."
+              fi
+            fi
+          fi
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+
   build:
     needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -85,6 +117,7 @@ jobs:
             org.opencontainers.image.title=ForwardX
             org.opencontainers.image.description=ForwardX port forwarding panel
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
             org.forwardx.version=${{ needs.prepare.outputs.version }}
           build-args: |
             FORWARDX_VERSION=${{ needs.prepare.outputs.version }}
@@ -142,6 +175,7 @@ jobs:
     needs:
       - prepare
       - build
+    if: needs.prepare.outputs.should_build == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -167,6 +201,7 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
           set -euo pipefail
           mapfile -t digest_files < <(find "${RUNNER_TEMP}/digests" -maxdepth 1 -type f | sort)
@@ -180,20 +215,30 @@ jobs:
             sources+=("${IMAGE_NAME}@sha256:$(basename "${digest_file}")")
           done
 
+          if [[ "$GITHUB_REF" == refs/tags/* ]] || [ "${PUBLISH_RELEASE:-false}" = "true" ]; then
+            primary_tag="${IMAGE_NAME}:v${VERSION}"
+            secondary_tag="${IMAGE_NAME}:latest"
+            publish_mode="release"
+          else
+            primary_tag="${IMAGE_NAME}:main"
+            secondary_tag="${IMAGE_NAME}:sha-${GITHUB_SHA:0:12}"
+            publish_mode="main"
+          fi
+
           docker buildx imagetools create \
-            -t "${IMAGE_NAME}:v${VERSION}" \
-            -t "${IMAGE_NAME}:latest" \
+            -t "${primary_tag}" \
+            -t "${secondary_tag}" \
             "${sources[@]}"
 
-          manifest_json="$(docker buildx imagetools inspect "${IMAGE_NAME}:v${VERSION}" --raw)"
+          manifest_json="$(docker buildx imagetools inspect "${primary_tag}" --raw)"
           echo "${manifest_json}" | jq -e '
             ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1
             and
             ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1
           '
 
-          version_digest="$(docker buildx imagetools inspect "${IMAGE_NAME}:v${VERSION}" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
-          latest_digest="$(docker buildx imagetools inspect "${IMAGE_NAME}:latest" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
-          test -n "${version_digest}"
-          test "${version_digest}" = "${latest_digest}"
-          echo "Published ${IMAGE_NAME}:v${VERSION} and latest at ${version_digest}"
+          primary_digest="$(docker buildx imagetools inspect "${primary_tag}" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
+          secondary_digest="$(docker buildx imagetools inspect "${secondary_tag}" | awk '$1 == "Digest:" { digest=$2 } END { print digest }')"
+          test -n "${primary_digest}"
+          test "${primary_digest}" = "${secondary_digest}"
+          echo "Published ${publish_mode} image ${primary_tag} and ${secondary_tag} at ${primary_digest}"
