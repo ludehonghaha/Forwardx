@@ -2,6 +2,12 @@ name: Release Agent
 
 on:
   workflow_dispatch:
+    inputs:
+      force_agent_rebuild:
+        description: Force rebuilding Agent/FXP/runtime assets
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -11,9 +17,11 @@ on:
       - "shared/versions.ts"
       - "scripts/build-agent-release.sh"
       - "THIRD_PARTY_NOTICES.md"
+      - ".github/workflows/release-agent.yml"
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: forwardx-release-agent-${{ github.ref_name }}
@@ -43,24 +51,68 @@ jobs:
       - name: Check release versions
         run: npm run check:versions
 
+      - name: Inspect target Release assets
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          agent_assets_complete=false
+          panel_bundle_exists=false
+          asset_names=(
+            forwardx-agent-linux-amd64
+            forwardx-agent-linux-arm64
+            forwardx-fxp-linux-amd64
+            forwardx-fxp-linux-arm64
+            forwardx-runtime-linux-amd64
+            forwardx-runtime-linux-arm64
+            SHA256SUMS
+            THIRD_PARTY_NOTICES.md
+          )
+
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            names="$(gh release view "$RELEASE_VERSION" --json assets --jq '.assets[].name')"
+            agent_assets_complete=true
+            for name in "${asset_names[@]}"; do
+              if ! grep -Fxq "$name" <<< "$names"; then
+                agent_assets_complete=false
+                break
+              fi
+            done
+            panel_bundle="forwardx-panel-${RELEASE_VERSION}.tar.gz"
+            if grep -Fxq "$panel_bundle" <<< "$names"; then
+              panel_bundle_exists=true
+            fi
+          fi
+
+          echo "agent_assets_complete=$agent_assets_complete" >> "$GITHUB_OUTPUT"
+          echo "panel_bundle_exists=$panel_bundle_exists" >> "$GITHUB_OUTPUT"
+          echo "Target release Agent assets complete: $agent_assets_complete"
+          echo "Target release panel bundle exists: $panel_bundle_exists"
+
       - name: Detect Agent release input changes
         id: inputs
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
+          FORCE_AGENT_REBUILD: ${{ inputs.force_agent_rebuild }}
         run: |
           set -euo pipefail
           build=false
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "${FORCE_AGENT_REBUILD:-false}" = "true" ]; then
             build=true
-          elif [ -z "${BEFORE_SHA:-}" ] || [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
-            build=true
-          else
-            changed="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
-            printf '%s\n' "$changed"
-            if grep -Eq '^(agent/|forwardx-fxp/|scripts/build-agent-release\.sh$|THIRD_PARTY_NOTICES\.md$)' <<< "$changed"; then
+          elif [ "$EVENT_NAME" = "push" ]; then
+            if [ -z "${BEFORE_SHA:-}" ] || [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
               build=true
+            else
+              changed="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
+              printf '%s\n' "$changed"
+              if grep -Eq '^(agent/|forwardx-fxp/|scripts/build-agent-release\.sh$|THIRD_PARTY_NOTICES\.md$)' <<< "$changed"; then
+                build=true
+              fi
             fi
           fi
           echo "build=$build" >> "$GITHUB_OUTPUT"
@@ -105,7 +157,7 @@ jobs:
         run: bash scripts/build-agent-release.sh
 
       - name: Reuse unchanged Agent assets from previous Release
-        if: steps.inputs.outputs.build != 'true'
+        if: steps.inputs.outputs.build != 'true' && steps.target.outputs.agent_assets_complete != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -182,6 +234,7 @@ jobs:
           fi
 
       - name: Upload Agent assets to GitHub Release
+        if: steps.inputs.outputs.build == 'true' || steps.target.outputs.agent_assets_complete != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -224,3 +277,19 @@ jobs:
           }
 
           upload_with_retry
+
+      - name: Dispatch missing Panel release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          panel_bundle="forwardx-panel-${RELEASE_VERSION}.tar.gz"
+          names="$(gh release view "$RELEASE_VERSION" --json assets --jq '.assets[].name')"
+          if grep -Fxq "$panel_bundle" <<< "$names"; then
+            echo "Panel bundle already exists for ${RELEASE_VERSION}; no dispatch needed."
+            exit 0
+          fi
+          echo "Panel bundle is missing for ${RELEASE_VERSION}; dispatching Release Panel explicitly."
+          gh workflow run release-panel.yml --ref main
