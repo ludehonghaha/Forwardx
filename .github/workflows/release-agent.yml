@@ -83,20 +83,6 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure target GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            gh release create "$RELEASE_VERSION" \
-              --target "$GITHUB_SHA" \
-              --title "$RELEASE_VERSION" \
-              --notes "ForwardX $RELEASE_VERSION"
-          fi
-
       - name: Setup Go
         if: steps.inputs.outputs.build == 'true'
         uses: actions/setup-go@v6
@@ -180,6 +166,20 @@ jobs:
             fi
             echo "$name: OK"
           done < dist/agent/SHA256SUMS
+
+      - name: Ensure target GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release create "$RELEASE_VERSION" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_VERSION" \
+              --notes "ForwardX $RELEASE_VERSION"
+          fi
 
       - name: Upload Agent assets to GitHub Release
         shell: bash
