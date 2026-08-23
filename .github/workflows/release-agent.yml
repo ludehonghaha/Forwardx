@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*.*.*"
     paths:
       - "agent/**"
       - "forwardx-fxp/**"
@@ -22,21 +20,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-agent:
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+  publish-agent-assets:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
         with:
-          go-version: "1.23.x"
-          cache-dependency-path: |
-            agent/go.mod
-            forwardx-fxp/go.mod
-            forwardx-fxp/go.sum
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -47,28 +37,137 @@ jobs:
         id: release
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            VERSION="$GITHUB_REF_NAME"
-          else
-            VERSION="v$(node -p "require('./package.json').version")"
-          fi
+          VERSION="v$(node -p "require('./package.json').version")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Check release versions and tag
-        env:
-          FORWARDX_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      - name: Check release versions
         run: npm run check:versions
 
+      - name: Detect Agent release input changes
+        id: inputs
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          build=false
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            build=true
+          elif [ -z "${BEFORE_SHA:-}" ] || [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            build=true
+          else
+            changed="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")"
+            printf '%s\n' "$changed"
+            if grep -Eq '^(agent/|forwardx-fxp/|scripts/build-agent-release\.sh$|THIRD_PARTY_NOTICES\.md$)' <<< "$changed"; then
+              build=true
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "Agent binary rebuild required: $build"
+
+      - name: Require a new panel release for changed Agent assets
+        if: steps.inputs.outputs.build == 'true' && github.event_name == 'push'
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BEFORE_SHA:-}" ] || [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            exit 0
+          fi
+          current_version="$(node -p "require('./package.json').version")"
+          previous_version="$(git show "${BEFORE_SHA}:package.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).version))')"
+          if [ "$current_version" = "$previous_version" ]; then
+            echo "::error::Agent release inputs changed without advancing the panel release version. Bump APP/package release version so immutable release assets are not overwritten."
+            exit 1
+          fi
+
+      - name: Ensure target GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release create "$RELEASE_VERSION" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_VERSION" \
+              --notes "ForwardX $RELEASE_VERSION"
+          fi
+
+      - name: Setup Go
+        if: steps.inputs.outputs.build == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache-dependency-path: |
+            agent/go.mod
+            forwardx-fxp/go.mod
+            forwardx-fxp/go.sum
+
       - name: Run Agent tests and vet
+        if: steps.inputs.outputs.build == 'true'
         shell: bash
         run: |
           (cd agent && go test ./... && go vet ./...)
           (cd forwardx-fxp && go test ./... && go vet ./...)
 
       - name: Build Linux Agent binaries
+        if: steps.inputs.outputs.build == 'true'
         run: bash scripts/build-agent-release.sh
 
-      - name: Upload Agent binaries to GitHub Release
+      - name: Reuse unchanged Agent assets from previous Release
+        if: steps.inputs.outputs.build != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset_names=(
+            forwardx-agent-linux-amd64
+            forwardx-agent-linux-arm64
+            forwardx-fxp-linux-amd64
+            forwardx-fxp-linux-arm64
+            forwardx-runtime-linux-amd64
+            forwardx-runtime-linux-arm64
+            SHA256SUMS
+            THIRD_PARTY_NOTICES.md
+          )
+
+          source_release=""
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            [ "$tag" != "$RELEASE_VERSION" ] || continue
+            names="$(gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            complete=true
+            for name in "${asset_names[@]}"; do
+              if ! grep -Fxq "$name" <<< "$names"; then
+                complete=false
+                break
+              fi
+            done
+            if [ "$complete" = "true" ]; then
+              source_release="$tag"
+              break
+            fi
+          done < <(gh release list --limit 100 --json tagName,isDraft --jq '.[] | select(.isDraft == false) | .tagName')
+
+          if [ -z "$source_release" ]; then
+            echo "::error::No previous ForwardX Release contains a complete Agent asset set to reuse"
+            exit 1
+          fi
+
+          echo "Reusing unchanged Agent assets from ${source_release} for ${RELEASE_VERSION}"
+          mkdir -p dist/agent
+          for name in "${asset_names[@]}"; do
+            gh release download "$source_release" --pattern "$name" --dir dist/agent
+          done
+          (cd dist/agent && sha256sum -c SHA256SUMS)
+
+      - name: Upload Agent assets to GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,13 +192,6 @@ jobs:
               exit 1
             fi
           done
-
-          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            gh release create "$RELEASE_VERSION" \
-              --target "$GITHUB_SHA" \
-              --title "$RELEASE_VERSION" \
-              --notes "ForwardX $RELEASE_VERSION"
-          fi
 
           upload_with_retry() {
             local attempt=1
