@@ -65,13 +65,25 @@ export function ensureMihomoCertificateCmds(plan: ManagedMihomoRuntimePlan | nul
 
 export function verifyMihomoRuntimeCmd(plan: ManagedMihomoRuntimePlan | null) {
   if (!plan) return "true";
-  const checks = [
-    `${shQuote(MIHOMO_BIN)} -t -d ${shQuote(MIHOMO_CONFIG_DIR)} -f ${shQuote(MIHOMO_CONFIG_PATH)} >/dev/null`,
-    `if command -v systemctl >/dev/null 2>&1; then systemctl is-active --quiet ${shQuote(MIHOMO_SERVICE_NAME)}; else pgrep -f ${shQuote(`${MIHOMO_BIN}.*${MIHOMO_CONFIG_PATH}`)} >/dev/null; fi`,
+  const readyChecks = [
+    `if command -v systemctl >/dev/null 2>&1; then systemctl is-active --quiet ${shQuote(MIHOMO_SERVICE_NAME)} || return 1; else pgrep -f ${shQuote(`${MIHOMO_BIN}.*${MIHOMO_CONFIG_PATH}`)} >/dev/null || return 1; fi`,
   ];
   for (const socket of plan.sockets) {
     const ssFlag = socket.transport === "udp" ? "-H -lnu" : "-H -lnt";
-    checks.push(`ss ${ssFlag} | awk '{print $4}' | grep -Eq ${shQuote(`(^|:|\\])${socket.listenPort}$`)}`);
+    readyChecks.push(`ss ${ssFlag} | awk '{print $4}' | grep -Eq ${shQuote(`(^|:|\\])${socket.listenPort}$`)} || return 1`);
   }
-  return checks.join(" && ");
+  readyChecks.push("return 0");
+
+  return [
+    `${shQuote(MIHOMO_BIN)} -t -d ${shQuote(MIHOMO_CONFIG_DIR)} -f ${shQuote(MIHOMO_CONFIG_PATH)} >/dev/null || exit 1`,
+    "mihomo_runtime_ready() {",
+    ...readyChecks.map((check) => `  ${check}`),
+    "}",
+    "attempt=1",
+    "while ! mihomo_runtime_ready; do",
+    "  if [ \"$attempt\" -ge 10 ]; then echo \"ForwardX Mihomo runtime did not become ready after 10 checks\" >&2; exit 1; fi",
+    "  attempt=$((attempt + 1))",
+    "  sleep 1",
+    "done",
+  ].join("\n");
 }
