@@ -175,7 +175,7 @@ test("rejects duplicate sockets instead of compiling overlapping managed listene
   assert.equal(plan, null);
 });
 
-test("Mihomo runtime is external to the Agent build and verifies real sockets", () => {
+test("Mihomo runtime is external to the Agent build and verifies real sockets with startup grace", () => {
   const install = ensureMihomoBinaryCmd();
   const shellSyntax = spawnSync("sh", ["-n", "-c", install], { encoding: "utf8" });
   assert.equal(shellSyntax.status, 0, shellSyntax.stderr || "generated Mihomo install command must parse with /bin/sh");
@@ -189,7 +189,13 @@ test("Mihomo runtime is external to the Agent build and verifies real sockets", 
     endpoint({ id: 41, protocol: "snell", publicPort: 34001, configJson: { password: "secret", version: 5 } }),
   ]);
   const verify = verifyMihomoRuntimeCmd(plan);
+  const verifySyntax = spawnSync("sh", ["-n", "-c", verify], { encoding: "utf8" });
+  assert.equal(verifySyntax.status, 0, verifySyntax.stderr || "generated Mihomo readiness command must parse with /bin/sh");
   assert.match(verify, /systemctl is-active/);
   assert.match(verify, /34001/);
   assert.match(verify, /awk '\{print \$4\}'/);
+  assert.match(verify, /mihomo_runtime_ready/);
+  assert.match(verify, /attempt=1/);
+  assert.match(verify, /\[ \"\$attempt\" -ge 10 \]/);
+  assert.match(verify, /sleep 1/);
 });
