@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { trpc } from "@/lib/trpc";
+import QRCode from "qrcode";
 import {
   MANAGED_SHADOWSOCKS_CIPHERS,
   MIERU_HANDSHAKE_MODES,
@@ -35,7 +36,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type EndpointForm = {
@@ -184,6 +185,20 @@ function endpointFormFromRow(endpoint: any): EndpointForm {
 }
 
 function FeedLink({ label, description, value }: { label: string; description: string; value: string }) {
+  const [qrDataUrl, setQrDataUrl] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    if (!value) {
+      setQrDataUrl("");
+      return () => { active = false; };
+    }
+    QRCode.toDataURL(value, { width: 224, margin: 1, errorCorrectionLevel: "M" })
+      .then((dataUrl) => { if (active) setQrDataUrl(dataUrl); })
+      .catch(() => { if (active) setQrDataUrl(""); });
+    return () => { active = false; };
+  }, [value]);
+
   const copy = async () => {
     const copied = await copyTextToClipboard(value);
     copied ? toast.success(`${label}已复制`) : toast.error("复制失败，请手动选择地址");
@@ -194,12 +209,22 @@ function FeedLink({ label, description, value }: { label: string; description: s
         <p className="text-sm font-medium">{label}</p>
         <p className="text-xs leading-5 text-muted-foreground">{description}</p>
       </div>
-      <div className="flex gap-2">
-        <Input readOnly value={value} className="font-mono text-xs" onFocus={(event) => event.currentTarget.select()} />
-        <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={copy} aria-label={`复制${label}`}>
-          <Copy className="h-4 w-4" />
-        </Button>
+      <div className="flex items-start gap-3">
+        <div className="flex min-w-0 flex-1 gap-2">
+          <Input readOnly value={value} className="font-mono text-xs" onFocus={(event) => event.currentTarget.select()} />
+          <Button type="button" variant="outline" size="icon" className="shrink-0" onClick={copy} aria-label={`复制${label}`}>
+            <Copy className="h-4 w-4" />
+          </Button>
+        </div>
+        {qrDataUrl ? (
+          <img
+            src={qrDataUrl}
+            alt={`${label}二维码`}
+            className="h-24 w-24 shrink-0 rounded-md border bg-white p-1 sm:h-28 sm:w-28"
+          />
+        ) : null}
       </div>
+      <p className="text-[11px] leading-4 text-muted-foreground">二维码在浏览器本地生成，可直接用支持订阅扫码的客户端扫描。</p>
     </div>
   );
 }

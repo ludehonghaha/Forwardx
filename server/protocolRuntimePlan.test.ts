@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
   buildManagedMieruRuntimePlan,
@@ -176,6 +177,8 @@ test("rejects duplicate sockets instead of compiling overlapping managed listene
 
 test("Mihomo runtime is external to the Agent build and verifies real sockets", () => {
   const install = ensureMihomoBinaryCmd();
+  const shellSyntax = spawnSync("sh", ["-n", "-c", install], { encoding: "utf8" });
+  assert.equal(shellSyntax.status, 0, shellSyntax.stderr || "generated Mihomo install command must parse with /bin/sh");
   assert.match(install, new RegExp(`MetaCubeX/mihomo/releases/download/v${MIHOMO_VERSION}`));
   assert.match(install, /mihomo-linux-amd64-v1-/);
   assert.equal(MIHOMO_BIN, "/usr/local/bin/forwardx-mihomo");
