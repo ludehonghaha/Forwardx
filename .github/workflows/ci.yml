@@ -48,6 +48,7 @@ jobs:
           pnpm check:versions
           pnpm exec tsc --noEmit
           node --import tsx --test server/agentCrypto.test.ts
+          node --import tsx --test server/userTrafficHistory.test.ts
           pnpm test:protocol-access
           pnpm test:server
           pnpm build
