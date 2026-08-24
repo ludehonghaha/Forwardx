@@ -14,6 +14,7 @@ import type { ForwardRuleProtocol, ForwardType } from "../shared/forwardTypes";
 
 export const PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY = "_forwardxTrafficBridge";
 const PROTOCOL_TRAFFIC_BRIDGE_VERSION = 1;
+const PROCESS_BRIDGE_FORWARD_TYPES = new Set<ForwardType>(["gost", "realm", "socat", "nginx"]);
 
 export type ProtocolTrafficBridgeMarker = {
   version: 1;
@@ -92,6 +93,37 @@ export function selectProtocolTrafficBridgeForwardType(
     if (settings?.[candidate] !== false) return candidate;
   }
   return null;
+}
+
+export function managedProtocolTrafficBridgeMatches(input: {
+  endpoint: any;
+  ownerUserId: number;
+  marker: ProtocolTrafficBridgeMarker | null;
+  linkedRule: any;
+}) {
+  const marker = input.marker;
+  const rule = input.linkedRule;
+  if (!marker || !rule || rule.pendingDelete) return false;
+  const config = parseProtocolAccessConfig(input.endpoint?.configJson);
+  const protocol = input.endpoint?.protocol as ProtocolAccessProtocol;
+  const publicPort = positiveInteger(input.endpoint?.publicPort);
+  const listenPort = managedProtocolListenPort(config, publicPort);
+  const serverProtocol = managedProtocolSocketProtocol(protocol, config);
+  return marker.ruleId === positiveInteger(rule.id)
+    && marker.ruleId === positiveInteger(input.endpoint?.forwardRuleId)
+    && marker.ownerUserId === input.ownerUserId
+    && marker.publicPort === publicPort
+    && marker.listenPort === listenPort
+    && positiveInteger(rule.userId) === input.ownerUserId
+    && positiveInteger(rule.hostId) === positiveInteger(input.endpoint?.hostId)
+    && Number(rule.sourcePort) === publicPort
+    && String(rule.targetIp || "") === "127.0.0.1"
+    && Number(rule.targetPort) === listenPort
+    && String(rule.protocol || "") === serverProtocol
+    && PROCESS_BRIDGE_FORWARD_TYPES.has(String(rule.forwardType || "") as ForwardType)
+    && positiveInteger(rule.tunnelId) === 0
+    && positiveInteger(rule.forwardGroupId) === 0
+    && !dbEnabled(rule.isForwardGroupTemplate);
 }
 
 function bridgeRuleName(endpoint: any) {
@@ -291,46 +323,74 @@ async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, ma
 }
 
 export async function syncManagedProtocolTrafficBridge(endpointId: number) {
-  const endpoint = await db.getProtocolEndpointById(endpointId) as any;
-  if (!endpoint || endpoint.runtimeMode !== "managed") return { changed: false, hostId: 0 };
-  const hostId = positiveInteger(endpoint.hostId);
-  const assignments = await db.listProtocolEndpointAssignments(endpointId) as any[];
-  const ownerUserId = managedProtocolTrafficOwnerUserId(assignments);
-  const config = parseProtocolAccessConfig(endpoint.configJson);
-  const marker = protocolTrafficBridgeMarker(config);
-  const owner = ownerUserId > 0 ? await db.getUserById(ownerUserId) as any : null;
+  return db.withDatabaseTransaction(async () => {
+    const endpoint = await db.getProtocolEndpointById(endpointId) as any;
+    if (!endpoint || endpoint.runtimeMode !== "managed") return { changed: false, hostId: 0 };
+    const hostId = positiveInteger(endpoint.hostId);
+    const assignments = await db.listProtocolEndpointAssignments(endpointId) as any[];
+    const ownerUserId = managedProtocolTrafficOwnerUserId(assignments);
+    const config = parseProtocolAccessConfig(endpoint.configJson);
+    const marker = protocolTrafficBridgeMarker(config);
+    const owner = ownerUserId > 0 ? await db.getUserById(ownerUserId) as any : null;
 
-  if (!endpoint.isEnabled || ownerUserId <= 0 || !userCanReceiveProtocolTraffic(owner)) {
-    const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;
-    return { changed, hostId };
-  }
+    if (!endpoint.isEnabled || ownerUserId <= 0 || !userCanReceiveProtocolTraffic(owner)) {
+      const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;
+      return { changed, hostId };
+    }
 
-  if (endpoint.forwardRuleId) {
-    const linkedRule = await db.getForwardRuleById(Number(endpoint.forwardRuleId)) as any;
-    if (marker) {
-      if (marker.ownerUserId === ownerUserId && positiveInteger(linkedRule?.userId) === ownerUserId && !linkedRule?.pendingDelete) {
-        const wasEnabled = !!linkedRule?.isEnabled;
-        const enabled = await enableOwnedBridgeRule(marker.ruleId, ownerUserId);
-        if (!enabled) {
-          const replacement = await createOrReplaceOwnedBridge(endpoint, ownerUserId, marker);
-          return { changed: replacement.changed, hostId };
+    if (endpoint.forwardRuleId) {
+      const linkedRule = await db.getForwardRuleById(Number(endpoint.forwardRuleId)) as any;
+      if (marker) {
+        if (managedProtocolTrafficBridgeMatches({ endpoint, ownerUserId, marker, linkedRule })) {
+          const wasEnabled = !!linkedRule?.isEnabled;
+          const enabled = await enableOwnedBridgeRule(marker.ruleId, ownerUserId);
+          if (!enabled) {
+            const replacement = await createOrReplaceOwnedBridge(endpoint, ownerUserId, marker);
+            return { changed: replacement.changed, hostId };
+          }
+          return { changed: !wasEnabled, hostId };
         }
-        return { changed: !wasEnabled, hostId };
+        const replacement = await createOrReplaceOwnedBridge(endpoint, ownerUserId, marker);
+        return { changed: replacement.changed, hostId };
       }
-      const replacement = await createOrReplaceOwnedBridge(endpoint, ownerUserId, marker);
-      return { changed: replacement.changed, hostId };
+      if (!linkedRule || linkedRule.pendingDelete) {
+        throw new Error("关联的 ForwardX 转发规则不存在或已删除，无法确认协议流量归属");
+      }
+      if (positiveInteger(linkedRule.userId) !== ownerUserId) {
+        throw new Error("托管协议的关联 ForwardX 规则必须归属于该协议唯一启用用户，否则流量会记错用户");
+      }
+      return { changed: false, hostId };
     }
-    if (!linkedRule || linkedRule.pendingDelete) {
-      throw new Error("关联的 ForwardX 转发规则不存在或已删除，无法确认协议流量归属");
-    }
-    if (positiveInteger(linkedRule.userId) !== ownerUserId) {
-      throw new Error("托管协议的关联 ForwardX 规则必须归属于该协议唯一启用用户，否则流量会记错用户");
-    }
-    return { changed: false, hostId };
-  }
 
-  const created = await createOrReplaceOwnedBridge(endpoint, ownerUserId, null);
-  return { changed: created.changed, hostId };
+    const created = await createOrReplaceOwnedBridge(endpoint, ownerUserId, marker);
+    return { changed: created.changed, hostId };
+  });
+}
+
+export async function reconcileManagedProtocolTrafficBridges() {
+  const endpoints = (await db.listProtocolEndpoints() as any[])
+    .filter((endpoint: any) => endpoint.runtimeMode === "managed");
+  const refreshHostIds = new Set<number>();
+  const failures: Array<{ endpointId: number; message: string }> = [];
+  let changed = 0;
+  for (const endpoint of endpoints) {
+    try {
+      const result = await syncManagedProtocolTrafficBridge(positiveInteger(endpoint.id));
+      if (result.changed) {
+        changed += 1;
+        if (result.hostId > 0) refreshHostIds.add(result.hostId);
+      }
+    } catch (error) {
+      failures.push({
+        endpointId: positiveInteger(endpoint.id),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  for (const hostId of refreshHostIds) {
+    pushProtocolTrafficBridgeRefresh(hostId, "protocol-traffic-bridge-reconcile");
+  }
+  return { scanned: endpoints.length, changed, failures };
 }
 
 export async function retireManagedProtocolTrafficBridge(endpoint: any) {
