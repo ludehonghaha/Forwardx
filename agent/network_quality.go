@@ -69,8 +69,10 @@ func summarizeHostNetworkQualitySamples(samples []time.Duration, losses int) hos
 	}
 }
 
-// Presence is already an authenticated, lightweight Agent-to-Panel request.
-// Only completed network attempts become samples; coordinator skips never do.
+// Presence is already an authenticated, lightweight Agent-to-Panel request and
+// is intentionally reused so default network quality works behind NAT without
+// requiring any Panel-initiated probe. Only completed network attempts become
+// samples; coordinator skips never do.
 func recordHostNetworkQualityPresenceResult(latency time.Duration, err error) bool {
 	if errors.Is(err, errHeartbeatRequestInFlight) || errors.Is(err, errHeartbeatRetrySuperseded) {
 		return false
