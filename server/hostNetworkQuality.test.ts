@@ -46,8 +46,20 @@ test("host network quality stores RTT, loss, no-data and time aggregation withou
     assert.equal(series[0].successCount, 8);
     assert.equal(series[0].lossCount, 2);
     assert.equal(series[0].packetLossPercent, 20.0);
+    assert.equal(series[0].jitterMs, null, "first successful RTT bucket has no jitter baseline");
     assert.equal(series[1].latencyMs, null);
+    assert.equal(series[1].jitterMs, null, "loss-only bucket has no fabricated jitter");
     assert.equal(series[1].packetLossPercent, 100.0);
+
+    const derivedJitter = quality.attachHostNetworkQualityJitter([
+      { hostId: 1, latencyMs: 20, successCount: 1, lossCount: 0, packetLossPercent: 0, recordedAt: new Date() },
+      { hostId: 1, latencyMs: 37, successCount: 1, lossCount: 0, packetLossPercent: 0, recordedAt: new Date() },
+      { hostId: 1, latencyMs: null, successCount: 0, lossCount: 1, packetLossPercent: 100, recordedAt: new Date() },
+      { hostId: 1, latencyMs: 50, successCount: 1, lossCount: 0, packetLossPercent: 0, recordedAt: new Date() },
+      { hostId: 1, latencyMs: 56, successCount: 1, lossCount: 0, packetLossPercent: 0, recordedAt: new Date() },
+    ]);
+    assert.deepEqual(derivedJitter.map((row) => row.jitterMs), [null, 17, null, null, 6], "loss breaks jitter adjacency");
+
     const latest = await quality.getLatestHostNetworkQualityStats([1, 2, 99]);
     assert.equal(latest.find((row) => row.hostId === 1)?.latencyMs, null);
     assert.equal(latest.find((row) => row.hostId === 1)?.packetLossPercent, 100.0);
