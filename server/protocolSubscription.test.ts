@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderProtocolMihomoSubscription, renderProtocolUriSubscription } from "./protocolSubscription";
+import { buildSubscriptionUserinfo } from "./protocolFeedRoutes";
 import type { ProtocolFeedEntry } from "../shared/protocolAccess";
 
 function entry(overrides: Partial<ProtocolFeedEntry> = {}): ProtocolFeedEntry {
@@ -290,4 +291,17 @@ test("generic URI feed keeps Reality and Hysteria2 when Snell is skipped", () =>
   const decoded = Buffer.from(result.content, "base64").toString("utf8");
   assert.match(decoded, /vless:\/\//);
   assert.match(decoded, /hysteria2:\/\//);
+});
+
+test("subscription userinfo omits expire when the access feed has no expiry", () => {
+  const header = buildSubscriptionUserinfo({ trafficUsed: 123, trafficLimit: 456, expiresAt: null });
+  assert.equal(header, "upload=0; download=123; total=456");
+  assert.doesNotMatch(header, /(?:^|; )expire=/);
+});
+
+test("subscription userinfo includes a real Unix expiry when configured", () => {
+  const expiresAt = "2026-12-31T16:00:00.000Z";
+  const expected = Math.floor(new Date(expiresAt).getTime() / 1000);
+  const header = buildSubscriptionUserinfo({ trafficUsed: 123, trafficLimit: 456, expiresAt });
+  assert.equal(header, `upload=0; download=123; total=456; expire=${expected}`);
 });

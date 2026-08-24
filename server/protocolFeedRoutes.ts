@@ -10,15 +10,23 @@ function unixSeconds(value: unknown) {
   return Number.isFinite(millis) && millis > 0 ? Math.floor(millis / 1000) : 0;
 }
 
+export function buildSubscriptionUserinfo(user: { trafficUsed?: unknown; trafficLimit?: unknown; expiresAt?: unknown }) {
+  const parts = [
+    "upload=0",
+    `download=${Math.max(0, Number(user.trafficUsed || 0))}`,
+    `total=${Math.max(0, Number(user.trafficLimit || 0))}`,
+  ];
+  const expire = unixSeconds(user.expiresAt);
+  if (expire > 0) parts.push(`expire=${expire}`);
+  return parts.join("; ");
+}
+
 function setFeedHeaders(res: express.Response, feed: Awaited<ReturnType<typeof getProtocolFeedByToken>>, skipped: number) {
   if (!feed) return;
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-ForwardX-Skipped-Entries", String(skipped));
-  res.setHeader(
-    "subscription-userinfo",
-    `upload=0; download=${Math.max(0, Number(feed.user.trafficUsed || 0))}; total=${Math.max(0, Number(feed.user.trafficLimit || 0))}; expire=${unixSeconds(feed.user.expiresAt)}`,
-  );
+  res.setHeader("subscription-userinfo", buildSubscriptionUserinfo(feed.user));
 }
 
 async function loadFeed(req: express.Request, res: express.Response) {
