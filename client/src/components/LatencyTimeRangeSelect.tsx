@@ -1,11 +1,12 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-export type LatencyTimeRangeHours = 24 | 12 | 6 | 3 | 1 | 0.5;
+export type LatencyTimeRangeHours = 168 | 24 | 12 | 6 | 3 | 1 | 0.5;
+export type LatencyTimeRangeOption = { value: string; hours: LatencyTimeRangeHours; label: string };
 
 export const DEFAULT_LATENCY_TIME_RANGE_HOURS: LatencyTimeRangeHours = 24;
 
-export const LATENCY_TIME_RANGE_OPTIONS: Array<{ value: string; hours: LatencyTimeRangeHours; label: string }> = [
+export const LATENCY_TIME_RANGE_OPTIONS: LatencyTimeRangeOption[] = [
   { value: "24", hours: 24, label: "24H" },
   { value: "12", hours: 12, label: "12H" },
   { value: "6", hours: 6, label: "6H" },
@@ -14,8 +15,15 @@ export const LATENCY_TIME_RANGE_OPTIONS: Array<{ value: string; hours: LatencyTi
   { value: "0.5", hours: 0.5, label: "0.5H" },
 ];
 
+export const HOST_NETWORK_QUALITY_TIME_RANGE_OPTIONS: LatencyTimeRangeOption[] = [
+  { value: "168", hours: 168, label: "7D" },
+  { value: "24", hours: 24, label: "24H" },
+  { value: "6", hours: 6, label: "6H" },
+  { value: "1", hours: 1, label: "1H" },
+];
+
 export function latencyTimeRangeLabel(hours: number) {
-  const option = LATENCY_TIME_RANGE_OPTIONS.find((item) => item.hours === hours);
+  const option = [...HOST_NETWORK_QUALITY_TIME_RANGE_OPTIONS, ...LATENCY_TIME_RANGE_OPTIONS].find((item) => item.hours === hours);
   return option?.label || `${hours}H`;
 }
 
@@ -37,16 +45,18 @@ export function LatencyTimeRangeSelect({
   value,
   onChange,
   className,
+  options = LATENCY_TIME_RANGE_OPTIONS,
 }: {
   value: LatencyTimeRangeHours;
   onChange: (value: LatencyTimeRangeHours) => void;
   className?: string;
+  options?: LatencyTimeRangeOption[];
 }) {
   return (
     <Select
       value={String(value)}
       onValueChange={(next) => {
-        const option = LATENCY_TIME_RANGE_OPTIONS.find((item) => item.value === next);
+        const option = options.find((item) => item.value === next);
         if (option) onChange(option.hours);
       }}
     >
@@ -54,7 +64,7 @@ export function LatencyTimeRangeSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent align="end">
-        {LATENCY_TIME_RANGE_OPTIONS.map((option) => (
+        {options.map((option) => (
           <SelectItem key={option.value} value={option.value}>
             {option.label}
           </SelectItem>

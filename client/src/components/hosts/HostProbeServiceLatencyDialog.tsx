@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
+import { Line, ComposedChart, CartesianGrid, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import { Loader2, X } from "lucide-react";
 import { LatencyPeakCutToggle } from "@/components/LatencyPeakCutToggle";
 import {
@@ -67,9 +67,17 @@ function compactHostServiceChart(points: any[], serviceIds: number[]) {
       const key = `service_${id}`;
       let maxLatency: number | null = null;
       let sawTimeout = false;
+      let successCount = 0;
+      let lossCount = 0;
+      let hasLossData = false;
       for (const item of bucket) {
         const raw = item[`${key}Raw`];
         if (!raw) continue;
+        if (raw.successCount != null && raw.lossCount != null) {
+          successCount += Math.max(0, Number(raw.successCount) || 0);
+          lossCount += Math.max(0, Number(raw.lossCount) || 0);
+          hasLossData = true;
+        }
         if (raw.isTimeout) {
           sawTimeout = true;
           continue;
@@ -80,9 +88,13 @@ function compactHostServiceChart(points: any[], serviceIds: number[]) {
         }
       }
       const isTimeout = maxLatency === null && sawTimeout;
+      const packetLossPercent = hasLossData && successCount + lossCount > 0
+        ? Math.round((lossCount * 1000) / (successCount + lossCount)) / 10
+        : null;
       point[key] = isTimeout ? 0 : maxLatency;
+      point[`${key}Loss`] = packetLossPercent;
       point[`${key}Timeout`] = isTimeout;
-      point[`${key}Raw`] = { latencyMs: maxLatency, isTimeout };
+      point[`${key}Raw`] = { latencyMs: maxLatency, isTimeout, successCount: hasLossData ? successCount : null, lossCount: hasLossData ? lossCount : null, packetLossPercent };
     }
 
     compacted.push(point);
@@ -110,6 +122,7 @@ function ChartTooltip({ active, payload, label, services, allServices }: any) {
               </span>
               <span className={raw?.isTimeout ? "font-medium text-destructive" : "font-semibold tabular-nums"}>
                 {raw?.isTimeout ? "超时" : typeof raw?.latencyMs === "number" ? `${raw.latencyMs}ms` : "--"}
+                <span className="ml-2 text-muted-foreground">{raw?.packetLossPercent == null ? "丢包 --" : `丢包 ${Number(raw.packetLossPercent).toFixed(1)}%`}</span>
               </span>
             </div>
           );
@@ -177,7 +190,7 @@ export default function HostProbeServiceLatencyDialog({
   };
 
   const rawChart = useMemo(() => {
-    const aggregates = new Map<string, { bucket: number; serviceId: number; sum: number; count: number; timeout: number }>();
+    const aggregates = new Map<string, { bucket: number; serviceId: number; sum: number; count: number; timeout: number; successCount: number; lossCount: number; lossWindows: number }>();
     for (const row of rangedData as any[]) {
       const at = new Date(row.recordedAt).getTime();
       if (!Number.isFinite(at)) continue;
@@ -185,11 +198,16 @@ export default function HostProbeServiceLatencyDialog({
       if (!serviceId) continue;
       const bucket = Math.floor(at / 60000) * 60000;
       const key = `${bucket}:${serviceId}`;
-      const aggregate = aggregates.get(key) || { bucket, serviceId, sum: 0, count: 0, timeout: 0 };
+      const aggregate = aggregates.get(key) || { bucket, serviceId, sum: 0, count: 0, timeout: 0, successCount: 0, lossCount: 0, lossWindows: 0 };
       if (row.isTimeout) aggregate.timeout += 1;
       else if (row.latencyMs != null && Number.isFinite(Number(row.latencyMs))) {
         aggregate.sum += Number(row.latencyMs);
         aggregate.count += 1;
+      }
+      if (row.successCount != null && row.lossCount != null) {
+        aggregate.successCount += Math.max(0, Number(row.successCount) || 0);
+        aggregate.lossCount += Math.max(0, Number(row.lossCount) || 0);
+        aggregate.lossWindows += 1;
       }
       aggregates.set(key, aggregate);
     }
@@ -199,9 +217,13 @@ export default function HostProbeServiceLatencyDialog({
       const key = `service_${aggregate.serviceId}`;
       const isTimeout = aggregate.count === 0 && aggregate.timeout > 0;
       const latencyMs = aggregate.count > 0 ? Math.round(aggregate.sum / aggregate.count) : null;
+      const packetLossPercent = aggregate.lossWindows > 0 && aggregate.successCount + aggregate.lossCount > 0
+        ? Math.round((aggregate.lossCount * 1000) / (aggregate.successCount + aggregate.lossCount)) / 10
+        : null;
       point[key] = isTimeout ? 0 : latencyMs;
+      point[`${key}Loss`] = packetLossPercent;
       point[`${key}Timeout`] = isTimeout;
-      point[`${key}Raw`] = { latencyMs, isTimeout };
+      point[`${key}Raw`] = { latencyMs, isTimeout, successCount: aggregate.lossWindows > 0 ? aggregate.successCount : null, lossCount: aggregate.lossWindows > 0 ? aggregate.lossCount : null, packetLossPercent };
       byBucket.set(aggregate.bucket, point);
     }
     return Array.from(byBucket.values()).sort((a, b) => a.at - b.at);
@@ -267,8 +289,8 @@ export default function HostProbeServiceLatencyDialog({
         <DialogHeader>
           <div className="flex flex-col gap-2 pr-9 sm:flex-row sm:items-start sm:justify-between sm:pr-10">
             <div className="min-w-0">
-              <DialogTitle>服务延迟图表</DialogTitle>
-              <DialogDescription>{host?.name ? `${host.name} 最近 ${latencyTimeRangeLabel(timeRangeHours)} 服务探测延迟` : `最近 ${latencyTimeRangeLabel(timeRangeHours)} 服务探测延迟`}</DialogDescription>
+              <DialogTitle>服务探测图表</DialogTitle>
+              <DialogDescription>{host?.name ? `${host.name} 最近 ${latencyTimeRangeLabel(timeRangeHours)} 高级服务探测延迟与丢包` : `最近 ${latencyTimeRangeLabel(timeRangeHours)} 高级服务探测延迟与丢包`}</DialogDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2 self-start sm:justify-end">
               <LatencyTimeRangeSelect value={timeRangeHours} onChange={setTimeRangeHours} />
@@ -322,7 +344,7 @@ export default function HostProbeServiceLatencyDialog({
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">暂无服务延迟数据</div>
           ) : (
             <ResponsiveContainer key={chartAnimationKey} width="100%" height="100%">
-              <LineChart data={chart} margin={{ top: 8, right: 10, left: -8, bottom: 0 }}>
+              <ComposedChart data={chart} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                 <XAxis
                   dataKey="at"
@@ -333,13 +355,15 @@ export default function HostProbeServiceLatencyDialog({
                   tickFormatter={(value) => formatTime(Number(value))}
                   minTickGap={46}
                 />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}ms`} width={52} domain={[0, yMax]} ticks={yTicks} allowDecimals={false} />
+                <YAxis yAxisId="latency" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}ms`} width={52} domain={[0, yMax]} ticks={yTicks} allowDecimals={false} />
+                <YAxis yAxisId="loss" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}%`} width={42} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} allowDecimals={false} />
                 <RTooltip content={<ChartTooltip services={visibleServices} allServices={hostServices} />} cursor={{ stroke: "var(--color-muted-foreground)", strokeDasharray: "3 3" }} />
                 {visibleServices.map((service) => {
                   const colorIndex = hostServices.findIndex((item) => Number(item.id) === Number(service.id));
                   return (
                     <Line
                       key={service.id}
+                      yAxisId="latency"
                       type="monotone"
                       dataKey={`service_${service.id}`}
                       name={service.name}
@@ -355,7 +379,26 @@ export default function HostProbeServiceLatencyDialog({
                     />
                   );
                 })}
-              </LineChart>
+                {visibleServices.map((service) => {
+                  const colorIndex = hostServices.findIndex((item) => Number(item.id) === Number(service.id));
+                  return (
+                    <Line
+                      key={`loss-${service.id}`}
+                      yAxisId="loss"
+                      type="monotone"
+                      dataKey={`service_${service.id}Loss`}
+                      name={`${service.name} 丢包率`}
+                      stroke={colors[Math.max(colorIndex, 0) % colors.length]}
+                      strokeWidth={0.9}
+                      strokeDasharray="4 3"
+                      strokeOpacity={0.72}
+                      dot={false}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  );
+                })}
+              </ComposedChart>
             </ResponsiveContainer>
           )}
         </div>

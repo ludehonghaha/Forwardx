@@ -1796,11 +1796,14 @@ func executeTCPingTask(task tcpingTask) tcpingTaskResult {
 func executeTCPingTaskWithWireGuardProbe(task tcpingTask, wireGuardProbe func(int, string, int, time.Duration) (int, wireGuardProbeStatus)) tcpingTaskResult {
 	var latency int
 	var reachable bool
+	successCount := 0
+	lossCount := 0
 	if task.Kind == "forwardGroup" && task.Method == "self" {
 		latency = 0
 		reachable = true
 	} else if (task.Kind == "rule" || task.Kind == "forwardGroup" || task.Kind == "service") && task.Method == "ping" {
-		latency, reachable, _ = pingLatencyWithCount(task.TargetIP, tcpingProbeTimeout, tcpingPingProbeCount)
+		latency, successCount, lossCount, _ = pingLatencyStatsWithCount(task.TargetIP, tcpingProbeTimeout, tcpingPingProbeCount)
+		reachable = successCount > 0
 	} else if task.Kind == "tunnel" && task.WireGuardPeerID != "" {
 		status := wireGuardProbeTimeout
 		if wireGuardProbe != nil {
@@ -1812,6 +1815,13 @@ func executeTCPingTaskWithWireGuardProbe(task tcpingTask, wireGuardProbe func(in
 		reachable = status == wireGuardProbeSuccess
 	} else {
 		latency, reachable = tcpLatency(task.TargetIP, task.TargetPort, tcpingProbeTimeout)
+	}
+	if task.Kind == "service" && task.Method != "ping" {
+		if reachable {
+			successCount = 1
+		} else {
+			lossCount = 1
+		}
 	}
 	payload := map[string]any{}
 	switch task.Kind {
@@ -1845,6 +1855,11 @@ func executeTCPingTaskWithWireGuardProbe(task tcpingTask, wireGuardProbe func(in
 	case "service":
 		payload["serviceId"] = task.ServiceID
 		payload["method"] = task.Method
+		payload["successCount"] = successCount
+		payload["lossCount"] = lossCount
+		if total := successCount + lossCount; total > 0 {
+			payload["packetLossPercent"] = math.Round(float64(lossCount)*1000/float64(total)) / 10
+		}
 	default:
 		return tcpingTaskResult{}
 	}
@@ -2068,15 +2083,23 @@ func pingFamilyArg(host string) string {
 }
 
 func pingLatencyWithCount(host string, timeout time.Duration, count int) (int, bool, string) {
+	latency, successCount, _, detail := pingLatencyStatsWithCount(host, timeout, count)
+	return latency, successCount > 0, detail
+}
+
+func pingLatencyStatsWithCount(host string, timeout time.Duration, count int) (int, int, int, string) {
 	target := normalizeNetworkTargetHost(host)
 	if target == "" {
-		return 0, false, "目标为空"
+		if count < 1 {
+			count = 1
+		}
+		return 0, 0, count, "目标为空"
 	}
 	if count < 1 {
 		count = 1
 	}
-	if latency, ok, detail, err := nativePingLatencyWithCount(target, timeout, count); err == nil {
-		return latency, ok, detail
+	if latency, successes, detail, err := nativePingLatencyStatsWithCount(target, timeout, count); err == nil {
+		return latency, successes, count - successes, detail
 	} else if shouldLogAgentReport("native-ping-fallback", 5*time.Minute) {
 		logf("native ping unavailable target=%s: %v; falling back to system ping", target, err)
 	}
@@ -2091,7 +2114,7 @@ func pingLatencyWithCount(host string, timeout time.Duration, count int) (int, b
 	case systemPingSlots <- struct{}{}:
 		defer func() { <-systemPingSlots }()
 	case <-ctx.Done():
-		return 0, false, "system ping queue timeout"
+		return 0, 0, count, "system ping queue timeout"
 	}
 	timeoutSeconds := int(timeout.Seconds())
 	if timeoutSeconds < 1 {
@@ -2117,24 +2140,45 @@ func pingLatencyWithCount(host string, timeout time.Duration, count int) (int, b
 	}
 	text := string(output)
 	if ctx.Err() == context.DeadlineExceeded {
-		return 0, false, "timeout"
+		return 0, 0, count, "timeout"
 	}
-	if parsed := parsePingLatencyMs(text); parsed > 0 {
-		return parsed, true, ""
+	latency := parsePingLatencyMs(text)
+	if sent, received, ok := parsePingPacketCounts(text); ok {
+		successes := received
+		if sent > 0 && sent < count {
+			count = sent
+		}
+		if successes > count {
+			successes = count
+		}
+		if successes > 0 && latency <= 0 {
+			latency = elapsed
+		}
+		if successes > 0 {
+			return latency, successes, count - successes, ""
+		}
 	}
 	if err != nil {
 		detail := strings.TrimSpace(text)
 		if detail == "" {
 			detail = err.Error()
 		}
-		return 0, false, detail
+		return 0, 0, count, detail
 	}
-	return elapsed, true, ""
+	if latency > 0 {
+		return latency, count, 0, ""
+	}
+	return 0, 0, count, "timeout"
 }
 
 func nativePingLatencyWithCount(target string, timeout time.Duration, count int) (int, bool, string, error) {
+	latency, successes, detail, err := nativePingLatencyStatsWithCount(target, timeout, count)
+	return latency, successes > 0, detail, err
+}
+
+func nativePingLatencyStatsWithCount(target string, timeout time.Duration, count int) (int, int, string, error) {
 	if runtime.GOOS == "windows" {
-		return 0, false, "", fmt.Errorf("native ping unsupported on windows")
+		return 0, 0, "", fmt.Errorf("native ping unsupported on windows")
 	}
 	if timeout <= 0 {
 		timeout = tcpingProbeTimeout
@@ -2143,7 +2187,7 @@ func nativePingLatencyWithCount(target string, timeout time.Duration, count int)
 	if net.ParseIP(target) == nil {
 		resolved := resolveNetworkTargetIPs(target, timeout)
 		if len(resolved) == 0 {
-			return 0, false, "resolve failed", nil
+			return 0, 0, "resolve failed", nil
 		}
 		targets = resolved
 	}
@@ -2153,33 +2197,38 @@ func nativePingLatencyWithCount(target string, timeout time.Duration, count int)
 		if ip == nil {
 			continue
 		}
-		latency, ok, err := nativePingIP(ip, timeout, count)
+		latency, successes, err := nativePingIPWithCounts(ip, timeout, count)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if ok {
-			return latency, true, value, nil
+		if successes > 0 {
+			return latency, successes, value, nil
 		}
 	}
 	if lastErr != nil {
-		return 0, false, "", lastErr
+		return 0, 0, "", lastErr
 	}
-	return 0, false, "timeout", nil
+	return 0, 0, "timeout", nil
 }
 
 func nativePingIP(ip net.IP, timeout time.Duration, count int) (int, bool, error) {
+	latency, successes, err := nativePingIPWithCounts(ip, timeout, count)
+	return latency, successes > 0, err
+}
+
+func nativePingIPWithCounts(ip net.IP, timeout time.Duration, count int) (int, int, error) {
 	ipv4 := ip.To4()
 	if ipv4 == nil {
-		return 0, false, fmt.Errorf("native ping currently supports ipv4 only")
+		return 0, 0, fmt.Errorf("native ping currently supports ipv4 only")
 	}
 	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
-		return 0, false, err
+		return 0, 0, err
 	}
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
-		return 0, false, err
+		return 0, 0, err
 	}
 	id := os.Getpid() & 0xffff
 	baseSeq := int(time.Now().UnixNano()) & 0xffff
@@ -2189,7 +2238,7 @@ func nativePingIP(ip net.IP, timeout time.Duration, count int) (int, bool, error
 		packet := buildICMPEchoRequest(8, id, seq)
 		sentAt[seq] = time.Now()
 		if _, err := conn.WriteTo(packet, &net.IPAddr{IP: ipv4}); err != nil {
-			return 0, false, err
+			return 0, 0, err
 		}
 	}
 	buf := make([]byte, 1500)
@@ -2227,9 +2276,28 @@ func nativePingIP(ip net.IP, timeout time.Duration, count int) (int, bool, error
 		}
 	}
 	if successes == 0 {
-		return 0, false, nil
+		return 0, 0, nil
 	}
-	return totalLatency / successes, true, nil
+	return totalLatency / successes, successes, nil
+}
+
+func parsePingPacketCounts(output string) (int, int, bool) {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(\d+)\s+packets?\s+transmitted,\s*(\d+)\s+(?:packets?\s+)?received`),
+		regexp.MustCompile(`(?i)Packets:\s*Sent\s*=\s*(\d+),\s*Received\s*=\s*(\d+)`),
+	}
+	for _, pattern := range patterns {
+		matches := pattern.FindStringSubmatch(output)
+		if len(matches) < 3 {
+			continue
+		}
+		sent, sentErr := strconv.Atoi(matches[1])
+		received, receivedErr := strconv.Atoi(matches[2])
+		if sentErr == nil && receivedErr == nil && sent > 0 && received >= 0 && received <= sent {
+			return sent, received, true
+		}
+	}
+	return 0, 0, false
 }
 
 func buildICMPEchoRequest(typ byte, id int, seq int) []byte {

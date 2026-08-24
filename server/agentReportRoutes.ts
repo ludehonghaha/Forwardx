@@ -4,12 +4,14 @@ import { isHostMetricsWatching, pushAgentRefresh } from "./agentEvents";
 import {
   isAgentForwardGroupLatencyResult,
   isAgentHostProbeServiceResult,
+  isAgentHostNetworkQualityResult,
   isAgentHostTrafficStat,
   isAgentTcpingResult,
   isAgentTrafficStat,
   isAgentTunnelTcpingResult,
   type AgentForwardGroupLatencyResult,
   type AgentHostProbeServiceResult,
+  type AgentHostNetworkQualityResult,
   type AgentHostTrafficStat,
   type AgentTcpingResult,
   type AgentTrafficStat,
@@ -357,6 +359,31 @@ function compactHostTraffic(value: unknown): AgentHostTrafficStat | null {
 }
 
 export function registerAgentReportRoutes(agentRouter: Router) {
+agentRouter.post("/api/agent/network-quality", async (req: Request, res: Response) => {
+  try {
+    const host = await getAgentHostIdentityFromRequest(req);
+    if (!host) {
+      res.status(401).json({ error: "Invalid token" });
+      return;
+    }
+    const report: AgentHostNetworkQualityResult = req.body;
+    if (!isAgentHostNetworkQualityResult(report)) {
+      res.status(400).json({ error: "invalid network quality report" });
+      return;
+    }
+    const window = db.normalizeHostNetworkQualityWindow({ ...report, hostId: host.id });
+    if (!window) {
+      res.status(400).json({ error: "invalid network quality window" });
+      return;
+    }
+    await db.insertHostNetworkQualityStat(window);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Agent NetworkQuality] Report failed:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 agentRouter.post("/api/agent/support-bundle-result", async (req: Request, res: Response) => {
   try {
     const host = await getAgentHostIdentityFromRequest(req);
@@ -1154,6 +1181,11 @@ agentRouter.post("/api/agent/tcping", async (req: Request, res: Response) => {
         hostId: host.id,
         latencyMs: typeof report.latencyMs === "number" && report.latencyMs > 0 ? report.latencyMs : null,
         isTimeout: !!report.isTimeout,
+        successCount: report.successCount == null ? null : Number(report.successCount),
+        lossCount: report.lossCount == null ? null : Number(report.lossCount),
+        packetLossPermille: report.successCount == null || report.lossCount == null
+          ? null
+          : db.packetLossPermille(report.successCount, report.lossCount),
       }];
     });
     if (serviceStats.length > 0) {

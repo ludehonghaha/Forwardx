@@ -48,6 +48,15 @@ export type AgentHostProbeServiceResult = {
   latencyMs?: number | null;
   isTimeout?: boolean;
   method?: "tcping" | "ping" | string;
+  successCount?: number;
+  lossCount?: number;
+  packetLossPercent?: number;
+};
+export type AgentHostNetworkQualityResult = {
+  latencyMs?: number | null;
+  successCount: number;
+  lossCount: number;
+  packetLossPercent?: number;
 };
 export type AgentForwardGroupLatencyResult = {
   groupId: number;
@@ -150,7 +159,20 @@ export function isAgentTunnelTcpingResult(value: unknown): value is AgentTunnelT
 
 export function isAgentHostProbeServiceResult(value: unknown): value is AgentHostProbeServiceResult {
   const item = value as Partial<AgentHostProbeServiceResult>;
-  return validAgentProbeResult(item, "serviceId");
+  return validAgentProbeResult(item, "serviceId") && validOptionalProbeCounts(item);
+}
+export function isAgentHostNetworkQualityResult(value: unknown): value is AgentHostNetworkQualityResult {
+  const item = value as Partial<AgentHostNetworkQualityResult>;
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const successCount = Number(item.successCount);
+  const lossCount = Number(item.lossCount);
+  const total = successCount + lossCount;
+  if (!Number.isInteger(successCount) || successCount < 0 || !Number.isInteger(lossCount) || lossCount < 0) return false;
+  if (total <= 0 || total > 100) return false;
+  if (successCount > 0 && (!Number.isFinite(Number(item.latencyMs)) || Number(item.latencyMs) <= 0)) return false;
+  if (successCount === 0 && item.latencyMs !== undefined && item.latencyMs !== null && Number(item.latencyMs) !== 0) return false;
+  return item.packetLossPercent === undefined
+    || (Number.isFinite(Number(item.packetLossPercent)) && Number(item.packetLossPercent) >= 0 && Number(item.packetLossPercent) <= 100);
 }
 export function isAgentForwardGroupLatencyResult(value: unknown): value is AgentForwardGroupLatencyResult {
   const item = value as Partial<AgentForwardGroupLatencyResult>;
@@ -172,6 +194,17 @@ function validShortString(value: unknown, maxLength: number) {
 
 function validOptionalInteger(value: unknown, minimum: number) {
   return value === undefined || value === null || (Number.isInteger(Number(value)) && Number(value) >= minimum);
+}
+
+function validOptionalProbeCounts(item: { successCount?: unknown; lossCount?: unknown; packetLossPercent?: unknown }) {
+  const hasCounts = item.successCount !== undefined || item.lossCount !== undefined;
+  if (!hasCounts) return item.packetLossPercent === undefined;
+  const successCount = Number(item.successCount);
+  const lossCount = Number(item.lossCount);
+  if (!Number.isInteger(successCount) || successCount < 0 || !Number.isInteger(lossCount) || lossCount < 0) return false;
+  if (successCount + lossCount <= 0 || successCount + lossCount > 100) return false;
+  return item.packetLossPercent === undefined
+    || (Number.isFinite(Number(item.packetLossPercent)) && Number(item.packetLossPercent) >= 0 && Number(item.packetLossPercent) <= 100);
 }
 
 function validAgentProbeResult(item: any, idKey: string) {

@@ -8,6 +8,7 @@ import {
 import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw } from "../dbRuntime";
 import { boolLiteral, bucketExpression, inList, quoteIdentifier } from "../dbCompat";
 import { clampPositiveInt, epochSeconds } from "./repositoryUtils";
+import { packetLossPermille } from "./hostNetworkQualityRepository";
 
 export type HostProbeMethod = "tcping" | "ping";
 export type HostProbeScope = "all" | "exclude" | "specific";
@@ -212,6 +213,9 @@ export async function getLatestHostProbeServiceStats(serviceIds: number[], hostI
             s.${q("hostId")} AS ${q("hostId")},
             s.${q("latencyMs")} AS ${q("latencyMs")},
             s.${q("isTimeout")} AS ${q("isTimeout")},
+            s.${q("successCount")} AS ${q("successCount")},
+            s.${q("lossCount")} AS ${q("lossCount")},
+            s.${q("packetLossPermille")} AS ${q("packetLossPermille")},
             s.${q("recordedAt")} AS ${q("recordedAt")}
        FROM ${q("host_probe_service_stats")} s
        INNER JOIN (
@@ -230,6 +234,9 @@ export async function getLatestHostProbeServiceStats(serviceIds: number[], hostI
       hostId: Number(row.hostId),
       latencyMs: row.latencyMs == null ? null : Number(row.latencyMs),
       isTimeout: rowBool(row.isTimeout),
+      successCount: row.successCount == null ? null : Number(row.successCount),
+      lossCount: row.lossCount == null ? null : Number(row.lossCount),
+      packetLossPercent: row.packetLossPermille == null ? null : Number(row.packetLossPermille) / 10,
       recordedAt: rowDate(row.recordedAt),
     });
   }
@@ -308,7 +315,13 @@ export async function getHostProbeServiceSeries(opts: { serviceIds?: number[]; h
                           AND s.${q("latencyMs")} IS NOT NULL
                      THEN 1 ELSE 0 END) AS ${q("sampleCount")},
             SUM(CASE WHEN s.${q("isTimeout")} = ${timedOut}
-                     THEN 1 ELSE 0 END) AS ${q("timeoutCount")}
+                     THEN 1 ELSE 0 END) AS ${q("timeoutCount")},
+            SUM(CASE WHEN s.${q("successCount")} IS NOT NULL
+                     THEN s.${q("successCount")} ELSE 0 END) AS ${q("successCount")},
+            SUM(CASE WHEN s.${q("lossCount")} IS NOT NULL
+                     THEN s.${q("lossCount")} ELSE 0 END) AS ${q("lossCount")},
+            SUM(CASE WHEN s.${q("successCount")} IS NOT NULL OR s.${q("lossCount")} IS NOT NULL
+                     THEN 1 ELSE 0 END) AS ${q("lossWindowCount")}
        FROM ${q("host_probe_service_stats")} s
       WHERE ${conditions.join(" AND ")}
       GROUP BY s.${q("serviceId")}, s.${q("hostId")}, ${bucketExpr}
@@ -318,6 +331,10 @@ export async function getHostProbeServiceSeries(opts: { serviceIds?: number[]; h
   return rows.map((row) => {
     const sampleCount = Number(row.sampleCount) || 0;
     const timeoutCount = Number(row.timeoutCount) || 0;
+    const successCount = Number(row.successCount) || 0;
+    const lossCount = Number(row.lossCount) || 0;
+    const hasLossData = Number(row.lossWindowCount) > 0;
+    const lossPermille = hasLossData ? packetLossPermille(successCount, lossCount) : null;
     const hasLatency = sampleCount > 0 && row.avgLatency != null;
     return {
       serviceId: Number(row.serviceId),
@@ -326,6 +343,9 @@ export async function getHostProbeServiceSeries(opts: { serviceIds?: number[]; h
       // A bucket is a timeout only when it has no successful latency sample.
       // This keeps a single transient timeout from hiding otherwise good data.
       isTimeout: !hasLatency && timeoutCount > 0,
+      successCount: hasLossData ? successCount : null,
+      lossCount: hasLossData ? lossCount : null,
+      packetLossPercent: lossPermille === null ? null : lossPermille / 10,
       recordedAt: rowDate(row.bucketStart),
     };
   });
