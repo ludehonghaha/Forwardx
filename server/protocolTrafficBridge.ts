@@ -33,6 +33,16 @@ function dbEnabled(value: unknown) {
   return value !== false && value !== 0 && value !== "0";
 }
 
+function userCanReceiveProtocolTraffic(user: any) {
+  if (!user || !dbEnabled(user.accountEnabled)) return false;
+  const expiresAt = user.expiresAt ? new Date(user.expiresAt).getTime() : 0;
+  if (expiresAt > 0 && expiresAt <= Date.now()) return false;
+  const trafficLimit = Math.max(0, Number(user.trafficLimit) || 0);
+  const trafficUsed = Math.max(0, Number(user.trafficUsed) || 0);
+  if (trafficLimit > 0 && trafficUsed >= trafficLimit) return false;
+  return true;
+}
+
 export function protocolTrafficBridgeMarker(configValue: unknown): ProtocolTrafficBridgeMarker | null {
   const config = parseProtocolAccessConfig(configValue);
   const raw = config[PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY];
@@ -74,7 +84,10 @@ export function managedProtocolTrafficOwnerUserId(assignments: any[]) {
 export function selectProtocolTrafficBridgeForwardType(
   settings: Partial<Record<string, unknown>> | null | undefined,
 ): ForwardType | null {
-  const candidates: ForwardType[] = ["gost", "realm", "socat", "iptables", "nftables", "nginx"];
+  // The bridge target is loopback. Prefer process-based forwarders that can
+  // connect to 127.0.0.1 directly; do not fall back to NAT backends whose
+  // loopback forwarding depends on host route_localnet/sysctl state.
+  const candidates: ForwardType[] = ["gost", "realm", "socat", "nginx"];
   for (const candidate of candidates) {
     if (settings?.[candidate] !== false) return candidate;
   }
@@ -83,7 +96,7 @@ export function selectProtocolTrafficBridgeForwardType(
 
 function bridgeRuleName(endpoint: any) {
   const name = String(endpoint?.name || "协议端点").trim() || "协议端点";
-  return `协议流量 · ${name}`.slice(0, 128);
+  return `协议流量 · ${name}（系统）`.slice(0, 128);
 }
 
 function bridgeMarker(input: {
@@ -167,7 +180,7 @@ async function createBridgeRule(input: {
   const settings = await getForwardProtocolSettings();
   const forwardType = selectProtocolTrafficBridgeForwardType(settings);
   if (!forwardType) {
-    throw new Error("没有可用的 ForwardX 本机转发方式，无法为托管协议建立用户流量计量桥接");
+    throw new Error("没有可用的 GOST、Realm、Socat 或 Nginx 本机转发方式，无法为托管协议建立用户流量计量桥接");
   }
   return db.createForwardRule({
     hostId: positiveInteger(input.endpoint.hostId),
@@ -285,8 +298,9 @@ export async function syncManagedProtocolTrafficBridge(endpointId: number) {
   const ownerUserId = managedProtocolTrafficOwnerUserId(assignments);
   const config = parseProtocolAccessConfig(endpoint.configJson);
   const marker = protocolTrafficBridgeMarker(config);
+  const owner = ownerUserId > 0 ? await db.getUserById(ownerUserId) as any : null;
 
-  if (!endpoint.isEnabled || ownerUserId <= 0) {
+  if (!endpoint.isEnabled || ownerUserId <= 0 || !userCanReceiveProtocolTraffic(owner)) {
     const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;
     return { changed, hostId };
   }
@@ -295,12 +309,13 @@ export async function syncManagedProtocolTrafficBridge(endpointId: number) {
     const linkedRule = await db.getForwardRuleById(Number(endpoint.forwardRuleId)) as any;
     if (marker) {
       if (marker.ownerUserId === ownerUserId && positiveInteger(linkedRule?.userId) === ownerUserId && !linkedRule?.pendingDelete) {
+        const wasEnabled = !!linkedRule?.isEnabled;
         const enabled = await enableOwnedBridgeRule(marker.ruleId, ownerUserId);
         if (!enabled) {
           const replacement = await createOrReplaceOwnedBridge(endpoint, ownerUserId, marker);
           return { changed: replacement.changed, hostId };
         }
-        return { changed: !linkedRule?.isEnabled, hostId };
+        return { changed: !wasEnabled, hostId };
       }
       const replacement = await createOrReplaceOwnedBridge(endpoint, ownerUserId, marker);
       return { changed: replacement.changed, hostId };
