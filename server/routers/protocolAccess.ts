@@ -63,8 +63,10 @@ function provisionManagedProtocolConfig(
   runtimeMode: "external" | "managed",
   rawConfig: Record<string, unknown>,
 ) {
-  const config = { ...rawConfig };
-  if (runtimeMode !== "managed") return withoutProtocolTrafficBridgeMarker(config);
+  // The bridge marker is panel-owned metadata. Never accept it from a create
+  // or edit payload; updateEndpoint restores the trusted current marker below.
+  const config = withoutProtocolTrafficBridgeMarker(rawConfig);
+  if (runtimeMode !== "managed") return config;
   if (protocol === "snell") {
     if (!protocolConfigSecret(config, "password")) config.password = randomProtocolSecret();
     if (!Number.isInteger(Number(config.version))) config.version = 5;
@@ -303,15 +305,15 @@ export const protocolAccessRouter = router({
     const currentConfig = parseProtocolAccessConfig(current.configJson);
     const currentBridge = protocolTrafficBridgeMarker(currentConfig);
     const rawConfig = input.config ? { ...input.config } : { ...currentConfig };
+    const config = provisionManagedProtocolConfig(protocol, runtimeMode, rawConfig);
     if (runtimeMode === "managed" && currentBridge) {
       // System bridge metadata and the internal listen port are panel-owned.
       // Preserve them when the edit form only sends user-facing protocol fields.
-      rawConfig[PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY] = currentConfig[PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY];
-      if (rawConfig.listenPort === undefined && currentConfig.listenPort !== undefined) {
-        rawConfig.listenPort = currentConfig.listenPort;
+      config[PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY] = currentConfig[PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY];
+      if (input.config && input.config.listenPort === undefined && currentConfig.listenPort !== undefined) {
+        config.listenPort = currentConfig.listenPort;
       }
     }
-    const config = provisionManagedProtocolConfig(protocol, runtimeMode, rawConfig);
     const hostId = input.hostId === undefined ? current.hostId : input.hostId;
     const isEnabled = input.isEnabled === undefined ? current.isEnabled : input.isEnabled;
     if (current.runtimeMode === "managed" && runtimeMode === "managed"
