@@ -203,6 +203,29 @@ async function reserveBridgeListenPort(input: {
   });
 }
 
+async function reserveConfiguredBridgeListenPort(input: {
+  endpoint: any;
+  protocol: ForwardRuleProtocol;
+  port: number;
+}) {
+  const hostId = positiveInteger(input.endpoint?.hostId);
+  if (!hostId || !input.port || input.port > 65535) return null;
+  return reserveSpecificHostPort({
+    hostId,
+    port: input.port,
+    protocol: input.protocol,
+    isUsed: (port) => db.isPortUsedOnHost(
+      hostId,
+      port,
+      undefined,
+      input.protocol,
+      undefined,
+      true,
+      positiveInteger(input.endpoint?.id) || undefined,
+    ),
+  });
+}
+
 async function createBridgeRule(input: {
   endpoint: any;
   ownerUserId: number;
@@ -289,6 +312,15 @@ async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, ma
       });
       if (!listenReservation) throw new Error("Agent 主机没有可用的内部监听端口，无法建立协议流量计量桥接");
       listenPort = listenReservation.port;
+    } else {
+      listenReservation = await reserveConfiguredBridgeListenPort({
+        endpoint,
+        protocol: serverProtocol,
+        port: listenPort,
+      });
+      if (!listenReservation) {
+        throw new Error(`Agent 内部监听端口 ${listenPort} 已被其他规则占用，无法建立协议流量计量桥接`);
+      }
     }
 
     if (oldRuleId > 0) {
