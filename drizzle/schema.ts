@@ -697,10 +697,25 @@ export const hostProbeServiceStats = table("host_probe_service_stats", {
   hostId: int("hostId").notNull(),
   latencyMs: int("latencyMs"),
   isTimeout: boolean("isTimeout").notNull().default(false),
+  successCount: int("successCount"),
+  lossCount: int("lossCount"),
+  packetLossPermille: int("packetLossPermille"),
   recordedAt: epoch("recordedAt").notNull().default(nowDefault()),
 });
 export type HostProbeServiceStat = typeof hostProbeServiceStats.$inferSelect;
 export type InsertHostProbeServiceStat = typeof hostProbeServiceStats.$inferInsert;
+
+export const hostNetworkQualityStats = table("host_network_quality_stats", {
+  id: serial("id"),
+  hostId: int("hostId").notNull(),
+  latencyMs: int("latencyMs"),
+  successCount: int("successCount").notNull(),
+  lossCount: int("lossCount").notNull(),
+  packetLossPermille: int("packetLossPermille").notNull(),
+  recordedAt: epoch("recordedAt").notNull().default(nowDefault()),
+});
+export type HostNetworkQualityStat = typeof hostNetworkQualityStats.$inferSelect;
+export type InsertHostNetworkQualityStat = typeof hostNetworkQualityStats.$inferInsert;
 
 export const ipGeoCache = table("ip_geo_cache", {
   id: serial("id"),

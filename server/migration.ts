@@ -182,7 +182,7 @@ const MIGRATION_RUNTIME_TIMEOUT_MS = Math.max(
     : 15 * 60 * 1000,
 );
 const MIGRATION_RUNTIME_POLL_MS = 2_000;
-const DIRECT_SQLITE_OPTIONAL_SOURCE_TABLES = new Set(["agent_traffic_reports"]);
+const DIRECT_SQLITE_OPTIONAL_SOURCE_TABLES = new Set(["agent_traffic_reports", "host_network_quality_stats"]);
 
 function normalizePanelUrl(url: string) {
   const value = url.trim().replace(/\/+$/, "");
@@ -206,6 +206,7 @@ export function hasActivePanelMigration() {
 export const ESSENTIAL_MIGRATION_OMITTED_TABLES = new Set<(typeof MIGRATION_TABLES)[number]>([
   "host_metrics",
   "host_probe_service_stats",
+  "host_network_quality_stats",
   "tunnel_latency_stats",
   "forward_group_latency_stats",
   "traffic_stats",
@@ -706,6 +707,7 @@ const IMPORT_TABLE_ORDER = [
   "host_probe_services",
   "host_metrics",
   "host_probe_service_stats",
+  "host_network_quality_stats",
   "host_traffic_counters",
   "user_traffic_counters",
   "forward_rule_traffic_counters",
@@ -751,6 +753,7 @@ const IMPORT_TABLE_ORDER = [
 const BEST_EFFORT_MIGRATION_TABLES = new Set<MigrationTableName>([
   "host_metrics",
   "host_probe_service_stats",
+  "host_network_quality_stats",
   "host_traffic_counters",
   "user_traffic_counters",
   "forward_rule_traffic_counters",
@@ -1269,6 +1272,10 @@ async function prepareImportRow(table: string, source: Record<string, any>, maps
       row.hostId = mapRequiredId(maps, "hosts", source.hostId);
       return { row };
 
+    case "host_network_quality_stats":
+      row.hostId = mapRequiredId(maps, "hosts", source.hostId);
+      return { row };
+
     case "forward_group_events":
       row.groupId = mapRequiredId(maps, "forward_groups", source.groupId);
       row.memberId = mapOptionalId(maps, "forward_group_members", source.memberId);
@@ -1601,7 +1608,14 @@ export async function importDirectSqliteBackup(
         }
         for (const table of tableDefs) {
           if (!sourceTables.has(table.name)) continue;
-          const columns = table.columns.map((column) => sqliteIdentifier(column.name)).join(", ");
+          const sourceColumns = new Set((sqlite.prepare(
+            `PRAGMA migration_source.table_info(${sqliteIdentifier(table.name)})`,
+          ).all() as Array<{ name: string }>).map((column) => String(column.name)));
+          const columns = table.columns
+            .filter((column) => sourceColumns.has(column.name))
+            .map((column) => sqliteIdentifier(column.name))
+            .join(", ");
+          if (!columns) continue;
           sqlite.exec(
             `INSERT INTO main.${sqliteIdentifier(table.name)} (${columns}) SELECT ${columns} FROM migration_source.${sqliteIdentifier(table.name)}`,
           );

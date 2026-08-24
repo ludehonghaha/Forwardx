@@ -22,6 +22,7 @@ import {
   Gauge,
   HardDrive,
   RotateCcw,
+  RadioTower,
   Loader2,
   MemoryStick,
   Monitor,
@@ -94,10 +95,12 @@ type HostCardProps = {
   onUpgrade: (host: any) => void;
   onResetTraffic?: (host: any) => void;
   onCorrectTraffic?: (host: any) => void;
+  onViewNetworkQuality?: (host: any) => void;
   onViewProbeLatency?: (host: any) => void;
   resetTrafficPending?: boolean;
   traffic?: { bytesIn?: number | null; bytesOut?: number | null } | null;
   metrics?: any[] | null;
+  networkQuality?: any | null;
   canUpgrade: boolean;
   latestAgentVersion?: string;
   refreshInterval: number | false;
@@ -108,7 +111,7 @@ type HostCardProps = {
 
 type HostActionButtonsProps = Pick<
   HostCardProps,
-  "host" | "onEdit" | "onDelete" | "onUpgrade" | "onResetTraffic" | "onCorrectTraffic" | "onViewProbeLatency" | "resetTrafficPending" | "canUpgrade"
+  "host" | "onEdit" | "onDelete" | "onUpgrade" | "onResetTraffic" | "onCorrectTraffic" | "onViewNetworkQuality" | "onViewProbeLatency" | "resetTrafficPending" | "canUpgrade"
 > & {
   className?: string;
   buttonClassName?: string;
@@ -121,6 +124,7 @@ export function HostActionButtons({
   onUpgrade,
   onResetTraffic,
   onCorrectTraffic,
+  onViewNetworkQuality,
   onViewProbeLatency,
   resetTrafficPending = false,
   canUpgrade,
@@ -147,14 +151,14 @@ export function HostActionButtons({
 
   return (
     <div className={className}>
-      {onViewProbeLatency && (
+      {onViewNetworkQuality && (
         <Button
           variant="ghost"
           size="icon"
           className={buttonClassName}
-          title="查看服务延迟图表"
-          aria-label="查看服务延迟图表"
-          onClick={() => onViewProbeLatency(host)}
+          title="查看主机网络质量"
+          aria-label="查看主机网络质量"
+          onClick={() => onViewNetworkQuality(host)}
         >
           <Activity className="h-3.5 w-3.5" />
         </Button>
@@ -182,6 +186,12 @@ export function HostActionButtons({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-40 min-w-40">
+          {onViewProbeLatency && (
+            <DropdownMenuItem onSelect={() => onViewProbeLatency(host)}>
+              <RadioTower />
+              <span>服务探测图表</span>
+            </DropdownMenuItem>
+          )}
           {onResetTraffic && (
             <DropdownMenuItem
               disabled={resetTrafficPending}
@@ -226,10 +236,12 @@ export default function HostCard({
   onUpgrade,
   onResetTraffic,
   onCorrectTraffic,
+  onViewNetworkQuality,
   onViewProbeLatency,
   resetTrafficPending = false,
   traffic = null,
   metrics: externalMetrics,
+  networkQuality = null,
   canUpgrade,
   latestAgentVersion,
   refreshInterval,
@@ -434,6 +446,28 @@ export default function HostCard({
       tooltip: trafficUsageTooltip,
     },
   ];
+  const networkLatency = networkQuality?.latencyMs == null ? null : Number(networkQuality.latencyMs);
+  const networkLoss = networkQuality?.packetLossPercent == null ? null : Number(networkQuality.packetLossPercent);
+  const networkLatencyLabel = Number.isFinite(networkLatency) && networkLatency! > 0 ? `${Math.round(networkLatency!)} ms` : "--";
+  const networkLossLabel = Number.isFinite(networkLoss) ? `${Math.max(0, Math.min(100, networkLoss!)).toFixed(1)}%` : "--";
+  const renderNetworkQuality = () => (
+    <button
+      type="button"
+      className={`grid w-full grid-cols-2 gap-2 rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-background/45 ${trafficPanelClass}`}
+      onClick={() => onViewNetworkQuality?.(host)}
+      disabled={!onViewNetworkQuality}
+      title="Agent → Panel 主机网络质量"
+    >
+      <span className="min-w-0">
+        <span className="block truncate text-[11px] text-muted-foreground">当前延迟</span>
+        <span className="mt-0.5 block truncate text-xs font-semibold tabular-nums">{networkLatencyLabel}</span>
+      </span>
+      <span className="min-w-0 border-l border-border/40 pl-2">
+        <span className="block truncate text-[11px] text-muted-foreground">当前丢包</span>
+        <span className="mt-0.5 block truncate text-xs font-semibold tabular-nums">{networkLossLabel}</span>
+      </span>
+    </button>
+  );
 
   const addressRegionBlock = (regionCompact = false) => (
     <div className={`mt-0.5 min-w-0 space-y-1 ${isOnline ? "" : "opacity-70 grayscale"}`}>
@@ -473,6 +507,7 @@ export default function HostCard({
               onUpgrade={onUpgrade}
               onResetTraffic={onResetTraffic}
               onCorrectTraffic={onCorrectTraffic}
+              onViewNetworkQuality={onViewNetworkQuality}
               onViewProbeLatency={onViewProbeLatency}
               resetTrafficPending={resetTrafficPending}
               canUpgrade={canUpgrade}
@@ -491,6 +526,7 @@ export default function HostCard({
               onUpgrade={onUpgrade}
               onResetTraffic={onResetTraffic}
               onCorrectTraffic={onCorrectTraffic}
+              onViewNetworkQuality={onViewNetworkQuality}
               onViewProbeLatency={onViewProbeLatency}
               resetTrafficPending={resetTrafficPending}
               canUpgrade={canUpgrade}
@@ -574,6 +610,8 @@ export default function HostCard({
             </div>
           </div>
         )}
+
+        {renderNetworkQuality()}
 
         {latestMetric ? (
           compact ? (

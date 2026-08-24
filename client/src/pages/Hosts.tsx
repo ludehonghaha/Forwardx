@@ -11,6 +11,7 @@ import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
 import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
 import HostProbeServiceLatencyDialog from "@/components/hosts/HostProbeServiceLatencyDialog";
+import HostNetworkQualityDialog from "@/components/hosts/HostNetworkQualityDialog";
 import {
   agentDetectedIpText,
   compareVersions,
@@ -1122,7 +1123,7 @@ const HOST_MANAGE_TAB_ITEMS_ADMIN = [
   { value: "hosts", label: "主机管理", icon: Server },
   { value: "groups", label: "分组管理", icon: FolderKanban },
   { value: "tokens", label: "Token 管理", icon: Key },
-  { value: "services", label: "服务管理", icon: Rows3 },
+  { value: "services", label: "高级探测", icon: Rows3 },
 ] as const satisfies readonly SlidingTabItem<HostManageTab>[];
 const HOST_MANAGE_TAB_ITEMS_USER = [
   { value: "hosts", label: "主机管理", icon: Server },
@@ -1434,7 +1435,8 @@ function HostsContent() {
   const [showDialog, setShowDialog] = useState(false);
   const [hostDialogTab, setHostDialogTab] = useState<HostDialogTab>("basic");
   const [upgradeHost, setUpgradeHost] = useState<any>(null);
-  const [probeLatencyHost, setProbeLatencyHost] = useState<any>(null);
+  const [networkQualityHost, setNetworkQualityHost] = useState<any>(null);
+  const [serviceProbeLatencyHost, setServiceProbeLatencyHost] = useState<any>(null);
   const [resetTrafficHost, setResetTrafficHost] = useState<any>(null);
   const [resetTrafficHostId, setResetTrafficHostId] = useState<number | null>(null);
   const [trafficCorrectionHost, setTrafficCorrectionHost] = useState<any>(null);
@@ -2079,6 +2081,15 @@ function HostsContent() {
     for (const row of hostLatestMetricRows as any[]) map.set(Number(row.hostId), [row]);
     return map;
   }, [hostLatestMetricRows]);
+  const { data: hostNetworkQualityRows = [] } = trpc.hosts.networkQualityLatest.useQuery(
+    { hostIds: pagedMetricHostIds },
+    { enabled: pagedMetricHostIds.length > 0, refetchInterval: hostLiveRefreshInterval || false },
+  );
+  const hostNetworkQualityById = useMemo(() => {
+    const map = new Map<number, any>();
+    for (const row of hostNetworkQualityRows as any[]) map.set(Number(row.hostId), row);
+    return map;
+  }, [hostNetworkQualityRows]);
   const renderHostCard = (host: any, options: { dragHandle?: any; sortableClassName?: string; compact?: boolean } = {}) => (
     <HostCard
       key={host.id}
@@ -2089,10 +2100,12 @@ function HostsContent() {
       canUpgrade={user?.role === "admin"}
       onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
       onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
-      onViewProbeLatency={setProbeLatencyHost}
+      onViewNetworkQuality={setNetworkQualityHost}
+      onViewProbeLatency={setServiceProbeLatencyHost}
       resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
       traffic={hostTrafficById.get(host.id)}
       metrics={hostLatestMetricSeriesById.get(host.id) ?? null}
+      networkQuality={hostNetworkQualityById.get(host.id) ?? null}
       latestAgentVersion={latestAgentVersion}
       refreshInterval={hostLiveRefreshInterval}
       compact={options.compact ?? viewMode === "compact-card"}
@@ -2370,7 +2383,7 @@ function HostsContent() {
           {user?.role === "admin" && (
             <Button onClick={openCreate} className="col-span-2 w-full gap-2 sm:col-span-1 sm:w-auto">
               <Plus className="h-4 w-4" />
-              {activeManageTab === "services" ? "添加服务" : activeManageTab === "groups" ? "添加分组" : "添加主机"}
+              {activeManageTab === "services" ? "添加探测" : activeManageTab === "groups" ? "添加分组" : "添加主机"}
             </Button>
           )}
         </div>
@@ -2751,7 +2764,8 @@ function HostsContent() {
                             onUpgrade={requestAgentUpgrade}
                             onResetTraffic={user?.role === "admin" ? requestResetHostTraffic : undefined}
                             onCorrectTraffic={user?.role === "admin" ? requestCorrectHostTraffic : undefined}
-                            onViewProbeLatency={setProbeLatencyHost}
+                            onViewNetworkQuality={setNetworkQualityHost}
+                            onViewProbeLatency={setServiceProbeLatencyHost}
                             resetTrafficPending={resetTrafficHostId === host.id && resetHostTrafficMutation.isPending}
                             canUpgrade={user?.role === "admin"}
                             className="flex items-center justify-end gap-0.5"
@@ -2818,7 +2832,7 @@ function HostsContent() {
         {user?.role === "admin" && (
           <TabsContent value="services" className="space-y-4">
             <p className="text-xs text-muted-foreground sm:text-sm">
-              管理主机 Ping / TCPing 探测服务。
+              高级功能：配置 Agent → 指定 IP / 域名 / 端口的 Ping / TCPing 服务探测。
             </p>
             <HostProbeServiceManager
               createSignal={serviceCreateSignal}
@@ -2843,10 +2857,15 @@ function HostsContent() {
         />
       )}
 
+      <HostNetworkQualityDialog
+        open={!!networkQualityHost}
+        onOpenChange={(open) => !open && setNetworkQualityHost(null)}
+        host={networkQualityHost}
+      />
       <HostProbeServiceLatencyDialog
-        open={!!probeLatencyHost}
-        onOpenChange={(open) => !open && setProbeLatencyHost(null)}
-        host={probeLatencyHost}
+        open={!!serviceProbeLatencyHost}
+        onOpenChange={(open) => !open && setServiceProbeLatencyHost(null)}
+        host={serviceProbeLatencyHost}
         services={probeServices as any[]}
       />
       {/* Reset Host Traffic Dialog */}

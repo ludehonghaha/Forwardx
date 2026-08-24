@@ -796,6 +796,27 @@ export const hostsRouter = router({
         .map(compactHostStatus)
         .filter((host: ReturnType<typeof compactHostStatus>) => host.id > 0);
     }),
+    networkQualityLatest: protectedProcedure
+      .input(z.object({ hostIds: z.array(z.number().int().positive()).max(100) }))
+      .query(async ({ input, ctx }) => {
+        const requestedIds = Array.from(new Set(input.hostIds.map(Number).filter((id) => id > 0)));
+        if (requestedIds.length === 0) return [];
+        const scope = await visibleHostQueryScope(ctx.user);
+        const visibleHosts = await db.getHostOptions(scope.ownerUserId, scope.allowedHostIds, scope.sortUserId);
+        const visibleIds = new Set((visibleHosts as any[]).map((host) => Number(host.id)));
+        return db.getLatestHostNetworkQualityStats(requestedIds.filter((id) => visibleIds.has(id)));
+      }),
+    networkQualitySeries: protectedProcedure
+      .input(z.object({
+        hostId: z.number().int().positive(),
+        hours: z.number().min(0.5).max(24 * 7).default(24),
+      }))
+      .query(async ({ input, ctx }) => {
+        const scope = await visibleHostQueryScope(ctx.user);
+        const visibleHosts = await db.getHostOptions(scope.ownerUserId, scope.allowedHostIds, scope.sortUserId);
+        if (!(visibleHosts as any[]).some((host) => Number(host.id) === input.hostId)) return [];
+        return db.getHostNetworkQualitySeries({ hostId: input.hostId, hours: input.hours });
+      }),
     summary: protectedProcedure
       .input(z.object({
         search: z.string().trim().max(200).optional().default(""),

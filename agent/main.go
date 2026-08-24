@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.193"
+var Version = "2.2.194"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -3230,6 +3230,7 @@ func agentMetricsScheduler(cfg Config) {
 		select {
 		case <-ticker.C:
 			scheduleTrafficCollection(cfg)
+			scheduleHostNetworkQualityCollection(cfg)
 			force := agentMetricsForceTCPing.Swap(false)
 			if !scheduleAgentTCPing(cfg, force) && force {
 				retainForcedTCPingRequest()
@@ -4060,12 +4061,14 @@ func heartbeatPresenceRequest(cfg Config, expectedGeneration *uint64) (int, uint
 	// until the next five-minute full heartbeat.
 	requestGeneration := uint64(0)
 	var err error
+	requestStartedAt := time.Now()
 	if expectedGeneration == nil {
 		requestGeneration, err = postHeartbeatWithClientTracked(agentPresenceHTTPClient, cfg, "/api/agent/presence", payload, &resp)
 	} else {
 		requestGeneration = *expectedGeneration
 		err = postHeartbeatWithClientIfGeneration(agentPresenceHTTPClient, cfg, "/api/agent/presence", payload, &resp, *expectedGeneration)
 	}
+	recordHostNetworkQualityPresenceResult(time.Since(requestStartedAt), err)
 	if err != nil {
 		var statusErr agentHTTPStatusError
 		if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusBadRequest ||
