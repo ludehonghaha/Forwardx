@@ -35,6 +35,10 @@ function NetworkQualityTooltip({ active, payload, label }: any) {
         <span className="font-semibold tabular-nums">{point.latencyMs == null ? "--" : `${point.latencyMs}ms`}</span>
       </div>
       <div className="mt-1 flex items-center justify-between gap-5">
+        <span>抖动</span>
+        <span className="font-semibold tabular-nums">{point.jitterMs == null ? "--" : `${point.jitterMs}ms`}</span>
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-5">
         <span>丢包率</span>
         <span className="font-semibold tabular-nums">{point.packetLossPercent == null ? "--" : `${Number(point.packetLossPercent).toFixed(1)}%`}</span>
       </div>
@@ -66,6 +70,7 @@ export default function HostNetworkQualityDialog({
       label: formatTime(at),
       fullLabel: formatFullTime(at),
       latencyMs: row.latencyMs == null ? null : Number(row.latencyMs),
+      jitterMs: row.jitterMs == null ? null : Number(row.jitterMs),
       packetLossPercent: row.packetLossPercent == null ? null : Number(row.packetLossPercent),
     };
   }).filter((row) => Number.isFinite(row.at)), [data]);
@@ -75,7 +80,10 @@ export default function HostNetworkQualityDialog({
     return [end - rangeMs, end];
   }, [data, timeRangeHours]);
   const latencyMax = useMemo(() => {
-    const max = Math.max(0, ...chart.map((point) => Number(point.latencyMs) || 0));
+    const max = Math.max(
+      0,
+      ...chart.map((point) => Math.max(Number(point.latencyMs) || 0, Number(point.jitterMs) || 0)),
+    );
     return max > 0 ? Math.ceil(max * 1.2) : 120;
   }, [chart]);
   const latencyTicks = useMemo(() => getLatencyYAxisTicks(latencyMax), [latencyMax]);
@@ -87,7 +95,7 @@ export default function HostNetworkQualityDialog({
           <div className="flex flex-col gap-2 pr-9 sm:flex-row sm:items-start sm:justify-between sm:pr-10">
             <div className="min-w-0">
               <DialogTitle>主机网络质量</DialogTitle>
-              <DialogDescription>{host?.name ? `${host.name} 最近 ${latencyTimeRangeLabel(timeRangeHours)} Agent → Panel 网络质量` : `最近 ${latencyTimeRangeLabel(timeRangeHours)} Agent → Panel 网络质量`}</DialogDescription>
+              <DialogDescription>{host?.name ? `${host.name} 最近 ${latencyTimeRangeLabel(timeRangeHours)} Agent → Panel 网络质量（延迟 / 抖动 / 丢包）` : `最近 ${latencyTimeRangeLabel(timeRangeHours)} Agent → Panel 网络质量（延迟 / 抖动 / 丢包）`}</DialogDescription>
             </div>
             <LatencyTimeRangeSelect value={timeRangeHours} onChange={setTimeRangeHours} options={HOST_NETWORK_QUALITY_TIME_RANGE_OPTIONS} />
           </div>
@@ -107,6 +115,7 @@ export default function HostNetworkQualityDialog({
                 <RTooltip content={<NetworkQualityTooltip />} cursor={{ stroke: "var(--color-muted-foreground)", strokeDasharray: "3 3" }} />
                 <Area yAxisId="loss" type="monotone" dataKey="packetLossPercent" name="丢包率" stroke="#dc2626" fill="#dc2626" fillOpacity={0.12} strokeWidth={1.1} dot={false} connectNulls={false} isAnimationActive={false} />
                 <Line yAxisId="latency" type="monotone" dataKey="latencyMs" name="延迟" stroke="var(--color-primary)" strokeWidth={1.35} dot={false} connectNulls={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line yAxisId="latency" type="monotone" dataKey="jitterMs" name="抖动" stroke="#d97706" strokeWidth={1.15} strokeDasharray="4 3" dot={false} connectNulls={false} activeDot={{ r: 2.5 }} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
           )}
