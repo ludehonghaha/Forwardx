@@ -15,6 +15,7 @@ Before merge or production rollout:
 11. Editing the managed endpoint public port, internal listen port, or effective TCP/UDP socket mode atomically replaces the system bridge and reserves both sides of the replacement.
 12. Panel startup reconciles an existing single-user managed endpoint without requiring the assignment to be recreated.
 13. A malformed or user-supplied `_forwardxTrafficBridge` marker is not accepted as trusted bridge metadata.
-14. Existing ordinary forwarding rules, manually-linked protocol rules, and external protocol endpoints remain unchanged.
+14. Restoring user forward/account access does not blindly re-enable disabled rules; bridge state remains governed by endpoint/assignment reconciliation.
+15. Existing ordinary forwarding rules, manually-linked protocol rules, and external protocol endpoints remain unchanged.
 
 Production canary should be panel-first. Do not mass-upgrade Agents for this change because the Agent traffic-report protocol is unchanged.
