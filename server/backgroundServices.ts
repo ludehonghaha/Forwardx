@@ -1,6 +1,7 @@
 import { startScheduler } from "./scheduler";
 import { startTelegramBot } from "./telegramBot";
 import { isDevPanelMode } from "./devPanel";
+import { startUserTrafficDailyHistory } from "./userTrafficHistory";
 
 let backgroundServicesStarted = false;
 
@@ -13,6 +14,7 @@ export function startBackgroundServices() {
   }
   backgroundServicesStarted = true;
   startScheduler();
+  startUserTrafficDailyHistory();
   startTelegramBot().catch((error) => {
     console.warn(`[Telegram] Failed to start bot: ${error instanceof Error ? error.message : String(error)}`);
   });
