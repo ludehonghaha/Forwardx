@@ -7,7 +7,7 @@ Before merge or production rollout:
 3. Assigning one enabled user creates one system bridge rule and moves the managed protocol listener to an internal loopback port.
 4. A second enabled user assignment is rejected for managed shared-credential endpoints.
 5. The system bridge does not consume the user's ordinary `maxRules` or `maxPorts` quota.
-6. Non-admin users cannot update, toggle, delete, or batch-delete the system bridge through Forward Rule APIs.
+6. Non-admin users cannot update, toggle, delete, batch-delete, or reset traffic for the system bridge through Forward Rule APIs.
 7. Agent runtime keeps the protocol listener and bridge Forward Rule on the same host.
 8. Forward Rule traffic reports attribute bytes and connections to the assigned user and continue into existing daily traffic history.
 9. Disabling/removing the assignment or endpoint retires/disables the bridge.
