@@ -19,6 +19,13 @@ import { reserveManagedProtocolPort } from "../protocolManagedPort";
 import { latestHostProtocolAccessRevision } from "../configAudit";
 import { getAgentLocalRuntimeStateSnapshot } from "../agentHeartbeatRoute";
 import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
+import {
+  protocolTrafficBridgeMarker,
+  pushProtocolTrafficBridgeRefresh,
+  retireManagedProtocolTrafficBridge,
+  syncManagedProtocolTrafficBridge,
+  withoutProtocolTrafficBridgeMarker,
+} from "../protocolTrafficBridge";
 
 const protocolSchema = z.enum(["shadowsocks", "shadowsocks_ssh", "mieru", "snell", "vless_reality", "hysteria2"]);
 const runtimeModeSchema = z.enum(["external", "managed"]);
@@ -56,7 +63,7 @@ function provisionManagedProtocolConfig(
   rawConfig: Record<string, unknown>,
 ) {
   const config = { ...rawConfig };
-  if (runtimeMode !== "managed") return config;
+  if (runtimeMode !== "managed") return withoutProtocolTrafficBridgeMarker(config);
   if (protocol === "snell") {
     if (!protocolConfigSecret(config, "password")) config.password = randomProtocolSecret();
     if (!Number.isInteger(Number(config.version))) config.version = 5;
@@ -151,7 +158,11 @@ async function validateEndpoint(input: {
   }
   if (forwardRuleId) {
     const rule = await db.getForwardRuleById(forwardRuleId) as any;
-    if (!rule || !rule.isEnabled || rule.pendingDelete) throw new Error("关联的 ForwardX 转发规则不存在或未启用");
+    const managedBridge = protocolTrafficBridgeMarker(input.config);
+    const managedBridgeRule = !!managedBridge && managedBridge.ruleId === forwardRuleId;
+    if (!rule || rule.pendingDelete || (!rule.isEnabled && !managedBridgeRule)) {
+      throw new Error("关联的 ForwardX 转发规则不存在或未启用");
+    }
     if (Number(rule.sourcePort) !== input.publicPort || Number(rule.targetPort) !== listenPort) {
       throw new Error("关联规则的源端口必须等于公网端口，目标端口必须等于 Agent 监听端口");
     }
@@ -285,7 +296,9 @@ export const protocolAccessRouter = router({
     const rawConfig = input.config || parseProtocolAccessConfig(current.configJson);
     const config = provisionManagedProtocolConfig(protocol, runtimeMode, rawConfig);
     const hostId = input.hostId === undefined ? current.hostId : input.hostId;
-    const forwardRuleId = input.forwardRuleId === undefined ? current.forwardRuleId : input.forwardRuleId;
+    const forwardRuleId = runtimeMode === "external"
+      ? null
+      : input.forwardRuleId === undefined ? current.forwardRuleId : input.forwardRuleId;
     const isEnabled = input.isEnabled === undefined ? current.isEnabled : input.isEnabled;
     if (current.runtimeMode === "managed" && runtimeMode === "managed"
       && Number(current.hostId || 0) !== Number(hostId || 0)) {
@@ -312,20 +325,45 @@ export const protocolAccessRouter = router({
       isEnabled,
     });
     const { id, config: _config, autoPort: _autoPort, ...patch } = input;
+    let refreshHostId = 0;
     try {
-      return await db.updateProtocolEndpoint(id, {
-        ...patch,
-        hostId: validated.hostId,
-        forwardRuleId: validated.forwardRuleId,
-        configJson: config,
-      } as any);
+      const updated = await db.withDatabaseTransaction(async () => {
+        if (current.runtimeMode === "managed" && runtimeMode === "external") {
+          const retired = await retireManagedProtocolTrafficBridge(current);
+          refreshHostId = retired.hostId;
+        }
+        await db.updateProtocolEndpoint(id, {
+          ...patch,
+          hostId: validated.hostId,
+          forwardRuleId: validated.forwardRuleId,
+          configJson: config,
+        } as any);
+        if (runtimeMode === "managed") {
+          const synced = await syncManagedProtocolTrafficBridge(id);
+          if (synced.changed) refreshHostId = synced.hostId;
+        }
+        return db.getProtocolEndpointById(id);
+      });
+      if (refreshHostId > 0) pushProtocolTrafficBridgeRefresh(refreshHostId, "protocol-traffic-bridge-endpoint-updated");
+      return updated;
     } finally {
       validated.reservation?.release();
     }
   }),
 
   deleteEndpoint: adminProcedure.input(z.object({ id: z.number().int().positive() }))
-    .mutation(({ input }) => db.deleteProtocolEndpoint(input.id)),
+    .mutation(async ({ input }) => {
+      const endpoint = await db.getProtocolEndpointById(input.id);
+      if (!endpoint) return false;
+      let refreshHostId = 0;
+      const deleted = await db.withDatabaseTransaction(async () => {
+        const retired = await retireManagedProtocolTrafficBridge(endpoint);
+        if (retired.changed) refreshHostId = retired.hostId;
+        return db.deleteProtocolEndpoint(input.id);
+      });
+      if (refreshHostId > 0) pushProtocolTrafficBridgeRefresh(refreshHostId, "protocol-traffic-bridge-endpoint-deleted");
+      return deleted;
+    }),
 
   listAssignments: adminProcedure.input(z.object({ endpointId: z.number().int().positive() }))
     .query(({ input }) => db.listProtocolEndpointAssignments(input.endpointId)),
@@ -354,8 +392,15 @@ export const protocolAccessRouter = router({
       credential: input.credential,
     });
     if (errors.length > 0) throw new Error(errors.join("；"));
-    const id = await db.setProtocolUserAccess(input);
-    await db.ensureProtocolFeedToken(input.userId);
+    let refreshHostId = 0;
+    const id = await db.withDatabaseTransaction(async () => {
+      const assignmentId = await db.setProtocolUserAccess(input);
+      await db.ensureProtocolFeedToken(input.userId);
+      const synced = await syncManagedProtocolTrafficBridge(input.endpointId);
+      if (synced.changed) refreshHostId = synced.hostId;
+      return assignmentId;
+    });
+    if (refreshHostId > 0) pushProtocolTrafficBridgeRefresh(refreshHostId, "protocol-traffic-bridge-assignment-updated");
     return { id };
   }),
 
@@ -363,7 +408,13 @@ export const protocolAccessRouter = router({
     endpointId: z.number().int().positive(),
     userId: z.number().int().positive(),
   })).mutation(async ({ input }) => {
-    await db.removeProtocolUserAccess(input.endpointId, input.userId);
+    let refreshHostId = 0;
+    await db.withDatabaseTransaction(async () => {
+      await db.removeProtocolUserAccess(input.endpointId, input.userId);
+      const synced = await syncManagedProtocolTrafficBridge(input.endpointId);
+      if (synced.changed) refreshHostId = synced.hostId;
+    });
+    if (refreshHostId > 0) pushProtocolTrafficBridgeRefresh(refreshHostId, "protocol-traffic-bridge-assignment-removed");
     return { success: true };
   }),
 
