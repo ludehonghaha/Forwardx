@@ -34,7 +34,8 @@ import StorePage from "@/pages/Store";
 import SubscriptionsPage from "@/pages/Subscriptions";
 import TrafficBillingPage from "@/pages/TrafficBilling";
 import TunnelsPage from "@/pages/Tunnels";
-import UsersPage from "@/pages/Users";
+import UsersWithTrafficHistoryPage from "@/pages/UsersWithTrafficHistory";
+import UserTrafficHistoryPage from "@/pages/UserTrafficHistory";
 import WalletPage from "@/pages/Wallet";
 
 type RoutableComponent = ComponentType<any>;
@@ -101,7 +102,8 @@ function Router() {
       <Route path="/looking-glass" component={LookingGlassRoute} />
       <Route path="/forward-groups">{() => <AdminRoute component={ForwardGroupsPage} />}</Route>
       <Route path="/tunnels">{() => <AdminRoute component={TunnelsPage} />}</Route>
-      <Route path="/users">{() => <AdminRoute component={UsersPage} />}</Route>
+      <Route path="/users">{() => <AdminRoute component={UsersWithTrafficHistoryPage} />}</Route>
+      <Route path="/user-traffic-history">{() => <AdminRoute component={UserTrafficHistoryPage} />}</Route>
       <Route path="/email-settings">{() => <AdminRoute component={EmailSettingsPage} />}</Route>
       <Route path="/payments">{() => <AdminRoute component={PaymentsPage} />}</Route>
       <Route path="/billing">{() => <AdminRoute component={BillingPage} />}</Route>
