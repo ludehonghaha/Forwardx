@@ -18,6 +18,7 @@ import { trafficBillingRouter } from "./routers/trafficBilling";
 import { tunnelsRouter } from "./routers/tunnels";
 import { usersRouter } from "./routers/users";
 import { protocolAccessRouter } from "./routers/protocolAccess";
+import { userTrafficHistoryRouter } from "./routers/userTrafficHistory";
 
 export const appRouter = router({
   system: systemRouter,
@@ -29,6 +30,7 @@ export const appRouter = router({
   auth: authRouter,
   dashboard: dashboardRouter,
   users: usersRouter,
+  userTrafficHistory: userTrafficHistoryRouter,
   hosts: hostsRouter,
   lookingGlass: lookingGlassRouter,
   rules: rulesRouter,
