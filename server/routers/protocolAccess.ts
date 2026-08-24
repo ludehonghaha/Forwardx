@@ -20,6 +20,7 @@ import { latestHostProtocolAccessRevision } from "../configAudit";
 import { getAgentLocalRuntimeStateSnapshot } from "../agentHeartbeatRoute";
 import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
 import {
+  PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY,
   protocolTrafficBridgeMarker,
   pushProtocolTrafficBridgeRefresh,
   retireManagedProtocolTrafficBridge,
@@ -153,12 +154,13 @@ async function validateEndpoint(input: {
   }
   const serverProtocol = managedProtocolSocketProtocol(input.protocol, input.config);
   const forwardRuleId = Number(input.forwardRuleId || 0) || null;
-  if (!forwardRuleId && listenPort !== input.publicPort) {
+  const managedBridge = protocolTrafficBridgeMarker(input.config);
+  const stagedManagedBridgeRebuild = !!managedBridge && !forwardRuleId;
+  if (!forwardRuleId && listenPort !== input.publicPort && !stagedManagedBridgeRebuild) {
     throw new Error("监听端口与公网端口不同时，必须关联现有 ForwardX 转发规则");
   }
   if (forwardRuleId) {
     const rule = await db.getForwardRuleById(forwardRuleId) as any;
-    const managedBridge = protocolTrafficBridgeMarker(input.config);
     const managedBridgeRule = !!managedBridge && managedBridge.ruleId === forwardRuleId;
     if (!rule || rule.pendingDelete || (!rule.isEnabled && !managedBridgeRule)) {
       throw new Error("关联的 ForwardX 转发规则不存在或未启用");
@@ -177,7 +179,12 @@ async function validateEndpoint(input: {
     }
     return { hostId, forwardRuleId, reservation: input.preReservation };
   }
-  if (!input.isEnabled) return { hostId, forwardRuleId, reservation: null as HostPortReservation | null };
+  // A managed bridge rebuild reserves both its public and internal ports inside
+  // syncManagedProtocolTrafficBridge(), in the same database transaction as
+  // the replacement rule. Avoid taking a second reservation here.
+  if (!input.isEnabled || stagedManagedBridgeRebuild) {
+    return { hostId, forwardRuleId, reservation: null as HostPortReservation | null };
+  }
   const reservation = await reserveSpecificHostPort({
     hostId,
     port: listenPort,
@@ -292,18 +299,49 @@ export const protocolAccessRouter = router({
     const protocol = (input.protocol || current.protocol) as ProtocolAccessProtocol;
     const runtimeMode = input.runtimeMode || current.runtimeMode as "external" | "managed";
     const publicHost = input.publicHost || current.publicHost;
-    const publicPort = input.publicPort || current.publicPort;
-    const rawConfig = input.config || parseProtocolAccessConfig(current.configJson);
+    const publicPort = Number(input.publicPort || current.publicPort);
+    const currentConfig = parseProtocolAccessConfig(current.configJson);
+    const currentBridge = protocolTrafficBridgeMarker(currentConfig);
+    const rawConfig = input.config ? { ...input.config } : { ...currentConfig };
+    if (runtimeMode === "managed" && currentBridge) {
+      // System bridge metadata and the internal listen port are panel-owned.
+      // Preserve them when the edit form only sends user-facing protocol fields.
+      rawConfig[PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY] = currentConfig[PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY];
+      if (rawConfig.listenPort === undefined && currentConfig.listenPort !== undefined) {
+        rawConfig.listenPort = currentConfig.listenPort;
+      }
+    }
     const config = provisionManagedProtocolConfig(protocol, runtimeMode, rawConfig);
     const hostId = input.hostId === undefined ? current.hostId : input.hostId;
-    const forwardRuleId = runtimeMode === "external"
-      ? null
-      : input.forwardRuleId === undefined ? current.forwardRuleId : input.forwardRuleId;
     const isEnabled = input.isEnabled === undefined ? current.isEnabled : input.isEnabled;
     if (current.runtimeMode === "managed" && runtimeMode === "managed"
       && Number(current.hostId || 0) !== Number(hostId || 0)) {
       throw new Error("托管端点不能直接迁移主机；请先改为 external，确认旧监听已移除后再启用新主机");
     }
+    if (runtimeMode === "managed" && currentBridge && input.forwardRuleId !== undefined
+      && Number(input.forwardRuleId || 0) !== currentBridge.ruleId) {
+      throw new Error("系统协议流量桥接由 ForwardX 自动管理；如需更换转发方式，请先改为 external");
+    }
+    const currentServerProtocol = current.runtimeMode === "managed"
+      ? managedProtocolSocketProtocol(current.protocol as ProtocolAccessProtocol, currentConfig)
+      : null;
+    const nextServerProtocol = runtimeMode === "managed"
+      ? managedProtocolSocketProtocol(protocol, config)
+      : null;
+    const nextListenPort = managedProtocolListenPort(config, publicPort);
+    const bridgeStructureChanged = current.runtimeMode === "managed"
+      && runtimeMode === "managed"
+      && !!currentBridge
+      && (
+        currentBridge.publicPort !== publicPort
+        || currentBridge.listenPort !== nextListenPort
+        || currentServerProtocol !== nextServerProtocol
+      );
+    const forwardRuleId = runtimeMode === "external"
+      ? null
+      : bridgeStructureChanged
+        ? null
+        : input.forwardRuleId === undefined ? current.forwardRuleId : input.forwardRuleId;
     if (runtimeMode === "managed") {
       const assignments = await db.listProtocolEndpointAssignments(current.id);
       if (assignments.some((item: any) => {
