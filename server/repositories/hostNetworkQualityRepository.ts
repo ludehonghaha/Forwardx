@@ -84,8 +84,8 @@ function mapNetworkQualityRow(row: any) {
  * Jitter is derived from adjacent successful RTT windows instead of adding a
  * second Agent payload/schema field. This keeps the NAT-safe Agent→Panel probe
  * protocol unchanged while still exposing the user-visible RTT variation.
- * A loss/no-data window breaks adjacency, so the next successful point starts a
- * fresh jitter baseline rather than spanning an outage.
+ * A window with no successful RTT sample (including loss-only/no-data) breaks
+ * adjacency, so the next successful point starts a fresh jitter baseline.
  */
 export function attachHostNetworkQualityJitter<T extends HostNetworkQualitySeriesPoint>(rows: T[]) {
   let previousLatency: number | null = null;
