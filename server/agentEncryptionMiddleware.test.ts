@@ -151,6 +151,42 @@ test("authenticated business 403 stays accepted and encrypted", async () => {
   }
 });
 
+test("encrypted network quality reports pass the sync tunnel whitelist", async () => {
+  resetAgentCryptoCaches();
+  const token = "agent-network-quality-token";
+  try {
+    await withAgentMiddlewareServer(async (baseUrl) => {
+      const requestEnvelope = encryptPayload({
+        path: "/api/agent/network-quality",
+        payload: {
+          collectedAt: Date.now(),
+          intervalSec: 30,
+          successProbes: 5,
+          lossProbes: 0,
+          members: [],
+        },
+      }, token);
+      const response = await fetch(`${baseUrl}/api/sync`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestEnvelope),
+      });
+      assert.equal(response.status, 403);
+      assert.equal(response.headers.get(AGENT_AUTH_RESULT_HEADER), AGENT_AUTH_RESULT_ACCEPTED);
+      const responseEnvelope = await response.json();
+      assert.deepEqual(
+        decryptPayload(responseEnvelope, token, { rememberReplay: false }),
+        { error: "forbidden" },
+      );
+    });
+  } finally {
+    resetAgentCryptoCaches();
+  }
+});
+
 test("envelope replay after a verified challenge proof stays accepted", async () => {
   resetAgentCryptoCaches();
   const token = "agent-middleware-replay-token";
