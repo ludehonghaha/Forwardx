@@ -11,6 +11,15 @@ export type HostNetworkQualityWindow = {
   packetLossPermille: number;
 };
 
+type HostNetworkQualitySeriesPoint = {
+  hostId: number;
+  latencyMs: number | null;
+  successCount: number;
+  lossCount: number;
+  packetLossPercent: number | null;
+  recordedAt: Date;
+};
+
 function rowDate(value: unknown) {
   if (value instanceof Date) return value;
   return new Date(Number(value || 0) * 1000);
@@ -69,6 +78,27 @@ function mapNetworkQualityRow(row: any) {
     packetLossPercent: permille === null ? null : permille / 10,
     recordedAt: rowDate(row?.recordedAt),
   };
+}
+
+/**
+ * Jitter is derived from adjacent successful RTT windows instead of adding a
+ * second Agent payload/schema field. This keeps the NAT-safe Agent→Panel probe
+ * protocol unchanged while still exposing the user-visible RTT variation.
+ * A loss/no-data window breaks adjacency, so the next successful point starts a
+ * fresh jitter baseline rather than spanning an outage.
+ */
+export function attachHostNetworkQualityJitter<T extends HostNetworkQualitySeriesPoint>(rows: T[]) {
+  let previousLatency: number | null = null;
+  return rows.map((row) => {
+    const currentLatency = row.latencyMs == null || !Number.isFinite(Number(row.latencyMs))
+      ? null
+      : Math.max(0, Math.round(Number(row.latencyMs)));
+    const jitterMs = currentLatency !== null && previousLatency !== null
+      ? Math.abs(currentLatency - previousLatency)
+      : null;
+    previousLatency = currentLatency;
+    return { ...row, jitterMs };
+  });
 }
 
 export async function insertHostNetworkQualityStat(input: HostNetworkQualityWindow) {
@@ -132,7 +162,7 @@ export async function getHostNetworkQualitySeries(opts: { hostId: number; hours?
       ORDER BY ${q("bucketStart")} ASC`,
     [hostId, epochSeconds(since)],
   );
-  return rows.map((row) => {
+  const series: HostNetworkQualitySeriesPoint[] = rows.map((row) => {
     const successCount = normalizeCount(row.successCount);
     const lossCount = normalizeCount(row.lossCount);
     const weightedLatencyTotal = Number(row.weightedLatencyTotal) || 0;
@@ -146,6 +176,7 @@ export async function getHostNetworkQualitySeries(opts: { hostId: number; hours?
       recordedAt: rowDate(row.bucketStart),
     };
   });
+  return attachHostNetworkQualityJitter(series);
 }
 
 export async function cleanOldHostNetworkQualityStats(retainHours = 24 * 7) {
