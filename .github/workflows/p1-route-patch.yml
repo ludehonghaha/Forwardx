@@ -20,7 +20,7 @@ jobs:
           ref: fix/p1-finalize-stopped-rules
           fetch-depth: 0
 
-      - name: Apply exact heartbeat replacements
+      - name: Apply guarded heartbeat replacements
         shell: bash
         run: |
           python3 - <<'PY'
@@ -35,36 +35,48 @@ jobs:
             resolveRuleTrafficPortForHost,
             stoppedForwardRuleNeedsRemoval,
           } from "./agentRuntimeRuleState";'''
-
-          old_fn = '''    const localRuleNeedsRemoval = (rule: any) => {
-              if (!hasReportedRuntimeState) return true;
-              const port = Number(rule?.sourcePort || 0);
-              if (port <= 0) return true;
-              const local = findLocalRuleState(port, rule.protocol, Number(rule?.id || 0));
-              if (!local) return true;
-              if (isKernelForwardRule(rule)) return true;
-              return Number(local.ruleId || 0) === Number(rule?.id || 0);
-            };'''
-          new_fn = '''    const localRuleNeedsRemoval = (rule: any) => {
-              const port = Number(rule?.sourcePort || 0);
-              const local = port > 0
-                ? findLocalRuleState(port, rule.protocol, Number(rule?.id || 0))
-                : undefined;
-              return stoppedForwardRuleNeedsRemoval({
-                hasReportedRuntimeState,
-                sourcePort: port,
-                kernelForwardRule: isKernelForwardRule(rule),
-                expectedRuleId: rule?.id,
-                localRuleId: local?.ruleId,
-              });
-            };'''
-
           if text.count(old_import) != 1:
               raise SystemExit(f'import replacement count={text.count(old_import)}; expected 1')
-          if text.count(old_fn) != 1:
-              raise SystemExit(f'function replacement count={text.count(old_fn)}; expected 1')
 
-          text = text.replace(old_import, new_import, 1).replace(old_fn, new_fn, 1)
+          needle = 'const localRuleNeedsRemoval = (rule: any) => {'
+          if text.count(needle) != 1:
+              raise SystemExit(f'function start count={text.count(needle)}; expected 1')
+          start = text.index(needle)
+          line_start = text.rfind('\n', 0, start) + 1
+          indent = text[line_start:start]
+          end_marker = '\n' + indent + '};'
+          end = text.index(end_marker, start) + len(end_marker)
+          old_fn = text[line_start:end]
+
+          required_old_lines = [
+              'if (!hasReportedRuntimeState) return true;',
+              'if (!local) return true;',
+              'if (isKernelForwardRule(rule)) return true;',
+              'return Number(local.ruleId || 0) === Number(rule?.id || 0);',
+          ]
+          missing = [line for line in required_old_lines if line not in old_fn]
+          if missing:
+              raise SystemExit(f'guard mismatch in localRuleNeedsRemoval: {missing}')
+
+          i = indent
+          new_fn = (
+              f'{i}const localRuleNeedsRemoval = (rule: any) => {{\n'
+              f'{i}  const port = Number(rule?.sourcePort || 0);\n'
+              f'{i}  const local = port > 0\n'
+              f'{i}    ? findLocalRuleState(port, rule.protocol, Number(rule?.id || 0))\n'
+              f'{i}    : undefined;\n'
+              f'{i}  return stoppedForwardRuleNeedsRemoval({{\n'
+              f'{i}    hasReportedRuntimeState,\n'
+              f'{i}    sourcePort: port,\n'
+              f'{i}    kernelForwardRule: isKernelForwardRule(rule),\n'
+              f'{i}    expectedRuleId: rule?.id,\n'
+              f'{i}    localRuleId: local?.ruleId,\n'
+              f'{i}  }});\n'
+              f'{i}}};'
+          )
+
+          text = text.replace(old_import, new_import, 1)
+          text = text[:line_start] + new_fn + text[end:]
           path.write_text(text)
           PY
 
