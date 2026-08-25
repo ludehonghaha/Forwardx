@@ -71,6 +71,13 @@ export function withoutProtocolTrafficBridgeMarker(configValue: unknown) {
   return config;
 }
 
+export function directManagedProtocolConfigAfterBridge(configValue: unknown, publicPort: unknown) {
+  const config = withoutProtocolTrafficBridgeMarker(configValue) as ProtocolAccessConfig;
+  const port = positiveInteger(publicPort);
+  if (port > 0 && port <= 65535) config.listenPort = port;
+  return config;
+}
+
 export function managedProtocolTrafficOwnerUserId(assignments: any[]) {
   const userIds = Array.from(new Set((assignments || [])
     .filter((item: any) => dbEnabled(item?.access?.isEnabled))
@@ -291,6 +298,18 @@ async function enableOwnedBridgeRule(ruleId: number, ownerUserId: number) {
   return true;
 }
 
+async function restoreDirectManagedProtocolEndpoint(endpoint: any, marker: ProtocolTrafficBridgeMarker | null) {
+  if (!marker) return false;
+  const rule = await db.getForwardRuleById(marker.ruleId) as any;
+  if (rule && !rule.pendingDelete) await db.markForwardRulePendingDelete(marker.ruleId);
+  const config = directManagedProtocolConfigAfterBridge(endpoint?.configJson, endpoint?.publicPort);
+  await db.updateProtocolEndpoint(positiveInteger(endpoint?.id), {
+    forwardRuleId: null,
+    configJson: config,
+  } as any);
+  return true;
+}
+
 async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, marker: ProtocolTrafficBridgeMarker | null) {
   const config = { ...parseProtocolAccessConfig(endpoint.configJson) } as ProtocolAccessConfig;
   const protocol = endpoint.protocol as ProtocolAccessProtocol;
@@ -365,7 +384,11 @@ export async function syncManagedProtocolTrafficBridge(endpointId: number) {
     const marker = protocolTrafficBridgeMarker(config);
     const owner = ownerUserId > 0 ? await db.getUserById(ownerUserId) as any : null;
 
-    if (!endpoint.isEnabled || ownerUserId <= 0 || !userCanReceiveProtocolTraffic(owner)) {
+    if (ownerUserId <= 0) {
+      const changed = marker ? await restoreDirectManagedProtocolEndpoint(endpoint, marker) : false;
+      return { changed, hostId };
+    }
+    if (!endpoint.isEnabled || !userCanReceiveProtocolTraffic(owner)) {
       const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;
       return { changed, hostId };
     }
