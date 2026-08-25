@@ -6,6 +6,13 @@ import {
   protocolConfigSecret,
   protocolConfigText,
 } from "../shared/protocolAccess";
+import { isVlessUuid } from "../shared/vlessCredentials";
+
+export type ManagedVlessRuntimeUser = {
+  assignmentId: number;
+  userId: number;
+  uuid: string;
+};
 
 export type ManagedProtocolEndpointRow = {
   id: number;
@@ -14,6 +21,7 @@ export type ManagedProtocolEndpointRow = {
   publicPort: number;
   configJson: unknown;
   isEnabled: boolean;
+  vlessUsers?: ManagedVlessRuntimeUser[];
 };
 
 export type ManagedProtocolGostService = {
@@ -154,18 +162,33 @@ function managedSnellListener(row: ManagedProtocolEndpointRow) {
 function managedRealityListener(row: ManagedProtocolEndpointRow) {
   const config = parseProtocolAccessConfig(row.configJson);
   const listenPort = managedProtocolListenPort(config, Number(row.publicPort));
-  const uuid = protocolConfigText(config, "uuid");
   const serverName = protocolConfigText(config, "serverName");
   const dest = protocolConfigText(config, "realityDest");
   const privateKey = protocolConfigSecret(config, "realityPrivateKey");
   const shortId = protocolConfigText(config, "shortId");
-  if (!validPort(listenPort) || !uuid || !serverName || !dest || !privateKey || !shortId) return null;
+  if (!validPort(listenPort) || !serverName || !dest || !privateKey || !shortId) return null;
+
+  const sourceUsers = Array.isArray(row.vlessUsers)
+    ? [...row.vlessUsers].sort((left, right) => Number(left.assignmentId) - Number(right.assignmentId))
+    : [];
+  const seenUuids = new Set<string>();
+  const users: Array<{ username: string; uuid: string; flow: "xtls-rprx-vision" }> = [];
+  for (const item of sourceUsers) {
+    const assignmentId = Number(item?.assignmentId || 0);
+    const userId = Number(item?.userId || 0);
+    const uuid = String(item?.uuid || "").trim();
+    if (!Number.isInteger(assignmentId) || assignmentId <= 0 || !Number.isInteger(userId) || userId <= 0) return null;
+    if (!isVlessUuid(uuid) || seenUuids.has(uuid)) return null;
+    seenUuids.add(uuid);
+    users.push({ username: `forwardx-${userId}`, uuid, flow: "xtls-rprx-vision" });
+  }
+
   const listener = {
     name: `fwx-reality-${Number(row.id)}`,
     type: "vless",
     port: listenPort,
     listen: "0.0.0.0",
-    users: [{ username: "forwardx", uuid, flow: "xtls-rprx-vision" }],
+    users,
     "reality-config": {
       dest,
       "private-key": privateKey,

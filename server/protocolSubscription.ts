@@ -8,6 +8,7 @@ import {
   type ProtocolFeedEntry,
   validateProtocolFeedEntry,
 } from "../shared/protocolAccess";
+import { effectiveVlessUuid, isVlessUuid } from "../shared/vlessCredentials";
 
 export type ProtocolSubscriptionRenderResult = {
   content: string;
@@ -36,6 +37,14 @@ function uriComponent(value: string) {
   return encodeURIComponent(value).replace(/'/g, "%27");
 }
 
+function entryValidationErrors(entry: ProtocolFeedEntry) {
+  const errors = validateProtocolFeedEntry(entry);
+  if (entry.protocol === "vless_reality" && !isVlessUuid(effectiveVlessUuid(entry))) {
+    errors.push("VLESS 用户 UUID 无效");
+  }
+  return errors;
+}
+
 function uniqueEntryNames(entries: ProtocolFeedEntry[]) {
   const counts = new Map<string, number>();
   for (const entry of entries) {
@@ -59,7 +68,7 @@ function renderVlessRealityUri(entry: ProtocolFeedEntry, name: string) {
     pbk: protocolConfigText(entry.endpointConfig, "realityPublicKey"),
     sid: protocolConfigText(entry.endpointConfig, "shortId"),
   });
-  return `vless://${protocolConfigText(entry.endpointConfig, "uuid")}@${uriHost(entry.publicHost)}:${entry.publicPort}`
+  return `vless://${effectiveVlessUuid(entry)}@${uriHost(entry.publicHost)}:${entry.publicPort}`
     + `?${query.toString()}#${encodeURIComponent(name)}`;
 }
 
@@ -85,7 +94,7 @@ export function renderProtocolUriSubscription(entries: ProtocolFeedEntry[]): Pro
   const names = uniqueEntryNames(entries);
 
   for (const entry of entries) {
-    const errors = validateProtocolFeedEntry(entry);
+    const errors = entryValidationErrors(entry);
     if (errors.length > 0) {
       skipped.push({ assignmentId: entry.assignmentId, reason: errors.join("；") });
       continue;
@@ -194,7 +203,7 @@ function renderVlessRealityProxy(entry: ProtocolFeedEntry, name: string) {
     "    type: vless",
     `    server: ${yamlString(entry.publicHost)}`,
     `    port: ${entry.publicPort}`,
-    `    uuid: ${yamlString(protocolConfigText(entry.endpointConfig, "uuid"))}`,
+    `    uuid: ${yamlString(effectiveVlessUuid(entry))}`,
     "    flow: xtls-rprx-vision",
     "    packet-encoding: xudp",
     `    udp: ${protocolConfigBool(entry.endpointConfig, "udp", true)}`,
@@ -263,7 +272,7 @@ export function renderProtocolMihomoSubscription(entries: ProtocolFeedEntry[]): 
   const names = uniqueEntryNames(entries);
 
   for (const entry of entries) {
-    const errors = validateProtocolFeedEntry(entry);
+    const errors = entryValidationErrors(entry);
     if (errors.length > 0) {
       skipped.push({ assignmentId: entry.assignmentId, reason: errors.join("；") });
       continue;

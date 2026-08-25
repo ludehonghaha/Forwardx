@@ -10,11 +10,17 @@ import {
 import {
   PROTOCOL_ACCESS_PROTOCOLS,
   parseProtocolAccessConfig,
+  protocolConfigText,
   type ProtocolAccessProtocol,
   type ProtocolFeedEntry,
 } from "../../shared/protocolAccess";
+import { isVlessUuid } from "../../shared/vlessCredentials";
 import { recordConfigAuditEvent } from "../configAudit";
 import { getDb, insertAndGetId, nowDate, withDatabaseTransaction } from "../dbRuntime";
+import {
+  managedVlessCredentialForWrite,
+  planManagedVlessCredentialBackfill,
+} from "../protocolVlessCredentials";
 
 function stringifyConfig(value: unknown) {
   return JSON.stringify(parseProtocolAccessConfig(value));
@@ -24,10 +30,56 @@ function isProtocol(value: unknown): value is ProtocolAccessProtocol {
   return (PROTOCOL_ACCESS_PROTOCOLS as readonly string[]).includes(String(value || ""));
 }
 
+function dbEnabled(value: unknown) {
+  return value !== false && value !== 0 && value !== "0";
+}
+
+function isManagedVlessEndpoint(endpoint: any) {
+  return endpoint?.protocol === "vless_reality" && endpoint?.runtimeMode === "managed";
+}
+
 function protocolEndpointAuditSnapshot(row: any) {
   if (!row) return row;
   const { configJson, ...rest } = row;
   return { ...rest, config: parseProtocolAccessConfig(configJson) };
+}
+
+async function protocolUserAccessRows(endpointId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(protocolUserAccess)
+    .where(eq(protocolUserAccess.endpointId, endpointId))
+    .orderBy(asc(protocolUserAccess.id));
+}
+
+async function ensureManagedVlessAssignmentCredentials(endpoint: any) {
+  if (!isManagedVlessEndpoint(endpoint)) return [];
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await protocolUserAccessRows(Number(endpoint.id));
+  const endpointConfig = parseProtocolAccessConfig(endpoint.configJson);
+  const planned = planManagedVlessCredentialBackfill(protocolConfigText(endpointConfig, "uuid"), rows as any[]);
+  const changed = planned.filter((item) => item.changed);
+  for (const item of changed) {
+    await db.update(protocolUserAccess).set({
+      credentialJson: stringifyConfig(item.credential),
+      updatedAt: nowDate(),
+    } as any).where(eq(protocolUserAccess.id, item.id));
+  }
+  return changed.length > 0 ? protocolUserAccessRows(Number(endpoint.id)) : rows;
+}
+
+function managedVlessRuntimeUsers(rows: any[]) {
+  return (rows || []).flatMap((row: any) => {
+    if (!dbEnabled(row?.isEnabled)) return [];
+    const uuid = protocolConfigText(parseProtocolAccessConfig(row?.credentialJson), "uuid");
+    if (!isVlessUuid(uuid)) return [];
+    return [{
+      assignmentId: Number(row.id),
+      userId: Number(row.userId),
+      uuid,
+    }];
+  });
 }
 
 export async function getProtocolEndpointById(id: number) {
@@ -46,11 +98,16 @@ export async function listProtocolEndpoints() {
 export async function listManagedProtocolEndpointsForHost(hostId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(protocolEndpoints).where(and(
+  const endpoints = await db.select().from(protocolEndpoints).where(and(
     eq(protocolEndpoints.hostId, hostId),
     eq(protocolEndpoints.runtimeMode, "managed"),
     eq(protocolEndpoints.isEnabled, true),
   )).orderBy(asc(protocolEndpoints.id));
+  return Promise.all(endpoints.map(async (endpoint: any) => {
+    if (!isManagedVlessEndpoint(endpoint)) return endpoint;
+    const accessRows = await ensureManagedVlessAssignmentCredentials(endpoint);
+    return { ...endpoint, vlessUsers: managedVlessRuntimeUsers(accessRows as any[]) };
+  }));
 }
 
 export async function createProtocolEndpoint(data: Omit<InsertProtocolEndpoint, "configJson"> & { configJson: unknown }) {
@@ -116,6 +173,8 @@ export async function deleteProtocolEndpoint(id: number) {
 export async function listProtocolEndpointAssignments(endpointId: number) {
   const db = await getDb();
   if (!db) return [];
+  const endpoint = await getProtocolEndpointById(endpointId);
+  if (endpoint) await ensureManagedVlessAssignmentCredentials(endpoint);
   return db.select({
     access: protocolUserAccess,
     user: {
@@ -139,18 +198,44 @@ export async function setProtocolUserAccess(input: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [endpointRows, userRows, existingRows] = await Promise.all([
-    db.select({ id: protocolEndpoints.id }).from(protocolEndpoints).where(eq(protocolEndpoints.id, input.endpointId)).limit(1),
+  const [endpointRows, userRows] = await Promise.all([
+    db.select({
+      id: protocolEndpoints.id,
+      protocol: protocolEndpoints.protocol,
+      runtimeMode: protocolEndpoints.runtimeMode,
+      configJson: protocolEndpoints.configJson,
+    }).from(protocolEndpoints).where(eq(protocolEndpoints.id, input.endpointId)).limit(1),
     db.select({ id: users.id }).from(users).where(eq(users.id, input.userId)).limit(1),
-    db.select().from(protocolUserAccess).where(and(
+  ]);
+  const endpoint = endpointRows[0];
+  if (!endpoint) throw new Error("协议接入端点不存在");
+  if (!userRows[0]) throw new Error("用户不存在");
+
+  let existingRows: any[];
+  let credentialJson: string;
+  if (isManagedVlessEndpoint(endpoint)) {
+    const accessRows = await ensureManagedVlessAssignmentCredentials(endpoint);
+    existingRows = (accessRows as any[]).filter((row: any) => Number(row.userId) === Number(input.userId));
+    const existing = existingRows[0];
+    const usedUuids = (accessRows as any[])
+      .filter((row: any) => Number(row.id) !== Number(existing?.id || 0))
+      .map((row: any) => protocolConfigText(parseProtocolAccessConfig(row.credentialJson), "uuid"))
+      .filter(isVlessUuid);
+    credentialJson = stringifyConfig(managedVlessCredentialForWrite(
+      existing?.credentialJson,
+      input.credential,
+      usedUuids,
+    ));
+  } else {
+    existingRows = await db.select().from(protocolUserAccess).where(and(
       eq(protocolUserAccess.endpointId, input.endpointId),
       eq(protocolUserAccess.userId, input.userId),
-    )).limit(1),
-  ]);
-  if (!endpointRows[0]) throw new Error("协议接入端点不存在");
-  if (!userRows[0]) throw new Error("用户不存在");
+    )).limit(1);
+    credentialJson = stringifyConfig(input.credential);
+  }
+
   const payload = {
-    credentialJson: stringifyConfig(input.credential),
+    credentialJson,
     isEnabled: input.isEnabled ?? true,
     updatedAt: nowDate(),
   };
@@ -245,6 +330,22 @@ export async function getProtocolFeedByToken(tokenValue: string) {
   const tokenRow = tokenRows[0];
   if (!tokenRow || !tokenRow.user.accountEnabled) return undefined;
   if (tokenRow.user.expiresAt && new Date(tokenRow.user.expiresAt).getTime() <= Date.now()) return undefined;
+
+  const legacyManagedVlessEndpoints = await db.select({
+    id: protocolEndpoints.id,
+    protocol: protocolEndpoints.protocol,
+    runtimeMode: protocolEndpoints.runtimeMode,
+    configJson: protocolEndpoints.configJson,
+  }).from(protocolUserAccess)
+    .innerJoin(protocolEndpoints, eq(protocolUserAccess.endpointId, protocolEndpoints.id))
+    .where(and(
+      eq(protocolUserAccess.userId, tokenRow.user.id),
+      eq(protocolEndpoints.protocol, "vless_reality"),
+      eq(protocolEndpoints.runtimeMode, "managed"),
+    ));
+  const uniqueLegacyEndpoints = new Map<number, any>();
+  for (const endpoint of legacyManagedVlessEndpoints as any[]) uniqueLegacyEndpoints.set(Number(endpoint.id), endpoint);
+  await Promise.all(Array.from(uniqueLegacyEndpoints.values()).map((endpoint) => ensureManagedVlessAssignmentCredentials(endpoint)));
 
   const rows = await db.select({
     assignmentId: protocolUserAccess.id,
