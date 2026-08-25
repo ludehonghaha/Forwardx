@@ -23,6 +23,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           def replace_once(path, old, new):
               p = Path(path)
@@ -32,8 +33,6 @@ jobs:
                   raise SystemExit(f"{path}: expected exactly one match, got {count}: {old[:120]!r}")
               p.write_text(text.replace(old, new, 1))
 
-          # Runtime ACL: trust only Panel-owned protocol bridge rules whose endpoint,
-          # marker and unique enabled assignment all agree with the persisted rule.
           replace_once(
               "server/linkAccessView.ts",
               "  hosts,\n  tunnelExitNodes,",
@@ -44,14 +43,17 @@ jobs:
               'import { getDb } from "./dbRuntime";\n',
               'import { getDb } from "./dbRuntime";\nimport { isTrustedProtocolTrafficBridgeRuntimeRule } from "./protocolTrafficBridgeTrust";\n',
           )
-          anchor = '''/**
+
+          anchor = dedent('''\
+          /**
            * Runtime rows keep their persisted enabled flag, but an Agent must treat a
            * rule whose root resource is no longer authorized as disabled. Returning
            * cloned denied rows lets the normal removal path clean up an existing
            * listener without hiding or mutating the user's saved rule.
            */
-          '''
-          helper = '''async function trustedProtocolTrafficBridgeRuleIds(db: any, rules: Array<Record<string, any>>) {
+          ''')
+          helper = dedent('''\
+          async function trustedProtocolTrafficBridgeRuleIds(db: any, rules: Array<Record<string, any>>) {
             const ruleIds = Array.from(new Set(rules
               .map((rule) => positiveId(rule?.id))
               .filter((ruleId) => ruleId > 0)));
@@ -109,7 +111,7 @@ jobs:
             }
           }
 
-          '''
+          ''')
           replace_once("server/linkAccessView.ts", anchor, helper + anchor)
           replace_once(
               "server/linkAccessView.ts",
@@ -122,58 +124,45 @@ jobs:
               "  return rules.map((rule) => {\n    if (trustedBridgeRuleIds.has(positiveId(rule?.id))) return rule;\n    const userId = positiveId(rule?.userId);\n",
           )
 
-          # Lifecycle: removing the last assignment must retire the system bridge and
-          # restore the managed protocol listener to its public port.
           replace_once(
               "server/protocolTrafficBridge.ts",
               "export function managedProtocolTrafficOwnerUserId(assignments: any[]) {\n",
-              '''export function directManagedProtocolConfigAfterBridge(configValue: unknown, publicPort: unknown) {
-            const config = withoutProtocolTrafficBridgeMarker(configValue) as ProtocolAccessConfig;
-            const port = positiveInteger(publicPort);
-            if (port > 0 && port <= 65535) config.listenPort = port;
-            return config;
-          }
+              dedent('''\
+              export function directManagedProtocolConfigAfterBridge(configValue: unknown, publicPort: unknown) {
+                const config = withoutProtocolTrafficBridgeMarker(configValue) as ProtocolAccessConfig;
+                const port = positiveInteger(publicPort);
+                if (port > 0 && port <= 65535) config.listenPort = port;
+                return config;
+              }
 
-          export function managedProtocolTrafficOwnerUserId(assignments: any[]) {
-          ''',
+              export function managedProtocolTrafficOwnerUserId(assignments: any[]) {
+              '''),
           )
           replace_once(
               "server/protocolTrafficBridge.ts",
               "async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, marker: ProtocolTrafficBridgeMarker | null) {\n",
-              '''async function restoreDirectManagedProtocolEndpoint(endpoint: any, marker: ProtocolTrafficBridgeMarker | null) {
-            if (!marker) return false;
-            const rule = await db.getForwardRuleById(marker.ruleId) as any;
-            if (rule && !rule.pendingDelete) await db.markForwardRulePendingDelete(marker.ruleId);
-            const config = directManagedProtocolConfigAfterBridge(endpoint?.configJson, endpoint?.publicPort);
-            await db.updateProtocolEndpoint(positiveInteger(endpoint?.id), {
-              forwardRuleId: null,
-              configJson: config,
-            } as any);
-            return true;
-          }
+              dedent('''\
+              async function restoreDirectManagedProtocolEndpoint(endpoint: any, marker: ProtocolTrafficBridgeMarker | null) {
+                if (!marker) return false;
+                const rule = await db.getForwardRuleById(marker.ruleId) as any;
+                if (rule && !rule.pendingDelete) await db.markForwardRulePendingDelete(marker.ruleId);
+                const config = directManagedProtocolConfigAfterBridge(endpoint?.configJson, endpoint?.publicPort);
+                await db.updateProtocolEndpoint(positiveInteger(endpoint?.id), {
+                  forwardRuleId: null,
+                  configJson: config,
+                } as any);
+                return true;
+              }
 
-          async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, marker: ProtocolTrafficBridgeMarker | null) {
-          ''',
+              async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, marker: ProtocolTrafficBridgeMarker | null) {
+              '''),
           )
           replace_once(
               "server/protocolTrafficBridge.ts",
-              '''    if (!endpoint.isEnabled || ownerUserId <= 0 || !userCanReceiveProtocolTraffic(owner)) {
-              const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;
-              return { changed, hostId };
-            }
-          ''',
-              '''    if (ownerUserId <= 0) {
-              const changed = marker ? await restoreDirectManagedProtocolEndpoint(endpoint, marker) : false;
-              return { changed, hostId };
-            }
-            if (!endpoint.isEnabled || !userCanReceiveProtocolTraffic(owner)) {
-              const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;
-              return { changed, hostId };
-            }
-          ''',
+              "    if (!endpoint.isEnabled || ownerUserId <= 0 || !userCanReceiveProtocolTraffic(owner)) {\n      const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;\n      return { changed, hostId };\n    }\n",
+              "    if (ownerUserId <= 0) {\n      const changed = marker ? await restoreDirectManagedProtocolEndpoint(endpoint, marker) : false;\n      return { changed, hostId };\n    }\n    if (!endpoint.isEnabled || !userCanReceiveProtocolTraffic(owner)) {\n      const changed = marker?.ruleId ? await disableOwnedBridgeRule(marker.ruleId) : false;\n      return { changed, hostId };\n    }\n",
           )
 
-          # Regression tests.
           replace_once(
               "server/protocolTrafficBridge.test.ts",
               "  managedProtocolTrafficBridgeMatches,\n",
@@ -184,8 +173,7 @@ jobs:
               '} from "./protocolTrafficBridge";\n',
               '} from "./protocolTrafficBridge";\nimport { isTrustedProtocolTrafficBridgeRuntimeRule } from "./protocolTrafficBridgeTrust";\n',
           )
-          with Path("server/protocolTrafficBridge.test.ts").open("a") as f:
-              f.write('''
+          tests = dedent('''\
 
           test("trusted protocol bridge runtime rule requires marker and unique matching assignment", () => {
             const endpoint = {
@@ -254,6 +242,8 @@ jobs:
             assert.deepEqual(config, { listenPort: 24001, password: "secret" });
           });
           ''')
+          with Path("server/protocolTrafficBridge.test.ts").open("a") as f:
+              f.write(tests)
 
           Path(".github/workflows/protocol-bridge-hotfix-patch.yml").unlink()
           PY
