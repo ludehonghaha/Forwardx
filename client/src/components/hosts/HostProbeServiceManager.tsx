@@ -103,6 +103,10 @@ function serviceMatchesSearchQuery(service: any, query: string, hostsById: Map<n
     service?.targetIp,
     service?.targetPort,
     serviceTarget(service),
+    service?.probeKind,
+    service?.carrier,
+    service?.carrier ? HOST_PROBE_CARRIER_LABELS[service.carrier as HostProbeCarrier] : null,
+    service?.region,
     status,
     scopeText(service, hostsById),
     ...scopeHostValues,
@@ -245,6 +249,7 @@ type HostProbeServiceManagerProps = {
   onFilterStatsChange?: (stats: { filtered: number; total: number }) => void;
   probeKindFilter?: HostProbeKind | "all";
   defaultProbeKind?: HostProbeKind;
+  defaultCarrier?: HostProbeCarrier | null;
 };
 
 export default function HostProbeServiceManager({
@@ -257,6 +262,7 @@ export default function HostProbeServiceManager({
   onFilterStatsChange,
   probeKindFilter = "all",
   defaultProbeKind = "custom",
+  defaultCarrier = null,
 }: HostProbeServiceManagerProps) {
   const utils = trpc.useUtils();
   const confirmDialog = useConfirmDialog();
@@ -289,6 +295,12 @@ export default function HostProbeServiceManager({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ServiceForm>(defaultForm);
+  const newServiceForm = useMemo<ServiceForm>(() => ({
+    ...defaultForm,
+    probeKind: defaultProbeKind,
+    carrier: defaultProbeKind === "china_carrier" ? defaultCarrier : null,
+    intervalSeconds: defaultProbeKind === "china_carrier" ? 60 : defaultForm.intervalSeconds,
+  }), [defaultCarrier, defaultProbeKind]);
   const [internalViewMode, setInternalViewMode] = useState<HostProbeServiceViewMode>(() => getStoredServiceViewMode());
   const viewMode = controlledViewMode ?? internalViewMode;
   const selectedScopeHostIds = form.hostScope === "exclude" ? form.excludeHostIds : form.hostIds;
@@ -309,11 +321,11 @@ export default function HostProbeServiceManager({
   );
 
   const createMutation = trpc.hosts.createProbeService.useMutation({
-    onSuccess: () => { utils.hosts.probeServices.invalidate(); utils.hosts.chinaCarrierProbeOverview.invalidate(); setDialogOpen(false); setForm({ ...defaultForm, probeKind: defaultProbeKind }); toast.success("服务已添加"); },
+    onSuccess: () => { utils.hosts.probeServices.invalidate(); utils.hosts.chinaCarrierProbeOverview.invalidate(); setDialogOpen(false); setForm(newServiceForm); toast.success("服务已添加"); },
     onError: (err) => toast.error(err.message || "添加服务失败"),
   });
   const updateMutation = trpc.hosts.updateProbeService.useMutation({
-    onSuccess: () => { utils.hosts.probeServices.invalidate(); utils.hosts.chinaCarrierProbeOverview.invalidate(); setDialogOpen(false); setEditingId(null); setForm({ ...defaultForm, probeKind: defaultProbeKind }); toast.success("服务已更新"); },
+    onSuccess: () => { utils.hosts.probeServices.invalidate(); utils.hosts.chinaCarrierProbeOverview.invalidate(); setDialogOpen(false); setEditingId(null); setForm(newServiceForm); toast.success("服务已更新"); },
     onError: (err) => toast.error(err.message || "更新服务失败"),
   });
   const toggleMutation = trpc.hosts.updateProbeService.useMutation({
@@ -361,10 +373,10 @@ export default function HostProbeServiceManager({
   useEffect(() => {
     if (createSignal <= 0) return;
     setEditingId(null);
-    setForm({ ...defaultForm, probeKind: defaultProbeKind });
+    setForm(newServiceForm);
     setDialogOpen(true);
     onCreateSignalHandled();
-  }, [createSignal, onCreateSignalHandled]);
+  }, [createSignal, newServiceForm, onCreateSignalHandled]);
 
   const submit = () => {
     const name = form.name.trim();
@@ -611,6 +623,7 @@ export default function HostProbeServiceManager({
                 <Label>探测分类</Label>
                 <Select
                   value={form.probeKind}
+                  disabled={probeKindFilter !== "all"}
                   onValueChange={(value) => setForm({ ...form, probeKind: value as HostProbeKind, carrier: value === "china_carrier" ? form.carrier : null })}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>

@@ -6,6 +6,7 @@ import ChinaCarrierProbeOverview, {
   type ChinaCarrierProbeOverviewHost,
   type ChinaCarrierProbeOverviewItem,
 } from "@/components/hosts/ChinaCarrierProbeOverview";
+import type { HostProbeCarrier } from "@shared/hostProbeMetadata";
 import HostProbeServiceManager, {
   type HostProbeServiceViewMode,
 } from "@/components/hosts/HostProbeServiceManager";
@@ -34,6 +35,9 @@ export default function AdvancedProbePanel({
 }: AdvancedProbePanelProps) {
   const [section, setSection] = useState<AdvancedProbeSection>("carrier");
   const [historyHostId, setHistoryHostId] = useState<number | null>(null);
+  const [historyServiceId, setHistoryServiceId] = useState<number | null>(null);
+  const [carrierCreateSignal, setCarrierCreateSignal] = useState(0);
+  const [defaultCarrier, setDefaultCarrier] = useState<HostProbeCarrier | null>(null);
   const { data: hosts = [] } = trpc.hosts.options.useQuery(undefined, { staleTime: 30_000 });
   const { data: services = [] } = trpc.hosts.probeServices.useQuery(undefined, {
     refetchInterval: pollingInterval("slow"),
@@ -46,8 +50,19 @@ export default function AdvancedProbePanel({
     [historyHostId, hosts],
   );
 
-  const openHistory = (host: ChinaCarrierProbeOverviewHost, _item: ChinaCarrierProbeOverviewItem) => {
+  const historyServices = useMemo(
+    () => (services as any[]).filter((service) => Number(service.id) === historyServiceId),
+    [historyServiceId, services],
+  );
+
+  const openHistory = (host: ChinaCarrierProbeOverviewHost, item: ChinaCarrierProbeOverviewItem) => {
     setHistoryHostId(Number(host.hostId));
+    setHistoryServiceId(Number(item.serviceId));
+  };
+
+  const createCarrierTarget = (carrier: HostProbeCarrier) => {
+    setDefaultCarrier(carrier);
+    setCarrierCreateSignal((value) => value + 1);
   };
 
   return (
@@ -70,6 +85,7 @@ export default function AdvancedProbePanel({
             rows={carrierRows as ChinaCarrierProbeOverviewHost[]}
             isLoading={carrierLoading}
             onOpenHistory={openHistory}
+            onCreateCarrier={createCarrierTarget}
           />
           <div className="border-t border-border/40 pt-4">
             <div className="mb-3">
@@ -77,8 +93,8 @@ export default function AdvancedProbePanel({
               <p className="mt-1 text-xs text-muted-foreground">目标由管理员自行配置，不内置或硬编码运营商 IP。</p>
             </div>
             <HostProbeServiceManager
-              createSignal={createSignal}
-              onCreateSignalHandled={onCreateSignalHandled}
+              createSignal={createSignal > 0 ? createSignal : carrierCreateSignal}
+              onCreateSignalHandled={() => { if (createSignal > 0) onCreateSignalHandled(); }}
               viewMode={viewMode}
               onViewModeChange={onViewModeChange}
               hideViewModeToggle={hideViewModeToggle}
@@ -86,6 +102,7 @@ export default function AdvancedProbePanel({
               onFilterStatsChange={onFilterStatsChange}
               probeKindFilter="china_carrier"
               defaultProbeKind="china_carrier"
+              defaultCarrier={defaultCarrier}
             />
           </div>
         </div>
@@ -105,9 +122,14 @@ export default function AdvancedProbePanel({
 
       <HostProbeServiceLatencyDialog
         open={!!historyHost}
-        onOpenChange={(open) => !open && setHistoryHostId(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setHistoryHostId(null);
+            setHistoryServiceId(null);
+          }
+        }}
         host={historyHost}
-        services={services as any[]}
+        services={historyServices}
       />
     </div>
   );

@@ -18,7 +18,6 @@ import { describePortPolicy, normalizePortAllowlist, portPolicyFrom, portPolicyH
 import { ENV } from "../env";
 import { isValidHostOrIp as isValidNetworkHostOrIp } from "../networkAddress";
 import { planAgentUpgradeWaves } from "../agentUpgradeRollout";
-import { normalizeHostProbeMetadata } from "../../shared/hostProbeMetadata";
 
 const HOST_UPGRADE_CLEANUP_INTERVAL_MS = 60 * 1000;
 const GITHUB_API_LIMIT_STATUSES = new Set([403, 429]);
@@ -93,13 +92,11 @@ const reorderIdsSchema = z.array(z.number().int().positive()).min(1).max(2000);
 
 function normalizeHostProbeServiceInput(input: z.infer<typeof hostProbeServiceInputSchema>) {
   if (input.method === "tcping" && !input.targetPort) throw new Error("TCPing 服务需要填写目标端口");
-  const metadata = normalizeHostProbeMetadata(input);
   const hostIds = Array.from(new Set((input.hostIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0)));
   const excludeHostIds = Array.from(new Set((input.excludeHostIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0)));
   if (input.hostScope === "specific" && hostIds.length === 0) throw new Error("请选择需要运行服务的主机");
   return {
     ...input,
-    ...metadata,
     targetPort: input.method === "tcping" ? Number(input.targetPort) : null,
     hostIds: input.hostScope === "specific" ? hostIds : [],
     excludeHostIds: input.hostScope === "exclude" ? excludeHostIds : [],

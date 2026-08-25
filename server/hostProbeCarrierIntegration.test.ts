@@ -113,6 +113,19 @@ test("carrier probe schema upgrades legacy services and preserves the old Agent 
       assert.equal(shanghai.carrier, "cm");
       assert.equal(shanghai.region, "Shanghai");
 
+      await probes.updateHostProbeService(shanghaiId, {
+        name: "CM Shanghai renamed",
+        method: "ping",
+        targetIp: "cm-sh.example.test",
+        hostScope: "all",
+        intervalSeconds: 60,
+        isEnabled: true,
+      });
+      const preservedMetadata = await probes.getHostProbeServiceById(shanghaiId);
+      assert.equal(preservedMetadata.probeKind, "china_carrier");
+      assert.equal(preservedMetadata.carrier, "cm");
+      assert.equal(preservedMetadata.region, "Shanghai");
+
       const tasks = await probes.getHostProbeTasksForHost(1);
       const shanghaiTask = tasks.find((task) => Number(task.serviceId) === shanghaiId);
       assert.deepEqual(shanghaiTask, {
