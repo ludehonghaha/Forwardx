@@ -85,7 +85,11 @@ import {
 } from "./forwardXWireGuard";
 import { agentStatusOrderGuard, agentStatusOrderingKey } from "./agentStatusOrdering";
 import { forwardGroupProbeTopologyKey, tunnelProbeTopologyKey } from "./probeTopology";
-import { resolveLocalForwardXTransportVersion, resolveRuleTrafficPortForHost } from "./agentRuntimeRuleState";
+import {
+  resolveLocalForwardXTransportVersion,
+  resolveRuleTrafficPortForHost,
+  stoppedForwardRuleNeedsRemoval,
+} from "./agentRuntimeRuleState";
 import { isTunnelRelayFailover, tunnelRelayCandidates } from "@shared/tunnelRelay";
 import { normalizeExitGroupStrategy } from "@shared/exitStrategy";
 import { forwardXExitStrategy, gostExitSelector } from "./tunnelExitStrategy";
@@ -4547,13 +4551,17 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       };
     };
     const localRuleNeedsRemoval = (rule: any) => {
-      if (!hasReportedRuntimeState) return true;
       const port = Number(rule?.sourcePort || 0);
-      if (port <= 0) return true;
-      const local = findLocalRuleState(port, rule.protocol, Number(rule?.id || 0));
-      if (!local) return true;
-      if (isKernelForwardRule(rule)) return true;
-      return Number(local.ruleId || 0) === Number(rule?.id || 0);
+      const local = port > 0
+        ? findLocalRuleState(port, rule.protocol, Number(rule?.id || 0))
+        : undefined;
+      return stoppedForwardRuleNeedsRemoval({
+        hasReportedRuntimeState,
+        sourcePort: port,
+        kernelForwardRule: isKernelForwardRule(rule),
+        expectedRuleId: rule?.id,
+        localRuleId: local?.ruleId,
+      });
     };
     const shouldForceStoppedKernelRuleCleanup = (rule: any) => !!rule?.resourceAccessDenied
       || (supportsDesiredState && isKernelForwardRule(rule) && localRuleNeedsRemoval(rule));

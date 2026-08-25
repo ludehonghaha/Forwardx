@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveLocalForwardXTransportVersion, resolveRuleTrafficPortForHost } from "./agentRuntimeRuleState";
+import {
+  resolveLocalForwardXTransportVersion,
+  resolveRuleTrafficPortForHost,
+  stoppedForwardRuleNeedsRemoval,
+} from "./agentRuntimeRuleState";
 
 test("shared tunnel runtime keeps the public source port on entry hosts", () => {
   assert.equal(resolveRuleTrafficPortForHost({
@@ -50,4 +54,60 @@ test("legacy local state falls back to the retained tunnel version", () => {
   assert.equal(resolveLocalForwardXTransportVersion({
     tunnel: { mode: "forwardx", forwardxVersion: "v1" },
   }), "v1");
+});
+
+test("stopped rule keeps conservative cleanup without a runtime snapshot", () => {
+  assert.equal(stoppedForwardRuleNeedsRemoval({
+    hasReportedRuntimeState: false,
+    sourcePort: 32676,
+    kernelForwardRule: false,
+    expectedRuleId: 2,
+  }), true);
+});
+
+test("stopped rule keeps conservative cleanup for an invalid source port", () => {
+  assert.equal(stoppedForwardRuleNeedsRemoval({
+    hasReportedRuntimeState: true,
+    sourcePort: 0,
+    kernelForwardRule: false,
+    expectedRuleId: 2,
+  }), true);
+});
+
+test("kernel stopped rules still require explicit cleanup when absent from process state", () => {
+  assert.equal(stoppedForwardRuleNeedsRemoval({
+    hasReportedRuntimeState: true,
+    sourcePort: 32676,
+    kernelForwardRule: true,
+    expectedRuleId: 2,
+  }), true);
+});
+
+test("authoritative runtime absence settles an already-stopped process rule", () => {
+  assert.equal(stoppedForwardRuleNeedsRemoval({
+    hasReportedRuntimeState: true,
+    sourcePort: 32676,
+    kernelForwardRule: false,
+    expectedRuleId: 2,
+  }), false);
+});
+
+test("matching reported process rule still requires removal", () => {
+  assert.equal(stoppedForwardRuleNeedsRemoval({
+    hasReportedRuntimeState: true,
+    sourcePort: 32676,
+    kernelForwardRule: false,
+    expectedRuleId: 2,
+    localRuleId: 2,
+  }), true);
+});
+
+test("replacement rule on the same port settles the old stopped rule", () => {
+  assert.equal(stoppedForwardRuleNeedsRemoval({
+    hasReportedRuntimeState: true,
+    sourcePort: 32676,
+    kernelForwardRule: false,
+    expectedRuleId: 2,
+    localRuleId: 99,
+  }), false);
 });
