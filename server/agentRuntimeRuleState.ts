@@ -33,3 +33,30 @@ export function resolveRuleTrafficPortForHost(input: {
   }
   return 0;
 }
+
+/**
+ * Decide whether a stopped rule still needs an explicit Agent removal action.
+ *
+ * An authoritative local-runtime snapshot can prove that a process-backed rule
+ * is already gone. In that case the panel should settle/finalize the rule
+ * instead of reissuing the same remove action forever. Kernel rules remain
+ * conservative because a process/listener snapshot cannot prove that nftables
+ * or iptables state has been removed.
+ */
+export function stoppedForwardRuleNeedsRemoval(input: {
+  hasReportedRuntimeState: boolean;
+  sourcePort: unknown;
+  kernelForwardRule: boolean;
+  expectedRuleId: unknown;
+  localRuleId?: unknown;
+}) {
+  if (!input.hasReportedRuntimeState) return true;
+  if (!validPort(input.sourcePort)) return true;
+  if (input.kernelForwardRule) return true;
+
+  const localRuleId = Math.floor(Number(input.localRuleId || 0));
+  if (localRuleId <= 0) return false;
+
+  const expectedRuleId = Math.floor(Number(input.expectedRuleId || 0));
+  return expectedRuleId > 0 && localRuleId === expectedRuleId;
+}
