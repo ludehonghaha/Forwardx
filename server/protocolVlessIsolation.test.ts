@@ -52,7 +52,7 @@ function feedEntry(assignmentId: number, uuid: string): ProtocolFeedEntry {
 
 function realityUsers(plan: ReturnType<typeof buildManagedMihomoRuntimePlan>) {
   const listener = (plan?.config.listeners as any[])?.find((item) => item?.type === "vless");
-  return (listener?.users || []) as Array<{ username: string; uuid: string }>;
+  return (listener?.users || []) as Array<{ username: string; uuid: string; flow: string }>;
 }
 
 test("managed Reality runtime uses assignment UUIDs instead of the endpoint UUID", () => {
@@ -78,11 +78,19 @@ test("revoking one Reality assignment removes only that UUID from desired state"
   assert.equal(JSON.stringify(plan).includes(LEGACY), false);
 });
 
-test("managed Reality with no enabled assignments never falls back to the shared endpoint UUID", () => {
-  const plan = buildManagedMihomoRuntimePlan([runtimeEndpoint([])]);
-  assert.ok(plan);
-  assert.deepEqual(realityUsers(plan), []);
-  assert.equal(JSON.stringify(plan).includes(LEGACY), false);
+test("managed Reality with no enabled assignments uses a private stable parking UUID", () => {
+  const first = buildManagedMihomoRuntimePlan([runtimeEndpoint([])]);
+  const second = buildManagedMihomoRuntimePlan([runtimeEndpoint([])]);
+  assert.ok(first);
+  assert.ok(second);
+  const firstUsers = realityUsers(first);
+  const secondUsers = realityUsers(second);
+  assert.equal(firstUsers.length, 1);
+  assert.equal(firstUsers[0]?.username, "forwardx-parking");
+  assert.notEqual(firstUsers[0]?.uuid, LEGACY);
+  assert.notEqual(firstUsers[0]?.uuid, USER_A);
+  assert.equal(firstUsers[0]?.uuid, secondUsers[0]?.uuid);
+  assert.equal(JSON.stringify(first).includes(LEGACY), false);
 });
 
 test("Reality subscriptions use each assignment UUID", () => {

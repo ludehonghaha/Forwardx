@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   isManagedShadowsocksCipher,
   managedProtocolListenPort,
@@ -159,6 +160,20 @@ function managedSnellListener(row: ManagedProtocolEndpointRow) {
   return { listener, socket: { endpointId: Number(row.id), protocol: "snell" as const, listenPort, transport: "tcp" as const } };
 }
 
+function parkingRealityUuid(endpointId: number, privateKey: string) {
+  const bytes = createHash("sha256")
+    .update("forwardx-vless-parking-v1\0", "utf8")
+    .update(String(endpointId), "utf8")
+    .update("\0", "utf8")
+    .update(privateKey, "utf8")
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function managedRealityListener(row: ManagedProtocolEndpointRow) {
   const config = parseProtocolAccessConfig(row.configJson);
   const listenPort = managedProtocolListenPort(config, Number(row.publicPort));
@@ -181,6 +196,13 @@ function managedRealityListener(row: ManagedProtocolEndpointRow) {
     if (!isVlessUuid(uuid) || seenUuids.has(uuid)) return null;
     seenUuids.add(uuid);
     users.push({ username: `forwardx-${userId}`, uuid, flow: "xtls-rprx-vision" });
+  }
+  if (users.length === 0) {
+    users.push({
+      username: "forwardx-parking",
+      uuid: parkingRealityUuid(Number(row.id), privateKey),
+      flow: "xtls-rprx-vision",
+    });
   }
 
   const listener = {
