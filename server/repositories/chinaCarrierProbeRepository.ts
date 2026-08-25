@@ -158,7 +158,8 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
     const carriers: ChinaCarrierProbeOverviewHost["carriers"] = { ct: [], cu: [], cm: [] };
     for (const service of normalizedServices) {
       if (!serviceAppliesToHost(service, hostId)) continue;
-      if (!isHostProbeCarrier(service.carrier)) continue;
+      const carrier = service.carrier;
+      if (!isHostProbeCarrier(carrier)) continue;
       const key = `${Number(service.id)}:${hostId}`;
       const latest = latestByPair.get(key);
       const recordedAt = latest ? rowDate(latest.recordedAt) : null;
@@ -170,9 +171,9 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
           intervalSeconds: service.intervalSeconds,
           isTimeout,
         }, nowMs);
-      carriers[service.carrier].push({
+      carriers[carrier].push({
         serviceId: Number(service.id),
-        carrier: service.carrier,
+        carrier,
         region: service.region,
         serviceName: String(service.name || ""),
         method: service.method,
