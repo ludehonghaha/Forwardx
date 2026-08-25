@@ -88,6 +88,7 @@ import { forwardGroupProbeTopologyKey, tunnelProbeTopologyKey } from "./probeTop
 import {
   resolveLocalForwardXTransportVersion,
   resolveRuleTrafficPortForHost,
+  shouldForceStoppedRuleCleanup,
   stoppedForwardRuleNeedsRemoval,
 } from "./agentRuntimeRuleState";
 import { isTunnelRelayFailover, tunnelRelayCandidates } from "@shared/tunnelRelay";
@@ -4563,8 +4564,12 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         localRuleId: local?.ruleId,
       });
     };
-    const shouldForceStoppedKernelRuleCleanup = (rule: any) => !!rule?.resourceAccessDenied
-      || (supportsDesiredState && isKernelForwardRule(rule) && localRuleNeedsRemoval(rule));
+    const shouldForceStoppedKernelRuleCleanup = (rule: any) => shouldForceStoppedRuleCleanup({
+      resourceAccessDenied: !!rule?.resourceAccessDenied,
+      supportsDesiredState,
+      kernelForwardRule: isKernelForwardRule(rule),
+      needsRemoval: localRuleNeedsRemoval(rule),
+    });
 
     const settleStoppedRule = async (rule: any) => {
       const id = Number(rule?.id || 0);

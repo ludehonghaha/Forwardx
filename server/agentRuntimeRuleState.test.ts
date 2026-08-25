@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   resolveLocalForwardXTransportVersion,
   resolveRuleTrafficPortForHost,
+  shouldForceStoppedRuleCleanup,
   stoppedForwardRuleNeedsRemoval,
 } from "./agentRuntimeRuleState";
 
@@ -109,5 +110,41 @@ test("replacement rule on the same port settles the old stopped rule", () => {
     kernelForwardRule: false,
     expectedRuleId: 2,
     localRuleId: 99,
+  }), false);
+});
+
+test("ACL denied process rule still forces cleanup while its runtime is present", () => {
+  assert.equal(shouldForceStoppedRuleCleanup({
+    resourceAccessDenied: true,
+    supportsDesiredState: true,
+    kernelForwardRule: false,
+    needsRemoval: true,
+  }), true);
+});
+
+test("ACL denied process rule does not block finalize after runtime is gone or replaced", () => {
+  assert.equal(shouldForceStoppedRuleCleanup({
+    resourceAccessDenied: true,
+    supportsDesiredState: true,
+    kernelForwardRule: false,
+    needsRemoval: false,
+  }), false);
+});
+
+test("kernel cleanup stays conservative when runtime cleanup is still required", () => {
+  assert.equal(shouldForceStoppedRuleCleanup({
+    resourceAccessDenied: false,
+    supportsDesiredState: true,
+    kernelForwardRule: true,
+    needsRemoval: true,
+  }), true);
+});
+
+test("old Agent without desired-state support does not invent a kernel force path", () => {
+  assert.equal(shouldForceStoppedRuleCleanup({
+    resourceAccessDenied: false,
+    supportsDesiredState: false,
+    kernelForwardRule: true,
+    needsRemoval: true,
   }), false);
 });
