@@ -18,7 +18,7 @@ jobs:
         with:
           ref: fix/protocol-traffic-bridge-runtime-acl
           fetch-depth: 0
-      - name: Apply exact hotfix patch
+      - name: Apply hotfix
         shell: bash
         run: |
           python3 - <<'PY'
@@ -29,14 +29,15 @@ jobs:
               text = p.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{path}: expected exactly one match, got {count}: {old[:80]!r}")
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}: {old[:120]!r}")
               p.write_text(text.replace(old, new, 1))
 
-          # 1) Runtime ACL: allow only cryptographically/structurally trusted Panel-owned protocol bridges.
+          # Runtime ACL: trust only Panel-owned protocol bridge rules whose endpoint,
+          # marker and unique enabled assignment all agree with the persisted rule.
           replace_once(
               "server/linkAccessView.ts",
-              '  hosts,\n  tunnelExitNodes,',
-              '  hosts,\n  protocolEndpoints,\n  protocolUserAccess,\n  tunnelExitNodes,',
+              "  hosts,\n  tunnelExitNodes,",
+              "  hosts,\n  protocolEndpoints,\n  protocolUserAccess,\n  tunnelExitNodes,",
           )
           replace_once(
               "server/linkAccessView.ts",
@@ -112,28 +113,20 @@ jobs:
           replace_once("server/linkAccessView.ts", anchor, helper + anchor)
           replace_once(
               "server/linkAccessView.ts",
-              '''  const userRows = await db
-          ''',
-              '''  const trustedBridgeRuleIds = await trustedProtocolTrafficBridgeRuleIds(db, rules);
-            const userRows = await db
-          ''',
+              "  const userRows = await db\n",
+              "  const trustedBridgeRuleIds = await trustedProtocolTrafficBridgeRuleIds(db, rules);\n  const userRows = await db\n",
           )
           replace_once(
               "server/linkAccessView.ts",
-              '''  return rules.map((rule) => {
-            const userId = positiveId(rule?.userId);
-          ''',
-              '''  return rules.map((rule) => {
-            if (trustedBridgeRuleIds.has(positiveId(rule?.id))) return rule;
-            const userId = positiveId(rule?.userId);
-          ''',
+              "  return rules.map((rule) => {\n    const userId = positiveId(rule?.userId);\n",
+              "  return rules.map((rule) => {\n    if (trustedBridgeRuleIds.has(positiveId(rule?.id))) return rule;\n    const userId = positiveId(rule?.userId);\n",
           )
 
-          # 2) Lifecycle: when the last assignment disappears, retire the bridge and restore direct public listen.
+          # Lifecycle: removing the last assignment must retire the system bridge and
+          # restore the managed protocol listener to its public port.
           replace_once(
               "server/protocolTrafficBridge.ts",
-              '''export function managedProtocolTrafficOwnerUserId(assignments: any[]) {
-          ''',
+              "export function managedProtocolTrafficOwnerUserId(assignments: any[]) {\n",
               '''export function directManagedProtocolConfigAfterBridge(configValue: unknown, publicPort: unknown) {
             const config = withoutProtocolTrafficBridgeMarker(configValue) as ProtocolAccessConfig;
             const port = positiveInteger(publicPort);
@@ -146,8 +139,7 @@ jobs:
           )
           replace_once(
               "server/protocolTrafficBridge.ts",
-              '''async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, marker: ProtocolTrafficBridgeMarker | null) {
-          ''',
+              "async function createOrReplaceOwnedBridge(endpoint: any, ownerUserId: number, marker: ProtocolTrafficBridgeMarker | null) {\n",
               '''async function restoreDirectManagedProtocolEndpoint(endpoint: any, marker: ProtocolTrafficBridgeMarker | null) {
             if (!marker) return false;
             const rule = await db.getForwardRuleById(marker.ruleId) as any;
@@ -181,27 +173,21 @@ jobs:
           ''',
           )
 
-          # 3) Regression coverage in the existing protocol-access test suite.
+          # Regression tests.
           replace_once(
               "server/protocolTrafficBridge.test.ts",
-              '''  managedProtocolTrafficBridgeMatches,
-          ''',
-              '''  directManagedProtocolConfigAfterBridge,
-            managedProtocolTrafficBridgeMatches,
-          ''',
+              "  managedProtocolTrafficBridgeMatches,\n",
+              "  directManagedProtocolConfigAfterBridge,\n  managedProtocolTrafficBridgeMatches,\n",
           )
           replace_once(
               "server/protocolTrafficBridge.test.ts",
-              '''} from "./protocolTrafficBridge";
-          ''',
-              '''} from "./protocolTrafficBridge";
-          import { isTrustedProtocolTrafficBridgeRuntimeRule } from "./protocolTrafficBridgeTrust";
-          ''',
+              '} from "./protocolTrafficBridge";\n',
+              '} from "./protocolTrafficBridge";\nimport { isTrustedProtocolTrafficBridgeRuntimeRule } from "./protocolTrafficBridgeTrust";\n',
           )
           with Path("server/protocolTrafficBridge.test.ts").open("a") as f:
               f.write('''
 
-          test("trusted protocol bridge runtime rule bypass requires endpoint marker and unique assignment", () => {
+          test("trusted protocol bridge runtime rule requires marker and unique matching assignment", () => {
             const endpoint = {
               id: 3,
               runtimeMode: "managed",
@@ -245,9 +231,14 @@ jobs:
               endpoint,
               assignments: [{ userId: 9, isEnabled: true }, { userId: 10, isEnabled: true }],
             }), false);
+            assert.equal(isTrustedProtocolTrafficBridgeRuntimeRule({
+              rule: { ...rule, targetPort: 25002 },
+              endpoint,
+              assignments: [{ userId: 9, isEnabled: true }],
+            }), false);
           });
 
-          test("restoring direct managed protocol config removes bridge marker and publicizes listen port", () => {
+          test("restoring direct managed protocol config removes marker and restores public listen", () => {
             const config = directManagedProtocolConfigAfterBridge({
               listenPort: 25001,
               password: "secret",
@@ -264,10 +255,9 @@ jobs:
           });
           ''')
 
-          # Remove this one-shot patch workflow from the final branch.
           Path(".github/workflows/protocol-bridge-hotfix-patch.yml").unlink()
           PY
-      - name: Commit patch
+      - name: Commit hotfix
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
