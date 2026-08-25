@@ -1,0 +1,63 @@
+name: Probe Empty Copy Patch
+
+on:
+  push:
+    branches:
+      - fix/probe-empty-state-copy
+    paths:
+      - .github/workflows/probe-empty-copy-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/probe-empty-state-copy
+          fetch-depth: 0
+
+      - name: Clarify advanced probe empty state
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('client/src/components/hosts/HostProbeServiceManager.tsx')
+          text = path.read_text()
+          old = '\n'.join([
+              '              <p className="text-sm">{isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无服务"}</p>',
+              '              {isTextFiltered && serviceItems.length > 0 && (',
+              '                <p className="mt-1 text-xs text-muted-foreground/60">调整筛选内容或清空搜索</p>',
+              '              )}',
+          ])
+          new = '\n'.join([
+              '              <p className="text-sm">{isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无高级探测服务"}</p>',
+              '              {isTextFiltered && serviceItems.length > 0 ? (',
+              '                <p className="mt-1 text-xs text-muted-foreground/60">调整筛选内容或清空搜索</p>',
+              '              ) : (',
+              '                <div className="mt-2 max-w-xl space-y-1 text-center text-xs text-muted-foreground/70">',
+              '                  <p>默认网络质量监控已自动运行，无需创建服务。</p>',
+              '                  <p>此处仅用于额外配置 Ping / TCPing 高级探测。</p>',
+              '                </div>',
+              '              )}',
+          ])
+          if text.count(old) != 1:
+              raise SystemExit(f'empty-state block count={text.count(old)}; expected 1')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          git diff --check
+          git diff -- client/src/components/hosts/HostProbeServiceManager.tsx
+
+      - name: Commit UI copy fix
+        shell: bash
+        run: |
+          git config user.name "ForwardX UI Patch"
+          git config user.email "actions@users.noreply.github.com"
+          git add client/src/components/hosts/HostProbeServiceManager.tsx
+          git commit -m "ui: clarify advanced probe empty state"
+          git push origin HEAD:fix/probe-empty-state-copy
