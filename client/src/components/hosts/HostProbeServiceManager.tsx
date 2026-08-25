@@ -448,9 +448,14 @@ export default function HostProbeServiceManager({
           ) : displayedServiceItems.length === 0 ? (
             <div className="flex min-h-[220px] flex-col items-center justify-center text-muted-foreground">
               <RadioTower className="mb-3 h-9 w-9 opacity-40" />
-              <p className="text-sm">{isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无服务"}</p>
-              {isTextFiltered && serviceItems.length > 0 && (
+              <p className="text-sm">{isTextFiltered && serviceItems.length > 0 ? "未找到匹配服务" : "暂无高级探测服务"}</p>
+              {isTextFiltered && serviceItems.length > 0 ? (
                 <p className="mt-1 text-xs text-muted-foreground/60">调整筛选内容或清空搜索</p>
+              ) : (
+                <div className="mt-2 max-w-xl space-y-1 text-center text-xs text-muted-foreground/70">
+                  <p>默认网络质量监控已自动运行，无需创建服务。</p>
+                  <p>此处仅用于额外配置 Ping / TCPing 高级探测。</p>
+                </div>
               )}
             </div>
           ) : viewMode === "card" ? (
