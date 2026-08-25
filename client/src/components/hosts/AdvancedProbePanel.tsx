@@ -94,7 +94,10 @@ export default function AdvancedProbePanel({
             </div>
             <HostProbeServiceManager
               createSignal={createSignal > 0 ? createSignal : carrierCreateSignal}
-              onCreateSignalHandled={() => { if (createSignal > 0) onCreateSignalHandled(); }}
+              onCreateSignalHandled={() => {
+                if (createSignal > 0) onCreateSignalHandled();
+                else setCarrierCreateSignal(0);
+              }}
               viewMode={viewMode}
               onViewModeChange={onViewModeChange}
               hideViewModeToggle={hideViewModeToggle}
@@ -102,7 +105,7 @@ export default function AdvancedProbePanel({
               onFilterStatsChange={onFilterStatsChange}
               probeKindFilter="china_carrier"
               defaultProbeKind="china_carrier"
-              defaultCarrier={defaultCarrier}
+              defaultCarrier={createSignal > 0 ? null : defaultCarrier}
             />
           </div>
         </div>
