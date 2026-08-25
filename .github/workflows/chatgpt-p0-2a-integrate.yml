@@ -35,6 +35,19 @@ jobs:
       - name: Apply integration patch
         run: node scripts/apply-p0-2a-carrier-probes.mjs
 
+      - name: Narrow generated manager metadata type
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'client/src/components/hosts/HostProbeServiceManager.tsx';
+          let source = fs.readFileSync(file, 'utf8');
+          const from = 'probeKind: service?.probeKind === "china_carrier" ? "china_carrier" : "custom",';
+          const to = 'probeKind: (service?.probeKind === "china_carrier" ? "china_carrier" : "custom") as HostProbeKind,';
+          if (!source.includes(from)) throw new Error('manager probeKind type anchor missing');
+          source = source.replace(from, to);
+          fs.writeFileSync(file, source);
+          NODE
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
