@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   deriveHostProbeJitterMs,
+  hostProbeFreshnessState,
   normalizeHostProbeMetadata,
 } from "../shared/hostProbeMetadata";
 
@@ -68,4 +69,24 @@ test("jitter ignores timeout rows and uses at most the newest ten successful sam
     ...Array.from({ length: 10 }, (_, index) => ({ latencyMs: 10 + index * 2 })),
   ];
   assert.equal(deriveHostProbeJitterMs(samples), 2);
+});
+
+test("freshness distinguishes waiting healthy timeout and stale data", () => {
+  const now = Date.parse("2026-08-25T15:00:00Z");
+  assert.equal(hostProbeFreshnessState({}, now), "waiting");
+  assert.equal(hostProbeFreshnessState({
+    recordedAt: new Date(now - 60_000),
+    intervalSeconds: 60,
+    isTimeout: false,
+  }, now), "ok");
+  assert.equal(hostProbeFreshnessState({
+    recordedAt: new Date(now - 60_000),
+    intervalSeconds: 60,
+    isTimeout: true,
+  }, now), "timeout");
+  assert.equal(hostProbeFreshnessState({
+    recordedAt: new Date(now - 181_000),
+    intervalSeconds: 60,
+    isTimeout: false,
+  }, now), "stale");
 });
