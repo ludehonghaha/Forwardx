@@ -4547,7 +4547,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         targetIp: "",
         targetPort: port,
         protocol: "tcp",
-            const localRuleNeedsRemoval = (rule: any) => {
+        commands: cleanupCmds,
+      };
+    };
+    const localRuleNeedsRemoval = (rule: any) => {
       const port = Number(rule?.sourcePort || 0);
       const local = port > 0
         ? findLocalRuleState(port, rule.protocol, Number(rule?.id || 0))
@@ -4559,7 +4562,6 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         expectedRuleId: rule?.id,
         localRuleId: local?.ruleId,
       });
-    };|| 0) === Number(rule?.id || 0);
     };
     const shouldForceStoppedKernelRuleCleanup = (rule: any) => !!rule?.resourceAccessDenied
       || (supportsDesiredState && isKernelForwardRule(rule) && localRuleNeedsRemoval(rule));
