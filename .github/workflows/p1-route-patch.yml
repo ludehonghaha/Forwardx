@@ -33,6 +33,7 @@ jobs:
 
           start_anchor = '    const buildGenericLocalTunnelRemovalAction = (local: AgentLocalRuntimeTunnelState) => {'
           end_anchor = '    const shouldForceStoppedKernelRuleCleanup ='
+          local_anchor = '    const localRuleNeedsRemoval = (rule: any) => {'
 
           for label, text in [('current', current), ('main', main)]:
               assert text.count(start_anchor) == 1, (label, 'start', text.count(start_anchor))
@@ -41,40 +42,36 @@ jobs:
           ms = main.index(start_anchor)
           me = main.index(end_anchor, ms)
           canonical = main[ms:me]
+          ls = canonical.index(local_anchor)
+          old_local = canonical[ls:]
+          assert 'if (!hasReportedRuntimeState) return true;' in old_local
+          assert 'if (!local) return true;' in old_local
+          assert 'stoppedForwardRuleNeedsRemoval' not in old_local
 
-          old_fn = '''    const localRuleNeedsRemoval = (rule: any) => {
-      if (!hasReportedRuntimeState) return true;
-      const port = Number(rule?.sourcePort || 0);
-      if (port <= 0) return true;
-      const local = findLocalRuleState(port, rule.protocol, Number(rule?.id || 0));
-      if (!local) return true;
-      if (isKernelForwardRule(rule)) return true;
-      return Number(local.ruleId || 0) === Number(rule?.id || 0);
-    };
-'''
-          new_fn = '''    const localRuleNeedsRemoval = (rule: any) => {
-      const port = Number(rule?.sourcePort || 0);
-      const local = port > 0
-        ? findLocalRuleState(port, rule.protocol, Number(rule?.id || 0))
-        : undefined;
-      return stoppedForwardRuleNeedsRemoval({
-        hasReportedRuntimeState,
-        sourcePort: port,
-        kernelForwardRule: isKernelForwardRule(rule),
-        expectedRuleId: rule?.id,
-        localRuleId: local?.ruleId,
-      });
-    };
-'''
-
-          assert canonical.count(old_fn) == 1, canonical.count(old_fn)
-          replacement = canonical.replace(old_fn, new_fn, 1)
+          new_fn = '\n'.join([
+              '    const localRuleNeedsRemoval = (rule: any) => {',
+              '      const port = Number(rule?.sourcePort || 0);',
+              '      const local = port > 0',
+              '        ? findLocalRuleState(port, rule.protocol, Number(rule?.id || 0))',
+              '        : undefined;',
+              '      return stoppedForwardRuleNeedsRemoval({',
+              '        hasReportedRuntimeState,',
+              '        sourcePort: port,',
+              '        kernelForwardRule: isKernelForwardRule(rule),',
+              '        expectedRuleId: rule?.id,',
+              '        localRuleId: local?.ruleId,',
+              '      });',
+              '    };',
+              '',
+          ])
+          replacement = canonical[:ls] + new_fn
 
           cs = current.index(start_anchor)
           ce = current.index(end_anchor, cs)
           repaired = current[:cs] + replacement + current[ce:]
 
-          assert repaired.count('const localRuleNeedsRemoval = (rule: any) => {') == 1
+          assert repaired.count(local_anchor) == 1
+          assert repaired.count('stoppedForwardRuleNeedsRemoval({') == 1
           assert repaired.count('  stoppedForwardRuleNeedsRemoval,\n} from "./agentRuntimeRuleState";') == 1
           path.write_text(repaired)
           PY
