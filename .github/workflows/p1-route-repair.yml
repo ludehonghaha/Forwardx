@@ -1,0 +1,102 @@
+name: P1 Route Repair
+
+on:
+  push:
+    branches:
+      - fix/p1-finalize-stopped-rules
+    paths:
+      - .github/workflows/p1-route-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/p1-finalize-stopped-rules
+          fetch-depth: 0
+
+      - name: Restore canonical block and apply P1 logic
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          path = Path('server/agentHeartbeatRoute.ts')
+          current = path.read_text()
+          main = subprocess.check_output(
+              ['git', 'show', 'origin/main:server/agentHeartbeatRoute.ts'],
+              text=True,
+          )
+
+          start_anchor = '    const buildGenericLocalTunnelRemovalAction = (local: AgentLocalRuntimeTunnelState) => {'
+          end_anchor = '    const shouldForceStoppedKernelRuleCleanup ='
+
+          for label, text in [('current', current), ('main', main)]:
+              if text.count(start_anchor) != 1:
+                  raise SystemExit(f'{label} start anchor count={text.count(start_anchor)}; expected 1')
+              if text.count(end_anchor) != 1:
+                  raise SystemExit(f'{label} end anchor count={text.count(end_anchor)}; expected 1')
+
+          main_start = main.index(start_anchor)
+          main_end = main.index(end_anchor, main_start)
+          canonical = main[main_start:main_end]
+
+          old_fn = '''    const localRuleNeedsRemoval = (rule: any) => {
+      if (!hasReportedRuntimeState) return true;
+      const port = Number(rule?.sourcePort || 0);
+      if (port <= 0) return true;
+      const local = findLocalRuleState(port, rule.protocol, Number(rule?.id || 0));
+      if (!local) return true;
+      if (isKernelForwardRule(rule)) return true;
+      return Number(local.ruleId || 0) === Number(rule?.id || 0);
+    };
+'''
+          new_fn = '''    const localRuleNeedsRemoval = (rule: any) => {
+      const port = Number(rule?.sourcePort || 0);
+      const local = port > 0
+        ? findLocalRuleState(port, rule.protocol, Number(rule?.id || 0))
+        : undefined;
+      return stoppedForwardRuleNeedsRemoval({
+        hasReportedRuntimeState,
+        sourcePort: port,
+        kernelForwardRule: isKernelForwardRule(rule),
+        expectedRuleId: rule?.id,
+        localRuleId: local?.ruleId,
+      });
+    };
+'''
+
+          if canonical.count(old_fn) != 1:
+              raise SystemExit(f'canonical localRule block count={canonical.count(old_fn)}; expected 1')
+          replacement = canonical.replace(old_fn, new_fn, 1)
+
+          current_start = current.index(start_anchor)
+          current_end = current.index(end_anchor, current_start)
+          repaired = current[:current_start] + replacement + current[current_end:]
+
+          import_marker = '  stoppedForwardRuleNeedsRemoval,\n} from "./agentRuntimeRuleState";'
+          if repaired.count(import_marker) != 1:
+              raise SystemExit(f'helper import count={repaired.count(import_marker)}; expected 1')
+          if repaired.count('const localRuleNeedsRemoval = (rule: any) => {') != 1:
+              raise SystemExit('localRuleNeedsRemoval must occur exactly once after repair')
+
+          path.write_text(repaired)
+          PY
+
+          git diff --check
+          git diff -- server/agentHeartbeatRoute.ts
+
+      - name: Commit repaired heartbeat integration
+        shell: bash
+        run: |
+          git config user.name "ForwardX P1 Repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add server/agentHeartbeatRoute.ts
+          git commit -m "fix: repair stopped rule heartbeat integration"
+          git push origin HEAD:fix/p1-finalize-stopped-rules
