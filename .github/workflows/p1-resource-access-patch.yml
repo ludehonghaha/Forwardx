@@ -1,0 +1,59 @@
+name: P1 ACL Finalize Patch
+
+on:
+  push:
+    branches:
+      - fix/p1-resource-access-finalize
+    paths:
+      - .github/workflows/p1-resource-access-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/p1-resource-access-finalize
+          fetch-depth: 0
+
+      - name: Patch heartbeat ACL cleanup gate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+
+          path = Path('server/agentHeartbeatRoute.ts')
+          text = path.read_text()
+
+          pairs = [
+              ('aW1wb3J0IHsKICByZXNvbHZlTG9jYWxGb3J3YXJkWFRyYW5zcG9ydFZlcnNpb24sCiAgcmVzb2x2ZVJ1bGVUcmFmZmljUG9ydEZvckhvc3QsCiAgc3RvcHBlZEZvcndhcmRSdWxlTmVlZHNSZW1vdmFsLAp9IGZyb20gIi4vYWdlbnRSdW50aW1lUnVsZVN0YXRlIjs=', 'aW1wb3J0IHsKICByZXNvbHZlTG9jYWxGb3J3YXJkWFRyYW5zcG9ydFZlcnNpb24sCiAgcmVzb2x2ZVJ1bGVUcmFmZmljUG9ydEZvckhvc3QsCiAgc2hvdWxkRm9yY2VTdG9wcGVkUnVsZUNsZWFudXAsCiAgc3RvcHBlZEZvcndhcmRSdWxlTmVlZHNSZW1vdmFsLAp9IGZyb20gIi4vYWdlbnRSdW50aW1lUnVsZVN0YXRlIjs='),
+              ('ICAgIGNvbnN0IHNob3VsZEZvcmNlU3RvcHBlZEtlcm5lbFJ1bGVDbGVhbnVwID0gKHJ1bGU6IGFueSkgPT4gISFydWxlPy5yZXNvdXJjZUFjY2Vzc0RlbmllZAogICAgICB8fCAoc3VwcG9ydHNEZXNpcmVkU3RhdGUgJiYgaXNLZXJuZWxGb3J3YXJkUnVsZShydWxlKSAmJiBsb2NhbFJ1bGVOZWVkc1JlbW92YWwocnVsZSkpOw==', 'ICAgIGNvbnN0IHNob3VsZEZvcmNlU3RvcHBlZEtlcm5lbFJ1bGVDbGVhbnVwID0gKHJ1bGU6IGFueSkgPT4gc2hvdWxkRm9yY2VTdG9wcGVkUnVsZUNsZWFudXAoewogICAgICByZXNvdXJjZUFjY2Vzc0RlbmllZDogISFydWxlPy5yZXNvdXJjZUFjY2Vzc0RlbmllZCwKICAgICAgc3VwcG9ydHNEZXNpcmVkU3RhdGUsCiAgICAgIGtlcm5lbEZvcndhcmRSdWxlOiBpc0tlcm5lbEZvcndhcmRSdWxlKHJ1bGUpLAogICAgICBuZWVkc1JlbW92YWw6IGxvY2FsUnVsZU5lZWRzUmVtb3ZhbChydWxlKSwKICAgIH0pOw=='),
+          ]
+
+          for old_b64, new_b64 in pairs:
+              old = base64.b64decode(old_b64).decode()
+              new = base64.b64decode(new_b64).decode()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one patch target, got {count}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          git diff --check
+          git diff -- server/agentHeartbeatRoute.ts
+
+      - name: Commit heartbeat fix
+        shell: bash
+        run: |
+          git config user.name "ForwardX P1 Patch"
+          git config user.email "actions@users.noreply.github.com"
+          git add server/agentHeartbeatRoute.ts
+          git commit -m "fix: finalize ACL-revoked stopped rules"
+          git push origin HEAD:fix/p1-resource-access-finalize
