@@ -60,3 +60,21 @@ export function stoppedForwardRuleNeedsRemoval(input: {
   const expectedRuleId = Math.floor(Number(input.expectedRuleId || 0));
   return expectedRuleId > 0 && localRuleId === expectedRuleId;
 }
+
+/**
+ * Force a stopped-rule cleanup only while an explicit removal is still needed.
+ *
+ * ACL revocation must be able to tear down a listener even when the persisted
+ * running flag is already false. But once an authoritative runtime snapshot
+ * proves that a process-backed rule is absent (or a replacement rule owns the
+ * same port), forcing cleanup would prevent settle/finalize forever.
+ */
+export function shouldForceStoppedRuleCleanup(input: {
+  resourceAccessDenied: boolean;
+  supportsDesiredState: boolean;
+  kernelForwardRule: boolean;
+  needsRemoval: boolean;
+}) {
+  if (!input.needsRemoval) return false;
+  return input.resourceAccessDenied || (input.supportsDesiredState && input.kernelForwardRule);
+}
