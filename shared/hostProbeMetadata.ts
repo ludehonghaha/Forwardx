@@ -4,6 +4,12 @@ export type HostProbeKind = typeof HOST_PROBE_KINDS[number];
 export const HOST_PROBE_CARRIERS = ["ct", "cu", "cm"] as const;
 export type HostProbeCarrier = typeof HOST_PROBE_CARRIERS[number];
 
+export const HOST_PROBE_CARRIER_LABELS: Record<HostProbeCarrier, string> = {
+  ct: "电信 CT",
+  cu: "联通 CU",
+  cm: "移动 CM",
+};
+
 export type HostProbeMetadataInput = {
   probeKind?: unknown;
   carrier?: unknown;
@@ -20,6 +26,8 @@ export type HostProbeJitterSample = {
   latencyMs?: unknown;
   isTimeout?: unknown;
 };
+
+export type HostProbeFreshnessState = "waiting" | "ok" | "timeout" | "stale";
 
 export function isHostProbeCarrier(value: unknown): value is HostProbeCarrier {
   return HOST_PROBE_CARRIERS.includes(String(value || "").trim().toLowerCase() as HostProbeCarrier);
@@ -73,4 +81,24 @@ export function deriveHostProbeJitterMs(samples: HostProbeJitterSample[], sample
     totalDelta += Math.abs(successful[index] - successful[index - 1]);
   }
   return Math.round(totalDelta / (successful.length - 1));
+}
+
+/**
+ * A probe is considered stale after three configured intervals, with a three-minute
+ * floor so short scheduling jitter does not produce false stale states.
+ */
+export function hostProbeFreshnessState(input: {
+  recordedAt?: unknown;
+  intervalSeconds?: unknown;
+  isTimeout?: unknown;
+}, nowMs = Date.now()): HostProbeFreshnessState {
+  if (!input?.recordedAt) return "waiting";
+  const recordedMs = input.recordedAt instanceof Date
+    ? input.recordedAt.getTime()
+    : new Date(input.recordedAt as any).getTime();
+  if (!Number.isFinite(recordedMs) || recordedMs <= 0) return "waiting";
+  const intervalSeconds = Math.max(5, Math.floor(Number(input.intervalSeconds) || 60));
+  const staleAfterMs = Math.max(180_000, intervalSeconds * 3_000);
+  if (nowMs - recordedMs > staleAfterMs) return "stale";
+  return input.isTimeout ? "timeout" : "ok";
 }
