@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.283] - 2026-08-25
+
+### 修复与优化
+
+- 修复 Agent 通过加密 `/api/sync` 隧道上报 `/api/agent/network-quality` 时被明确路径白名单拒绝的问题，并将已在生产验证通过的 network-quality 修复固化为正式版本。
+- 增加未知加密同步路径的负向回归保护，确保未列入 `AGENT_TUNNEL_PATHS` 的路径继续返回 `400 Invalid encrypted request`，不扩大 `/api/sync` 权限边界。
+
+### 版本
+
+- 面板与 APK Release `2.3.283`，Agent `2.2.194`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.282] - 2026-08-24
 
 ### 新增

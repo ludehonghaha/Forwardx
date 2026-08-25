@@ -187,6 +187,32 @@ test("encrypted network quality reports pass the sync tunnel whitelist", async (
   }
 });
 
+test("encrypted sync rejects an unknown tunnel path", async () => {
+  resetAgentCryptoCaches();
+  const token = "agent-unknown-path-token";
+  try {
+    await withAgentMiddlewareServer(async (baseUrl) => {
+      const requestEnvelope = encryptPayload({
+        path: "/api/agent/__unknown-test-path__",
+        payload: { value: true },
+      }, token);
+      const response = await fetch(`${baseUrl}/api/sync`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestEnvelope),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.get(AGENT_AUTH_RESULT_HEADER), AGENT_AUTH_RESULT_ACCEPTED);
+      assert.deepEqual(await response.json(), { error: "Invalid encrypted request" });
+    });
+  } finally {
+    resetAgentCryptoCaches();
+  }
+});
+
 test("envelope replay after a verified challenge proof stays accepted", async () => {
   resetAgentCryptoCaches();
   const token = "agent-middleware-replay-token";
