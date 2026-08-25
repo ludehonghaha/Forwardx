@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  directManagedProtocolConfigAfterBridge,
   managedProtocolTrafficBridgeMatches,
   managedProtocolTrafficOwnerUserId,
   protocolTrafficBridgeMarker,
   selectProtocolTrafficBridgeForwardType,
   withoutProtocolTrafficBridgeMarker,
 } from "./protocolTrafficBridge";
+import { isTrustedProtocolTrafficBridgeRuntimeRule } from "./protocolTrafficBridgeTrust";
 
 test("managed protocol traffic owner accepts one enabled user and rejects ambiguous ownership", () => {
   assert.equal(managedProtocolTrafficOwnerUserId([
@@ -117,4 +119,71 @@ test("traffic bridge backend never falls back to loopback-sensitive NAT forwardi
     iptables: true,
     nftables: true,
   }), null);
+});
+
+test("trusted protocol bridge runtime rule requires marker and unique matching assignment", () => {
+  const endpoint = {
+    id: 3,
+    runtimeMode: "managed",
+    isEnabled: true,
+    hostId: 5,
+    forwardRuleId: 41,
+    publicPort: 24001,
+    configJson: JSON.stringify({
+      listenPort: 25001,
+      _forwardxTrafficBridge: {
+        version: 1,
+        managed: true,
+        ruleId: 41,
+        ownerUserId: 9,
+        publicPort: 24001,
+        listenPort: 25001,
+      },
+    }),
+  };
+  const rule = {
+    id: 41,
+    userId: 9,
+    hostId: 5,
+    sourcePort: 24001,
+    targetIp: "127.0.0.1",
+    targetPort: 25001,
+    pendingDelete: false,
+  };
+  assert.equal(isTrustedProtocolTrafficBridgeRuntimeRule({
+    rule,
+    endpoint,
+    assignments: [{ userId: 9, isEnabled: true }],
+  }), true);
+  assert.equal(isTrustedProtocolTrafficBridgeRuntimeRule({
+    rule,
+    endpoint,
+    assignments: [{ userId: 10, isEnabled: true }],
+  }), false);
+  assert.equal(isTrustedProtocolTrafficBridgeRuntimeRule({
+    rule,
+    endpoint,
+    assignments: [{ userId: 9, isEnabled: true }, { userId: 10, isEnabled: true }],
+  }), false);
+  assert.equal(isTrustedProtocolTrafficBridgeRuntimeRule({
+    rule: { ...rule, targetPort: 25002 },
+    endpoint,
+    assignments: [{ userId: 9, isEnabled: true }],
+  }), false);
+});
+
+test("restoring direct managed protocol config removes marker and restores public listen", () => {
+  const config = directManagedProtocolConfigAfterBridge({
+    listenPort: 25001,
+    password: "secret",
+    _forwardxTrafficBridge: {
+      version: 1,
+      managed: true,
+      ruleId: 41,
+      ownerUserId: 9,
+      publicPort: 24001,
+      listenPort: 25001,
+    },
+  }, 24001);
+  assert.deepEqual(config, { listenPort: 24001, password: "secret" });
 });

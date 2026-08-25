@@ -3,6 +3,8 @@ import {
   forwardGroups,
   forwardGroupMembers,
   hosts,
+  protocolEndpoints,
+  protocolUserAccess,
   tunnelExitNodes,
   tunnelHops,
   tunnels,
@@ -12,6 +14,7 @@ import {
   userTunnelPermissions,
 } from "../drizzle/schema";
 import { getDb } from "./dbRuntime";
+import { isTrustedProtocolTrafficBridgeRuntimeRule } from "./protocolTrafficBridgeTrust";
 import { createQueryCache } from "./queryCache";
 import { getActiveUserSubscriptions } from "./repositories/billingRepository";
 import {
@@ -346,6 +349,64 @@ export function canUseForwardRuleResource(rule: any, scope: LinkAccessScope | nu
   return hostId > 0 && (scope.useHostIds || scope.hostIds).has(hostId);
 }
 
+async function trustedProtocolTrafficBridgeRuleIds(db: any, rules: Array<Record<string, any>>) {
+  const ruleIds = Array.from(new Set(rules
+    .map((rule) => positiveId(rule?.id))
+    .filter((ruleId) => ruleId > 0)));
+  if (ruleIds.length === 0) return new Set<number>();
+
+  try {
+    const endpoints = await db.select({
+      id: protocolEndpoints.id,
+      runtimeMode: protocolEndpoints.runtimeMode,
+      hostId: protocolEndpoints.hostId,
+      forwardRuleId: protocolEndpoints.forwardRuleId,
+      publicPort: protocolEndpoints.publicPort,
+      configJson: protocolEndpoints.configJson,
+      isEnabled: protocolEndpoints.isEnabled,
+    }).from(protocolEndpoints)
+      .where(inArray(protocolEndpoints.forwardRuleId, ruleIds));
+    if (endpoints.length === 0) return new Set<number>();
+
+    const endpointIds = endpoints
+      .map((endpoint: any) => positiveId(endpoint?.id))
+      .filter((endpointId: number) => endpointId > 0);
+    const assignments = endpointIds.length > 0
+      ? await db.select({
+          endpointId: protocolUserAccess.endpointId,
+          userId: protocolUserAccess.userId,
+          isEnabled: protocolUserAccess.isEnabled,
+        }).from(protocolUserAccess)
+          .where(inArray(protocolUserAccess.endpointId, endpointIds))
+      : [];
+    const assignmentsByEndpoint = new Map<number, any[]>();
+    for (const assignment of assignments as any[]) {
+      const endpointId = positiveId(assignment?.endpointId);
+      if (!endpointId) continue;
+      const rows = assignmentsByEndpoint.get(endpointId) || [];
+      rows.push(assignment);
+      assignmentsByEndpoint.set(endpointId, rows);
+    }
+    const rulesById = new Map(rules.map((rule) => [positiveId(rule?.id), rule]));
+    const trusted = new Set<number>();
+    for (const endpoint of endpoints as any[]) {
+      const ruleId = positiveId(endpoint?.forwardRuleId);
+      const endpointId = positiveId(endpoint?.id);
+      const rule = rulesById.get(ruleId);
+      if (!rule || !endpointId) continue;
+      if (isTrustedProtocolTrafficBridgeRuntimeRule({
+        rule,
+        endpoint,
+        assignments: assignmentsByEndpoint.get(endpointId) || [],
+      })) trusted.add(ruleId);
+    }
+    return trusted;
+  } catch (error) {
+    warnLinkAccessLookupFailure(error);
+    return new Set<number>();
+  }
+}
+
 /**
  * Runtime rows keep their persisted enabled flag, but an Agent must treat a
  * rule whose root resource is no longer authorized as disabled. Returning
@@ -362,6 +423,7 @@ export async function gateForwardRulesForRuntime<T extends Record<string, any>>(
   if (!db) {
     return rules.map((rule) => ({ ...rule, isEnabled: false, resourceAccessDenied: true }));
   }
+  const trustedBridgeRuleIds = await trustedProtocolTrafficBridgeRuleIds(db, rules);
   const userRows = await db
     .select({ id: users.id, role: users.role })
     .from(users)
@@ -376,6 +438,7 @@ export async function gateForwardRulesForRuntime<T extends Record<string, any>>(
   const scopeByUserId = new Map(scopeEntries);
 
   return rules.map((rule) => {
+    if (trustedBridgeRuleIds.has(positiveId(rule?.id))) return rule;
     const userId = positiveId(rule?.userId);
     const scope = scopeByUserId.get(userId);
     const allowed = scope !== undefined && canUseForwardRuleResource(rule, scope);
