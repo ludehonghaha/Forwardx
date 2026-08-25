@@ -9,6 +9,7 @@ import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw } from "../dbRunti
 import { boolLiteral, bucketExpression, inList, quoteIdentifier } from "../dbCompat";
 import { clampPositiveInt, epochSeconds } from "./repositoryUtils";
 import { packetLossPermille } from "./hostNetworkQualityRepository";
+import { normalizeHostProbeMetadata, type HostProbeCarrier, type HostProbeKind } from "../../shared/hostProbeMetadata";
 
 export type HostProbeMethod = "tcping" | "ping";
 export type HostProbeScope = "all" | "exclude" | "specific";
@@ -18,6 +19,9 @@ export type HostProbeServiceInput = {
   method: HostProbeMethod;
   targetIp: string;
   targetPort?: number | null;
+  probeKind?: HostProbeKind;
+  carrier?: HostProbeCarrier | null;
+  region?: string | null;
   hostScope: HostProbeScope;
   hostIds?: number[];
   excludeHostIds?: number[];
@@ -63,11 +67,15 @@ function normalizeSortOrder(value: unknown) {
 function normalizeServiceInput(input: HostProbeServiceInput): InsertHostProbeService {
   const method = input.method === "ping" ? "ping" : "tcping";
   const hostScope = input.hostScope === "exclude" || input.hostScope === "specific" ? input.hostScope : "all";
+  const metadata = normalizeHostProbeMetadata(input);
   const payload = {
     name: input.name.trim(),
     method,
     targetIp: input.targetIp.trim(),
     targetPort: method === "tcping" ? Number(input.targetPort) : null,
+    probeKind: metadata.probeKind,
+    carrier: metadata.carrier,
+    region: metadata.region,
     hostScope,
     hostIds: hostScope === "specific" ? serializeIds(input.hostIds) : null,
     excludeHostIds: hostScope === "exclude" ? serializeIds(input.excludeHostIds) : null,
@@ -82,8 +90,10 @@ function normalizeServiceInput(input: HostProbeServiceInput): InsertHostProbeSer
 }
 
 export function mapHostProbeService(row: any) {
+  const metadata = normalizeHostProbeMetadata(row || {});
   return {
     ...row,
+    ...metadata,
     id: Number(row?.id || 0),
     targetPort: row?.targetPort == null ? null : Number(row.targetPort),
     intervalSeconds: normalizeIntervalSeconds(row?.intervalSeconds),
@@ -122,7 +132,15 @@ export async function createHostProbeService(input: HostProbeServiceInput) {
 export async function updateHostProbeService(id: number, input: Omit<HostProbeServiceInput, "userId">) {
   const db = await getDb();
   if (!db) return;
-  const payload = normalizeServiceInput({ ...input, userId: 0 });
+  const existing = await getHostProbeServiceById(id);
+  if (!existing) return;
+  const payload = normalizeServiceInput({
+    ...input,
+    userId: 0,
+    probeKind: input.probeKind === undefined ? existing.probeKind : input.probeKind,
+    carrier: input.carrier === undefined ? existing.carrier : input.carrier,
+    region: input.region === undefined ? existing.region : input.region,
+  });
   delete (payload as any).userId;
   delete (payload as any).createdAt;
   await db.update(hostProbeServices).set({ ...payload, updatedAt: nowDate() }).where(eq(hostProbeServices.id, id));

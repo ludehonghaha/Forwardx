@@ -9,7 +9,8 @@ import DateTimePickerInput, {
 } from "@/components/DatePickerInput";
 import HostCard, { HostActionButtons } from "@/components/hosts/HostCard";
 import HostGroupManager, { compareHostGroupDisplayOrder, type HostGroupView, type HostGroupViewMode } from "@/components/hosts/HostGroupManager";
-import HostProbeServiceManager, { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
+import { type HostProbeServiceViewMode } from "@/components/hosts/HostProbeServiceManager";
+import AdvancedProbePanel from "@/components/hosts/AdvancedProbePanel";
 import HostProbeServiceLatencyDialog from "@/components/hosts/HostProbeServiceLatencyDialog";
 import HostNetworkQualityDialog from "@/components/hosts/HostNetworkQualityDialog";
 import {
@@ -2834,7 +2835,7 @@ function HostsContent() {
             <p className="text-xs text-muted-foreground sm:text-sm">
               高级功能：配置 Agent → 指定 IP / 域名 / 端口的 Ping / TCPing 服务探测。
             </p>
-            <HostProbeServiceManager
+            <AdvancedProbePanel
               createSignal={serviceCreateSignal}
               onCreateSignalHandled={() => setServiceCreateSignal(0)}
               viewMode={serviceViewMode}
