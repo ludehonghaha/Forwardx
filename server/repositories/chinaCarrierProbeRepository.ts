@@ -107,20 +107,23 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
 
   if (serviceIds.length > 0) {
     const list = inList(serviceIds);
+    // Avoid window functions so the overview does not raise the minimum SQL-engine
+    // version for deployments that already use ForwardX with MySQL/PostgreSQL/SQLite.
     const latestRows = await queryRaw<any>(
-      `SELECT ranked.${q("serviceId")}, ranked.${q("hostId")}, ranked.${q("latencyMs")}, ranked.${q("isTimeout")},
-              ranked.${q("successCount")}, ranked.${q("lossCount")}, ranked.${q("packetLossPermille")}, ranked.${q("recordedAt")}
-         FROM (
-           SELECT s.${q("serviceId")}, s.${q("hostId")}, s.${q("latencyMs")}, s.${q("isTimeout")},
-                  s.${q("successCount")}, s.${q("lossCount")}, s.${q("packetLossPermille")}, s.${q("recordedAt")}, s.${q("id")},
-                  ROW_NUMBER() OVER (
-                    PARTITION BY s.${q("serviceId")}, s.${q("hostId")}
-                    ORDER BY s.${q("recordedAt")} DESC, s.${q("id")} DESC
-                  ) AS ${q("rn")}
-             FROM ${q("host_probe_service_stats")} s
-            WHERE s.${q("serviceId")} IN ${list.sql}
-         ) ranked
-        WHERE ranked.${q("rn")} = 1`,
+      `SELECT s.${q("serviceId")}, s.${q("hostId")}, s.${q("latencyMs")}, s.${q("isTimeout")},
+              s.${q("successCount")}, s.${q("lossCount")}, s.${q("packetLossPermille")}, s.${q("recordedAt")}
+         FROM ${q("host_probe_service_stats")} s
+        WHERE s.${q("serviceId")} IN ${list.sql}
+          AND NOT EXISTS (
+            SELECT 1
+              FROM ${q("host_probe_service_stats")} newer
+             WHERE newer.${q("serviceId")} = s.${q("serviceId")}
+               AND newer.${q("hostId")} = s.${q("hostId")}
+               AND (
+                 newer.${q("recordedAt")} > s.${q("recordedAt")}
+                 OR (newer.${q("recordedAt")} = s.${q("recordedAt")} AND newer.${q("id")} > s.${q("id")})
+               )
+          )`,
       list.params,
     );
     for (const row of latestRows) {
@@ -129,21 +132,25 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
 
     const success = boolLiteral(false);
     const sampleRows = await queryRaw<any>(
-      `SELECT ranked.${q("serviceId")}, ranked.${q("hostId")}, ranked.${q("latencyMs")}, ranked.${q("recordedAt")}
-         FROM (
-           SELECT s.${q("serviceId")}, s.${q("hostId")}, s.${q("latencyMs")}, s.${q("recordedAt")}, s.${q("id")},
-                  ROW_NUMBER() OVER (
-                    PARTITION BY s.${q("serviceId")}, s.${q("hostId")}
-                    ORDER BY s.${q("recordedAt")} DESC, s.${q("id")} DESC
-                  ) AS ${q("rn")}
-             FROM ${q("host_probe_service_stats")} s
-            WHERE s.${q("serviceId")} IN ${list.sql}
-              AND s.${q("isTimeout")} = ${success}
-              AND s.${q("latencyMs")} IS NOT NULL
-         ) ranked
-        WHERE ranked.${q("rn")} <= 10
-        ORDER BY ranked.${q("serviceId")} ASC, ranked.${q("hostId")} ASC,
-                 ranked.${q("recordedAt")} ASC, ranked.${q("id")} ASC`,
+      `SELECT s.${q("serviceId")}, s.${q("hostId")}, s.${q("latencyMs")}, s.${q("recordedAt")}, s.${q("id")}
+         FROM ${q("host_probe_service_stats")} s
+        WHERE s.${q("serviceId")} IN ${list.sql}
+          AND s.${q("isTimeout")} = ${success}
+          AND s.${q("latencyMs")} IS NOT NULL
+          AND (
+            SELECT COUNT(*)
+              FROM ${q("host_probe_service_stats")} newer
+             WHERE newer.${q("serviceId")} = s.${q("serviceId")}
+               AND newer.${q("hostId")} = s.${q("hostId")}
+               AND newer.${q("isTimeout")} = ${success}
+               AND newer.${q("latencyMs")} IS NOT NULL
+               AND (
+                 newer.${q("recordedAt")} > s.${q("recordedAt")}
+                 OR (newer.${q("recordedAt")} = s.${q("recordedAt")} AND newer.${q("id")} > s.${q("id")})
+               )
+          ) < 10
+        ORDER BY s.${q("serviceId")} ASC, s.${q("hostId")} ASC,
+                 s.${q("recordedAt")} ASC, s.${q("id")} ASC`,
       list.params,
     );
     for (const row of sampleRows) {
