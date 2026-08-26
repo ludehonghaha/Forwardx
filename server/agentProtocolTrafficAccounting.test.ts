@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AgentProtocolTrafficValidationError,
+  normalizeAgentMieruTrafficStats,
   normalizeAgentProtocolTrafficStats,
   planAgentProtocolTrafficAccounting,
   protocolTrafficProducerId,
@@ -22,10 +23,23 @@ test("protocol stats merge repeated assignment deltas before accounting", () => 
   ]);
 });
 
+test("Mieru stats merge by runtime username without trusting a user id", () => {
+  assert.deepEqual(normalizeAgentMieruTrafficStats([
+    { username: "legacy-user", bytesIn: 10, bytesOut: 20, userId: 999 },
+    { username: "legacy-user", bytesIn: 30, bytesOut: 40 },
+    { username: "idle", bytesIn: 0, bytesOut: 0 },
+  ]), [
+    { username: "legacy-user", bytesIn: 40, bytesOut: 60 },
+  ]);
+});
+
 test("malformed protocol stats reject the whole report instead of silently billing partial data", () => {
   assert.throws(() => normalizeAgentProtocolTrafficStats([
     { assignmentId: 5, bytesOut: 100 },
     { assignmentId: 0, bytesOut: 200 },
+  ]), AgentProtocolTrafficValidationError);
+  assert.throws(() => normalizeAgentMieruTrafficStats([
+    { username: "", bytesOut: 100 },
   ]), AgentProtocolTrafficValidationError);
 });
 
