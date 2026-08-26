@@ -30,7 +30,7 @@ function snellEndpoint(): ManagedProtocolEndpointRow {
     runtimeMode: "managed",
     publicPort: 18080,
     isEnabled: true,
-    configJson: { psk: "snell-test-password", version: 5 },
+    configJson: { password: "snell-test-password", version: 5, udp: true },
   };
 }
 
