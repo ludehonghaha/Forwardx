@@ -78,6 +78,13 @@ export function directManagedProtocolConfigAfterBridge(configValue: unknown, pub
   return config;
 }
 
+/** Managed Mieru exposes native per-user counters, so it must never use the
+ * single-owner port bridge for billing. Other managed protocol families keep
+ * the bridge until they gain an equivalent native accounting path. */
+export function managedProtocolUsesNativeUserAccounting(endpoint: any) {
+  return endpoint?.runtimeMode === "managed" && endpoint?.protocol === "mieru";
+}
+
 export function managedProtocolTrafficOwnerUserId(assignments: any[]) {
   const userIds = Array.from(new Set((assignments || [])
     .filter((item: any) => dbEnabled(item?.access?.isEnabled))
@@ -378,10 +385,16 @@ export async function syncManagedProtocolTrafficBridge(endpointId: number) {
     const endpoint = await db.getProtocolEndpointById(endpointId) as any;
     if (!endpoint || endpoint.runtimeMode !== "managed") return { changed: false, hostId: 0 };
     const hostId = positiveInteger(endpoint.hostId);
-    const assignments = await db.listProtocolEndpointAssignments(endpointId) as any[];
-    const ownerUserId = managedProtocolTrafficOwnerUserId(assignments);
     const config = parseProtocolAccessConfig(endpoint.configJson);
     const marker = protocolTrafficBridgeMarker(config);
+
+    if (managedProtocolUsesNativeUserAccounting(endpoint)) {
+      const changed = marker ? await restoreDirectManagedProtocolEndpoint(endpoint, marker) : false;
+      return { changed, hostId };
+    }
+
+    const assignments = await db.listProtocolEndpointAssignments(endpointId) as any[];
+    const ownerUserId = managedProtocolTrafficOwnerUserId(assignments);
     const owner = ownerUserId > 0 ? await db.getUserById(ownerUserId) as any : null;
 
     if (ownerUserId <= 0) {
