@@ -112,7 +112,7 @@ test("refuses to compile duplicate or invalid managed Mieru runtimes", () => {
   assert.equal(buildManagedMieruRuntimePlan([{ ...valid, configJson: { username: "", password: "secret", transport: "TCP", mtu: 1400 } }]), null);
 });
 
-test("compiles Snell Reality and Hysteria2 into one shared Mihomo runtime", () => {
+test("compiles Snell and Hysteria2 into one shared Mihomo runtime while Reality stays out", () => {
   const plan = buildManagedMihomoRuntimePlan([
     endpoint({
       id: 21,
@@ -151,26 +151,20 @@ test("compiles Snell Reality and Hysteria2 into one shared Mihomo runtime", () =
   assert.ok(plan);
   assert.deepEqual(plan?.sockets, [
     { endpointId: 21, protocol: "snell", listenPort: 32001, transport: "tcp" },
-    { endpointId: 22, protocol: "vless_reality", listenPort: 32002, transport: "tcp" },
     { endpointId: 23, protocol: "hysteria2", listenPort: 32003, transport: "udp" },
   ]);
   assert.equal(plan?.certificates.length, 1);
-  assert.equal((plan?.config.listeners as any[]).length, 3);
+  assert.equal((plan?.config.listeners as any[]).length, 2);
   assert.equal((plan?.config.listeners as any[])[0]?.type, "snell");
-  assert.equal((plan?.config.listeners as any[])[1]?.type, "vless");
-  assert.equal((plan?.config.listeners as any[])[2]?.type, "hysteria2");
+  assert.equal((plan?.config.listeners as any[])[1]?.type, "hysteria2");
+  assert.equal(JSON.stringify(plan).includes("vless"), false);
+  assert.equal(JSON.stringify(plan).includes("32002"), false);
 });
 
-test("rejects duplicate sockets instead of compiling overlapping managed listeners", () => {
+test("rejects duplicate sockets inside the Mihomo-owned protocol family", () => {
   const plan = buildManagedMihomoRuntimePlan([
     endpoint({ id: 31, protocol: "snell", publicPort: 33000, configJson: { password: "a", version: 5 } }),
-    endpoint({ id: 32, protocol: "vless_reality", publicPort: 33000, configJson: {
-      uuid: "550e8400-e29b-41d4-a716-446655440000",
-      serverName: "www.cloudflare.com",
-      realityDest: "www.cloudflare.com:443",
-      realityPrivateKey: "private-key",
-      shortId: "0011",
-    } }),
+    endpoint({ id: 32, protocol: "snell", publicPort: 33000, configJson: { password: "b", version: 5 } }),
   ]);
   assert.equal(plan, null);
 });
