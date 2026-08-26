@@ -4,6 +4,7 @@ import "./protocolXrayPlan.test";
 import "./protocolManagedRuntimePlans.test";
 import "./protocolXrayRuntime.test";
 import "./repositories/protocolUserTrafficRepository.test";
+import "../shared/agentDtos.test";
 import type { ProtocolFeedEntry } from "../shared/protocolAccess";
 import { buildManagedMihomoRuntimePlan, type ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
 import { renderProtocolMihomoSubscription, renderProtocolUriSubscription } from "./protocolSubscription";
