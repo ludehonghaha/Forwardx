@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -48,9 +49,10 @@ func readXrayRuntimeServiceListens(path string) ([]runtimeListenConfig, bool) {
 		if listen == "" || listen == "0.0.0.0" || listen == "::" || listen == "[::]" {
 			listen = ""
 		}
-		addr := ":" + itoa(inbound.Port)
+		port := strconv.Itoa(inbound.Port)
+		addr := ":" + port
 		if listen != "" {
-			addr = listen + ":" + itoa(inbound.Port)
+			addr = listen + ":" + port
 		}
 		listens = append(listens, runtimeListenConfig{Addr: addr, Protocol: "tcp"})
 	}
