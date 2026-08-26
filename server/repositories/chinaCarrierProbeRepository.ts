@@ -182,7 +182,7 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
         targetPort: service.method === "tcping" ? service.targetPort : null,
         intervalSeconds: service.intervalSeconds,
         isEnabled: service.isEnabled,
-        latencyMs: latest?.latencyMs == null ? null : Number(latest.latencyMs),
+        latencyMs: isTimeout || latest?.latencyMs == null ? null : Number(latest.latencyMs),
         jitterMs: deriveHostProbeJitterMs(jitterSamplesByPair.get(key) || []),
         packetLossPercent: latest?.packetLossPermille == null ? null : Number(latest.packetLossPermille) / 10,
         successCount: latest?.successCount == null ? null : Number(latest.successCount),
