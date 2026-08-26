@@ -21,8 +21,8 @@ const (
 )
 
 type pendingXrayTrafficReport struct {
-	Payload   map[string]any       `json:"payload"`
-	Identity  string               `json:"identity"`
+	Payload   map[string]any        `json:"payload"`
+	Identity  string                `json:"identity"`
 	Baselines []xrayTrafficBaseline `json:"baselines"`
 }
 
@@ -180,7 +180,7 @@ func savePendingXrayTrafficReport(report pendingXrayTrafficReport) error {
 	if _, err := normalizeXrayTrafficBaselines(report.Baselines); err != nil {
 		return err
 	}
-	if StringValue(report.Payload["reportId"]) == "" {
+	if xrayTrafficStringValue(report.Payload["reportId"]) == "" {
 		return fmt.Errorf("Xray traffic report id is empty")
 	}
 	stats, ok := report.Payload["protocolStats"].([]map[string]any)
@@ -212,7 +212,7 @@ func loadPendingXrayTrafficReport() (*pendingXrayTrafficReport, error) {
 	if _, err := normalizeXrayTrafficBaselines(report.Baselines); err != nil {
 		return nil, err
 	}
-	if StringValue(report.Payload["reportId"]) == "" {
+	if xrayTrafficStringValue(report.Payload["reportId"]) == "" {
 		return nil, fmt.Errorf("pending Xray traffic report id is empty")
 	}
 	if stats, ok := report.Payload["protocolStats"].([]any); !ok || len(stats) == 0 {
@@ -246,6 +246,13 @@ func removePendingXrayTrafficReport() error {
 	return syncTrafficStateDirectoryAfterMutation(trafficStateDir)
 }
 
-func StringValue(value any) string {
-	return strings.TrimSpace(fmt.Sprint(value))
+func xrayTrafficStringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
 }
