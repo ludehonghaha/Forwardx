@@ -137,11 +137,13 @@ export default function ChinaCarrierProbeOverview({
   rows,
   isLoading = false,
   onCreateCarrier,
+  onCreateDefaults,
   onOpenHistory,
 }: {
   rows: ChinaCarrierProbeOverviewHost[];
   isLoading?: boolean;
-  onCreateCarrier?: (carrier: HostProbeCarrier) => void;
+  onCreateCarrier?: (host: ChinaCarrierProbeOverviewHost, carrier: HostProbeCarrier) => void;
+  onCreateDefaults?: (host: ChinaCarrierProbeOverviewHost) => void;
   onOpenHistory?: (host: ChinaCarrierProbeOverviewHost, item: ChinaCarrierProbeOverviewItem) => void;
 }) {
   if (isLoading && rows.length === 0) {
@@ -170,7 +172,21 @@ export default function ChinaCarrierProbeOverview({
                 <span className={`h-2 w-2 shrink-0 rounded-full ${host.isOnline ? "bg-emerald-500" : "bg-destructive"}`} />
                 <span className="truncate text-sm font-semibold" title={host.hostName}>{host.hostName}</span>
               </div>
-              <span className="text-[11px] text-muted-foreground">Agent → 中国运营商目标</span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="hidden text-[11px] text-muted-foreground sm:inline">Agent → 中国运营商目标</span>
+                {onCreateDefaults && CARRIER_ORDER.some((carrier) => (host.carriers?.[carrier] || []).length === 0) ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2.5 text-[11px]"
+                    onClick={() => onCreateDefaults(host)}
+                  >
+                    {CARRIER_ORDER.every((carrier) => (host.carriers?.[carrier] || []).length === 0)
+                      ? "一键配置推荐三网"
+                      : "补齐推荐三网"}
+                  </Button>
+                ) : null}
+              </div>
             </div>
             <div className="grid gap-2.5 xl:grid-cols-3">
               {CARRIER_ORDER.map((carrier) => {
@@ -183,7 +199,7 @@ export default function ChinaCarrierProbeOverview({
                         <span className="truncate text-xs font-semibold">{HOST_PROBE_CARRIER_LABELS[carrier]}</span>
                       </div>
                       {onCreateCarrier ? (
-                        <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => onCreateCarrier(carrier)}>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => onCreateCarrier(host, carrier)}>
                           {items.length > 0 ? "添加目标" : "配置目标"}
                         </Button>
                       ) : null}

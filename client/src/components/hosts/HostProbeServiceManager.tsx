@@ -250,6 +250,8 @@ type HostProbeServiceManagerProps = {
   probeKindFilter?: HostProbeKind | "all";
   defaultProbeKind?: HostProbeKind;
   defaultCarrier?: HostProbeCarrier | null;
+  defaultHostId?: number | null;
+  defaultFormValues?: Partial<ServiceForm>;
 };
 
 export default function HostProbeServiceManager({
@@ -263,6 +265,8 @@ export default function HostProbeServiceManager({
   probeKindFilter = "all",
   defaultProbeKind = "custom",
   defaultCarrier = null,
+  defaultHostId = null,
+  defaultFormValues,
 }: HostProbeServiceManagerProps) {
   const utils = trpc.useUtils();
   const confirmDialog = useConfirmDialog();
@@ -295,12 +299,22 @@ export default function HostProbeServiceManager({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ServiceForm>(defaultForm);
-  const newServiceForm = useMemo<ServiceForm>(() => ({
-    ...defaultForm,
-    probeKind: defaultProbeKind,
-    carrier: defaultProbeKind === "china_carrier" ? defaultCarrier : null,
-    intervalSeconds: defaultProbeKind === "china_carrier" ? 60 : defaultForm.intervalSeconds,
-  }), [defaultCarrier, defaultProbeKind]);
+  const newServiceForm = useMemo<ServiceForm>(() => {
+    const hostId = Number(defaultHostId || 0);
+    const isCarrier = defaultProbeKind === "china_carrier";
+    return {
+      ...defaultForm,
+      ...defaultFormValues,
+      probeKind: defaultProbeKind,
+      carrier: isCarrier ? defaultCarrier : null,
+      hostScope: hostId > 0 ? "specific" : (defaultFormValues?.hostScope ?? defaultForm.hostScope),
+      hostIds: hostId > 0 ? [hostId] : (defaultFormValues?.hostIds ?? defaultForm.hostIds),
+      excludeHostIds: hostId > 0 ? [] : (defaultFormValues?.excludeHostIds ?? defaultForm.excludeHostIds),
+      intervalSeconds: isCarrier
+        ? Math.max(5, Number(defaultFormValues?.intervalSeconds) || 60)
+        : Math.max(5, Number(defaultFormValues?.intervalSeconds) || defaultForm.intervalSeconds),
+    };
+  }, [defaultCarrier, defaultFormValues, defaultHostId, defaultProbeKind]);
   const [internalViewMode, setInternalViewMode] = useState<HostProbeServiceViewMode>(() => getStoredServiceViewMode());
   const viewMode = controlledViewMode ?? internalViewMode;
   const selectedScopeHostIds = form.hostScope === "exclude" ? form.excludeHostIds : form.hostIds;
