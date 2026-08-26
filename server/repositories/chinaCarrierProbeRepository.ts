@@ -137,8 +137,8 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
         WHERE s.${q("serviceId")} IN ${list.sql}
           AND s.${q("isTimeout")} = ${success}
           AND s.${q("latencyMs")} IS NOT NULL
-          AND (
-            SELECT COUNT(*)
+          AND NOT EXISTS (
+            SELECT 1
               FROM ${q("host_probe_service_stats")} newer
              WHERE newer.${q("serviceId")} = s.${q("serviceId")}
                AND newer.${q("hostId")} = s.${q("hostId")}
@@ -148,7 +148,8 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
                  newer.${q("recordedAt")} > s.${q("recordedAt")}
                  OR (newer.${q("recordedAt")} = s.${q("recordedAt")} AND newer.${q("id")} > s.${q("id")})
                )
-          ) < 10
+             LIMIT 1 OFFSET 9
+          )
         ORDER BY s.${q("serviceId")} ASC, s.${q("hostId")} ASC,
                  s.${q("recordedAt")} ASC, s.${q("id")} ASC`,
       list.params,
