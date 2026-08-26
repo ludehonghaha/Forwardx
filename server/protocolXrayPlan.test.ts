@@ -60,7 +60,7 @@ test("Xray Reality preserves cross-client compatibility and current REALITY fiel
   assert.ok(plan);
   const inbound = realityInbound(plan);
   assert.ok(inbound);
-  assert.equal(inbound.streamSettings.method, "raw");
+  assert.equal(inbound.streamSettings.network, "raw");
   assert.equal(inbound.streamSettings.security, "reality");
   assert.deepEqual(inbound.streamSettings.realitySettings, {
     show: false,
