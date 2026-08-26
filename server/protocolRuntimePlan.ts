@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   isManagedShadowsocksCipher,
   managedProtocolListenPort,
@@ -7,7 +6,6 @@ import {
   protocolConfigSecret,
   protocolConfigText,
 } from "../shared/protocolAccess";
-import { isVlessUuid } from "../shared/vlessCredentials";
 
 export type ManagedVlessRuntimeUser = {
   assignmentId: number;
@@ -49,7 +47,7 @@ export type ManagedMieruRuntimePlan = {
 
 export type ManagedMihomoRuntimeSocket = {
   endpointId: number;
-  protocol: "snell" | "vless_reality" | "hysteria2";
+  protocol: "snell" | "hysteria2";
   listenPort: number;
   transport: "tcp" | "udp";
 };
@@ -160,67 +158,6 @@ function managedSnellListener(row: ManagedProtocolEndpointRow) {
   return { listener, socket: { endpointId: Number(row.id), protocol: "snell" as const, listenPort, transport: "tcp" as const } };
 }
 
-function parkingRealityUuid(endpointId: number, privateKey: string) {
-  const bytes = createHash("sha256")
-    .update("forwardx-vless-parking-v1\0", "utf8")
-    .update(String(endpointId), "utf8")
-    .update("\0", "utf8")
-    .update(privateKey, "utf8")
-    .digest()
-    .subarray(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-function managedRealityListener(row: ManagedProtocolEndpointRow) {
-  const config = parseProtocolAccessConfig(row.configJson);
-  const listenPort = managedProtocolListenPort(config, Number(row.publicPort));
-  const serverName = protocolConfigText(config, "serverName");
-  const dest = protocolConfigText(config, "realityDest");
-  const privateKey = protocolConfigSecret(config, "realityPrivateKey");
-  const shortId = protocolConfigText(config, "shortId");
-  if (!validPort(listenPort) || !serverName || !dest || !privateKey || !shortId) return null;
-
-  const sourceUsers = Array.isArray(row.vlessUsers)
-    ? [...row.vlessUsers].sort((left, right) => Number(left.assignmentId) - Number(right.assignmentId))
-    : [];
-  const seenUuids = new Set<string>();
-  const users: Array<{ username: string; uuid: string; flow: "xtls-rprx-vision" }> = [];
-  for (const item of sourceUsers) {
-    const assignmentId = Number(item?.assignmentId || 0);
-    const userId = Number(item?.userId || 0);
-    const uuid = String(item?.uuid || "").trim();
-    if (!Number.isInteger(assignmentId) || assignmentId <= 0 || !Number.isInteger(userId) || userId <= 0) return null;
-    if (!isVlessUuid(uuid) || seenUuids.has(uuid)) return null;
-    seenUuids.add(uuid);
-    users.push({ username: `forwardx-${userId}`, uuid, flow: "xtls-rprx-vision" });
-  }
-  if (users.length === 0) {
-    users.push({
-      username: "forwardx-parking",
-      uuid: parkingRealityUuid(Number(row.id), privateKey),
-      flow: "xtls-rprx-vision",
-    });
-  }
-
-  const listener = {
-    name: `fwx-reality-${Number(row.id)}`,
-    type: "vless",
-    port: listenPort,
-    listen: "0.0.0.0",
-    users,
-    "reality-config": {
-      dest,
-      "private-key": privateKey,
-      "short-id": [shortId],
-      "server-names": [serverName],
-    },
-  };
-  return { listener, socket: { endpointId: Number(row.id), protocol: "vless_reality" as const, listenPort, transport: "tcp" as const } };
-}
-
 function managedHysteria2Listener(row: ManagedProtocolEndpointRow) {
   const config = parseProtocolAccessConfig(row.configJson);
   const listenPort = managedProtocolListenPort(config, Number(row.publicPort));
@@ -256,13 +193,13 @@ function managedHysteria2Listener(row: ManagedProtocolEndpointRow) {
 }
 
 /**
- * Snell, VLESS-Reality and Hysteria2 deliberately share one Mihomo service per
- * Agent host. They are entry protocols only; ForwardX Realm/GOST/FXP remains
- * responsible for server-to-server forwarding.
+ * Snell and Hysteria2 share one Mihomo service per Agent host.
+ * Managed VLESS+Reality is intentionally excluded: P0-2B gives Reality a
+ * dedicated Xray runtime so one listener can expose native per-user counters.
  */
 export function buildManagedMihomoRuntimePlan(rows: ManagedProtocolEndpointRow[]): ManagedMihomoRuntimePlan | null {
   const candidates = [...rows]
-    .filter((row) => row?.isEnabled && row.runtimeMode === "managed" && ["snell", "vless_reality", "hysteria2"].includes(row.protocol))
+    .filter((row) => row?.isEnabled && row.runtimeMode === "managed" && ["snell", "hysteria2"].includes(row.protocol))
     .sort((left, right) => Number(left.id) - Number(right.id));
   if (candidates.length === 0) return null;
 
@@ -272,9 +209,7 @@ export function buildManagedMihomoRuntimePlan(rows: ManagedProtocolEndpointRow[]
   for (const row of candidates) {
     const compiled = row.protocol === "snell"
       ? managedSnellListener(row)
-      : row.protocol === "vless_reality"
-        ? managedRealityListener(row)
-        : managedHysteria2Listener(row);
+      : managedHysteria2Listener(row);
     if (!compiled) return null;
     listeners.push(compiled.listener);
     sockets.push(compiled.socket);
