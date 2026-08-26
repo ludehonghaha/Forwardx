@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-test("carrier overview chooses latest recordedAt even when an older stat is inserted later", () => {
+test("carrier overview orders by recorded time and never exposes timeout zero latency", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forwardx-carrier-latest-"));
   const databasePath = path.join(directory, "carrier-latest.db");
   const script = String.raw`
@@ -38,21 +38,35 @@ test("carrier overview chooses latest recordedAt even when an older stat is inse
       });
 
       const now = Math.floor(Date.now() / 1000);
-      const insert = (latencyMs, recordedAt) => runtime.executeRaw(
+      const insertSuccess = (latencyMs, recordedAt) => runtime.executeRaw(
         'INSERT INTO "host_probe_service_stats" ("serviceId", "hostId", "latencyMs", "isTimeout", "successCount", "lossCount", "packetLossPermille", "recordedAt") VALUES (?, ?, ?, 0, 5, 0, 0, ?)',
         [serviceId, 1, latencyMs, recordedAt],
       );
 
-      await insert(105, now - 10);
+      await insertSuccess(105, now - 10);
       // Simulate a delayed/out-of-order write: larger row id, older observation time.
-      await insert(999, now - 120);
+      await insertSuccess(999, now - 120);
 
-      const overview = await carrier.getChinaCarrierProbeOverview(now * 1000);
-      const item = overview.find((host) => host.hostId === 1)?.carriers.cm.find((probe) => probe.serviceId === serviceId);
+      let overview = await carrier.getChinaCarrierProbeOverview(now * 1000);
+      let item = overview.find((host) => host.hostId === 1)?.carriers.cm.find((probe) => probe.serviceId === serviceId);
       assert.ok(item);
       assert.equal(item.latencyMs, 105);
       assert.equal(item.state, "ok");
       assert.equal(Math.floor(item.recordedAt.getTime() / 1000), now - 10);
+
+      // Agent wire uses 0 as the timeout latency sentinel. Even if such a row reaches
+      // storage, the carrier overview contract must expose no numeric timeout latency.
+      await runtime.executeRaw(
+        'INSERT INTO "host_probe_service_stats" ("serviceId", "hostId", "latencyMs", "isTimeout", "successCount", "lossCount", "packetLossPermille", "recordedAt") VALUES (?, ?, 0, 1, 0, 5, 1000, ?)',
+        [serviceId, 1, now],
+      );
+      overview = await carrier.getChinaCarrierProbeOverview(now * 1000);
+      item = overview.find((host) => host.hostId === 1)?.carriers.cm.find((probe) => probe.serviceId === serviceId);
+      assert.ok(item);
+      assert.equal(item.state, "timeout");
+      assert.equal(item.isTimeout, true);
+      assert.equal(item.latencyMs, null);
+      assert.equal(item.packetLossPercent, 100);
     } finally {
       await runtime.closeDatabase();
     }
