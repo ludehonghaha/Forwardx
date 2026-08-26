@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
-import { buildManagedXrayRuntimePlan } from "./protocolXrayPlan";
+import { buildManagedXrayRuntimePlan, XRAY_STATS_API_LISTEN, XRAY_STATS_API_TAG } from "./protocolXrayPlan";
 
 const LEGACY = "550e8400-e29b-41d4-a716-446655440000";
 const USER_A = "11111111-1111-4111-8111-111111111111";
@@ -51,6 +51,20 @@ test("Xray Reality compiles multiple ForwardX assignments into one listener", ()
     { id: USER_B, level: 0, email: "forwardx-assignment-6-user-3", flow: "xtls-rprx-vision" },
   ]);
   assert.equal(JSON.stringify(plan).includes(LEGACY), false);
+});
+
+test("Xray Reality exposes StatsService only on an ephemeral loopback port", () => {
+  const plan = buildManagedXrayRuntimePlan([endpoint([
+    { assignmentId: 5, userId: 2, uuid: USER_A },
+  ])]);
+  assert.ok(plan);
+  assert.deepEqual(plan.config.api, {
+    tag: XRAY_STATS_API_TAG,
+    listen: XRAY_STATS_API_LISTEN,
+    services: ["StatsService"],
+  });
+  assert.equal(XRAY_STATS_API_LISTEN, "127.0.0.1:0");
+  assert.equal(String((plan.config.api as any).listen).startsWith("0.0.0.0"), false);
 });
 
 test("Xray Reality preserves cross-client compatibility and current REALITY field names", () => {
