@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "./protocolXrayPlan.test";
+import "./protocolManagedRuntimePlans.test";
+import "./protocolXrayRuntime.test";
 import type { ProtocolFeedEntry } from "../shared/protocolAccess";
 import { buildManagedMihomoRuntimePlan, type ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
 import { renderProtocolMihomoSubscription, renderProtocolUriSubscription } from "./protocolSubscription";
