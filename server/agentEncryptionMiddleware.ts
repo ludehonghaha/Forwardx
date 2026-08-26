@@ -11,6 +11,10 @@ import {
   hasVerifiedAgentAuthProof,
   resolveAgentTokenFromAuthorization,
 } from "./agentAuth";
+import {
+  accountAgentProtocolTrafficReport,
+  AgentProtocolTrafficValidationError,
+} from "./agentProtocolTrafficAccounting";
 import { panelCryptoNowMs } from "./panelClock";
 
 export const AGENT_TUNNEL_PATHS = new Set([
@@ -60,6 +64,7 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
   const isSyncRequest = req.path === "/api/sync";
   let token: string | null = null;
   let payload: any = null;
+  let tunneledPath = "";
   const protocolNowMs = panelCryptoNowMs();
   try {
     token = await resolveAgentTokenFromAuthorization(req, rawBodyText, protocolNowMs);
@@ -109,7 +114,7 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
     res.setHeader(AGENT_AUTH_RESULT_HEADER, AGENT_AUTH_RESULT_ACCEPTED);
     req.body = payload;
     (req as any).agentToken = token;
-    const tunneledPath = isSyncRequest ? normalizeTunnelPath(req.body?.path) : "";
+    tunneledPath = isSyncRequest ? normalizeTunnelPath(req.body?.path) : "";
     if (isSyncRequest && !tunneledPath) {
       res.status(400).json({ error: "Invalid encrypted request" });
       return;
@@ -133,6 +138,20 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     return originalJson(env);
   };
+
+  const effectivePath = tunneledPath || req.path;
+  if (effectivePath === "/api/agent/traffic") {
+    try {
+      await accountAgentProtocolTrafficReport({ token: tokenForResp, body: req.body });
+    } catch (err: any) {
+      const statusCode = err instanceof AgentProtocolTrafficValidationError ? err.statusCode : 500;
+      res.status(statusCode).json({
+        error: "Protocol traffic accounting failed",
+        message: String(err?.message || "Unknown protocol traffic accounting error"),
+      });
+      return;
+    }
+  }
 
   next();
 }
