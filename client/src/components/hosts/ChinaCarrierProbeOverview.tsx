@@ -76,8 +76,16 @@ function ProbeItem({
   item: ChinaCarrierProbeOverviewItem;
   onOpenHistory?: (item: ChinaCarrierProbeOverviewItem) => void;
 }) {
-  const loss = item.packetLossPercent == null ? "--" : `${Number(item.packetLossPercent).toFixed(1)}%`;
-  const jitter = item.jitterMs == null ? "--" : `${Math.round(Number(item.jitterMs))} ms`;
+  const hasCurrentSample = item.state === "ok" || item.state === "timeout";
+  const loss = hasCurrentSample && item.packetLossPercent != null
+    ? `${Number(item.packetLossPercent).toFixed(1)}%`
+    : "--";
+  const jitter = item.state === "ok" && item.jitterMs != null
+    ? `${Math.round(Number(item.jitterMs))} ms`
+    : "--";
+  const samples = hasCurrentSample && item.successCount != null && item.lossCount != null
+    ? `成功 ${item.successCount} / 丢失 ${item.lossCount}`
+    : "样本 --";
   return (
     <button
       type="button"
@@ -119,7 +127,7 @@ function ProbeItem({
       </div>
       <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
         <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{recordedAtText(item.recordedAt)}</span>
-        <span className="tabular-nums">{item.successCount == null || item.lossCount == null ? "样本 --" : `成功 ${item.successCount} / 丢失 ${item.lossCount}`}</span>
+        <span className="tabular-nums">{samples}</span>
       </div>
     </button>
   );
