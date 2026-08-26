@@ -65,3 +65,28 @@ func TestDiffXrayAssignmentTrafficReportsNewEpochAfterReset(t *testing.T) {
 		t.Fatalf("reset baselines = %#v, want %#v", next, wantNext)
 	}
 }
+
+func TestDiffXrayAssignmentTrafficRetainsIdleAcknowledgedBaseline(t *testing.T) {
+	current := []xrayAssignmentTrafficStat{
+		{AssignmentID: 5, BytesIn: 130, BytesOut: 260},
+	}
+	acknowledged := map[int]xrayTrafficBaseline{
+		5: {AssignmentID: 5, BytesIn: 100, BytesOut: 200},
+		6: {AssignmentID: 6, BytesIn: 75, BytesOut: 80},
+	}
+
+	deltas, next := diffXrayAssignmentTraffic(current, acknowledged)
+	wantDeltas := []xrayAssignmentTrafficStat{
+		{AssignmentID: 5, BytesIn: 30, BytesOut: 60},
+	}
+	wantNext := []xrayTrafficBaseline{
+		{AssignmentID: 5, BytesIn: 130, BytesOut: 260},
+		{AssignmentID: 6, BytesIn: 75, BytesOut: 80},
+	}
+	if !reflect.DeepEqual(deltas, wantDeltas) {
+		t.Fatalf("idle deltas = %#v, want %#v", deltas, wantDeltas)
+	}
+	if !reflect.DeepEqual(next, wantNext) {
+		t.Fatalf("idle baselines = %#v, want %#v", next, wantNext)
+	}
+}
