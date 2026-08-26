@@ -119,10 +119,13 @@ export async function ensureProtocolUserTrafficTable() {
   `);
 }
 
-export async function insertProtocolUserTrafficSamples(samples: ProtocolUserTrafficSample[]) {
+export async function insertProtocolUserTrafficSamples(
+  samples: ProtocolUserTrafficSample[],
+  options: { ensureTable?: boolean } = {},
+) {
   const rows = aggregateProtocolUserTrafficSamples(samples);
   if (rows.length === 0) return { buckets: 0, assignments: 0, users: 0 };
-  await ensureProtocolUserTrafficTable();
+  if (options.ensureTable !== false) await ensureProtocolUserTrafficTable();
   const kind = getDatabaseKind();
   const nowSec = epochSeconds(nowDate());
 
