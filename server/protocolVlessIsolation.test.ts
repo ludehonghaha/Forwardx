@@ -3,6 +3,7 @@ import test from "node:test";
 import "./protocolXrayPlan.test";
 import "./protocolManagedRuntimePlans.test";
 import "./protocolXrayRuntime.test";
+import "./protocolXrayRuntimeAction.test";
 import "./repositories/protocolUserTrafficRepository.test";
 import "../shared/agentDtos.test";
 import type { ProtocolFeedEntry } from "../shared/protocolAccess";
