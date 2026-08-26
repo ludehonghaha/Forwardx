@@ -26,9 +26,9 @@ LISTEN 0 4096 127.0.0.1:41002 0.0.0.0:* users:(("forwardx-xray",pid=1,fd=9))`
 	}
 }
 
-func TestXrayStatsQueryArgsUsesSingleResetQuery(t *testing.T) {
+func TestXrayStatsQueryArgsKeepsCountersCumulative(t *testing.T) {
 	got := xrayStatsQueryArgs("127.0.0.1:41731")
-	want := []string{"api", "statsquery", "--server=127.0.0.1:41731", "-pattern", xrayStatsPattern, "-reset"}
+	want := []string{"api", "statsquery", "--server=127.0.0.1:41731", "-pattern", xrayStatsPattern}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}
