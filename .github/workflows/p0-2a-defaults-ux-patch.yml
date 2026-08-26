@@ -1,0 +1,115 @@
+name: P0-2A Defaults UX Patch
+
+on:
+  push:
+    branches:
+      - chatgpt/p0-2a-carrier-probes
+    paths:
+      - .github/workflows/p0-2a-defaults-ux-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/p0-2a-carrier-probes
+          fetch-depth: 0
+
+      - name: Apply UX patch
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"expected snippet not found in {path}:\n{old[:240]}")
+              p.write_text(text.replace(old, new, 1))
+
+          defaults = Path("shared/chinaCarrierProbeDefaults.ts")
+          defaults.write_text('''import type { HostProbeCarrier } from "./hostProbeMetadata";\n\nexport type ChinaCarrierRecommendedDefault = {\n  serviceName: string;\n  region: string;\n  targetIp: string;\n  method: "ping";\n  intervalSeconds: number;\n};\n\n// Built-in recommendations are convenience defaults, not protocol requirements.\n// Admins can edit or replace every value after creation.\nexport const CHINA_CARRIER_RECOMMENDED_DEFAULTS: Record<HostProbeCarrier, ChinaCarrierRecommendedDefault> = {\n  cm: {\n    serviceName: "上海移动 CM",\n    region: "上海",\n    targetIp: "211.136.150.66",\n    method: "ping",\n    intervalSeconds: 60,\n  },\n  cu: {\n    serviceName: "上海联通 CU",\n    region: "上海",\n    targetIp: "210.22.70.4",\n    method: "ping",\n    intervalSeconds: 60,\n  },\n  ct: {\n    serviceName: "上海电信 CT",\n    region: "上海",\n    targetIp: "202.96.209.5",\n    method: "ping",\n    intervalSeconds: 60,\n  },\n};\n''')
+
+          manager = "client/src/components/hosts/HostProbeServiceManager.tsx"
+          replace_once(manager,
+          '''  defaultProbeKind?: HostProbeKind;\n  defaultCarrier?: HostProbeCarrier | null;\n};''',
+          '''  defaultProbeKind?: HostProbeKind;\n  defaultCarrier?: HostProbeCarrier | null;\n  defaultHostId?: number | null;\n  defaultFormValues?: Partial<ServiceForm>;\n};''')
+
+          replace_once(manager,
+          '''  defaultProbeKind = "custom",\n  defaultCarrier = null,\n}: HostProbeServiceManagerProps) {''',
+          '''  defaultProbeKind = "custom",\n  defaultCarrier = null,\n  defaultHostId = null,\n  defaultFormValues,\n}: HostProbeServiceManagerProps) {''')
+
+          replace_once(manager,
+          '''  const newServiceForm = useMemo<ServiceForm>(() => ({\n    ...defaultForm,\n    probeKind: defaultProbeKind,\n    carrier: defaultProbeKind === "china_carrier" ? defaultCarrier : null,\n    intervalSeconds: defaultProbeKind === "china_carrier" ? 60 : defaultForm.intervalSeconds,\n  }), [defaultCarrier, defaultProbeKind]);''',
+          '''  const newServiceForm = useMemo<ServiceForm>(() => {\n    const hostId = Number(defaultHostId || 0);\n    const isCarrier = defaultProbeKind === "china_carrier";\n    return {\n      ...defaultForm,\n      ...defaultFormValues,\n      probeKind: defaultProbeKind,\n      carrier: isCarrier ? defaultCarrier : null,\n      hostScope: hostId > 0 ? "specific" : (defaultFormValues?.hostScope ?? defaultForm.hostScope),\n      hostIds: hostId > 0 ? [hostId] : (defaultFormValues?.hostIds ?? defaultForm.hostIds),\n      excludeHostIds: hostId > 0 ? [] : (defaultFormValues?.excludeHostIds ?? defaultForm.excludeHostIds),\n      intervalSeconds: isCarrier\n        ? Math.max(5, Number(defaultFormValues?.intervalSeconds) || 60)\n        : Math.max(5, Number(defaultFormValues?.intervalSeconds) || defaultForm.intervalSeconds),\n    };\n  }, [defaultCarrier, defaultFormValues, defaultHostId, defaultProbeKind]);''')
+
+          overview = "client/src/components/hosts/ChinaCarrierProbeOverview.tsx"
+          replace_once(overview,
+          '''  onCreateCarrier,\n  onOpenHistory,\n}: {\n  rows: ChinaCarrierProbeOverviewHost[];\n  isLoading?: boolean;\n  onCreateCarrier?: (carrier: HostProbeCarrier) => void;\n  onOpenHistory?: (host: ChinaCarrierProbeOverviewHost, item: ChinaCarrierProbeOverviewItem) => void;''',
+          '''  onCreateCarrier,\n  onCreateDefaults,\n  onOpenHistory,\n}: {\n  rows: ChinaCarrierProbeOverviewHost[];\n  isLoading?: boolean;\n  onCreateCarrier?: (host: ChinaCarrierProbeOverviewHost, carrier: HostProbeCarrier) => void;\n  onCreateDefaults?: (host: ChinaCarrierProbeOverviewHost) => void;\n  onOpenHistory?: (host: ChinaCarrierProbeOverviewHost, item: ChinaCarrierProbeOverviewItem) => void;''')
+
+          replace_once(overview,
+          '''              <span className="text-[11px] text-muted-foreground">Agent → 中国运营商目标</span>''',
+          '''              <div className="flex shrink-0 items-center gap-2">\n                <span className="hidden text-[11px] text-muted-foreground sm:inline">Agent → 中国运营商目标</span>\n                {onCreateDefaults && CARRIER_ORDER.some((carrier) => (host.carriers?.[carrier] || []).length === 0) ? (\n                  <Button\n                    variant="outline"\n                    size="sm"\n                    className="h-7 px-2.5 text-[11px]"\n                    onClick={() => onCreateDefaults(host)}\n                  >\n                    {CARRIER_ORDER.every((carrier) => (host.carriers?.[carrier] || []).length === 0)\n                      ? "一键配置推荐三网"\n                      : "补齐推荐三网"}\n                  </Button>\n                ) : null}\n              </div>''')
+
+          replace_once(overview,
+          '''                        <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => onCreateCarrier(carrier)}>''',
+          '''                        <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => onCreateCarrier(host, carrier)}>''')
+
+          panel = "client/src/components/hosts/AdvancedProbePanel.tsx"
+          replace_once(panel,
+          '''import { useMemo, useState } from "react";\nimport { trpc } from "@/lib/trpc";''',
+          '''import { useMemo, useState } from "react";\nimport { toast } from "sonner";\nimport { trpc } from "@/lib/trpc";''')
+
+          replace_once(panel,
+          '''import type { HostProbeCarrier } from "@shared/hostProbeMetadata";''',
+          '''import type { HostProbeCarrier } from "@shared/hostProbeMetadata";\nimport { CHINA_CARRIER_RECOMMENDED_DEFAULTS } from "@shared/chinaCarrierProbeDefaults";''')
+
+          replace_once(panel,
+          '''  const [carrierCreateSignal, setCarrierCreateSignal] = useState(0);\n  const [defaultCarrier, setDefaultCarrier] = useState<HostProbeCarrier | null>(null);''',
+          '''  const [carrierCreateSignal, setCarrierCreateSignal] = useState(0);\n  const [defaultCarrier, setDefaultCarrier] = useState<HostProbeCarrier | null>(null);\n  const [defaultHostId, setDefaultHostId] = useState<number | null>(null);''')
+
+          replace_once(panel,
+          '''  const { data: carrierRows = [], isLoading: carrierLoading } = trpc.hosts.chinaCarrierProbeOverview.useQuery(undefined, {\n    refetchInterval: pollingInterval("slow"),\n  });''',
+          '''  const { data: carrierRows = [], isLoading: carrierLoading } = trpc.hosts.chinaCarrierProbeOverview.useQuery(undefined, {\n    refetchInterval: pollingInterval("slow"),\n  });\n  const createRecommendedMutation = trpc.hosts.createProbeService.useMutation();\n  const defaultCarrierFormValues = useMemo(() => {\n    if (!defaultCarrier) return undefined;\n    const preset = CHINA_CARRIER_RECOMMENDED_DEFAULTS[defaultCarrier];\n    return {\n      name: preset.serviceName,\n      method: preset.method,\n      targetIp: preset.targetIp,\n      region: preset.region,\n      intervalSeconds: preset.intervalSeconds,\n    };\n  }, [defaultCarrier]);''')
+
+          replace_once(panel,
+          '''  const createCarrierTarget = (carrier: HostProbeCarrier) => {\n    setDefaultCarrier(carrier);\n    setCarrierCreateSignal((value) => value + 1);\n  };''',
+          '''  const createCarrierTarget = (host: ChinaCarrierProbeOverviewHost, carrier: HostProbeCarrier) => {\n    setDefaultHostId(Number(host.hostId));\n    setDefaultCarrier(carrier);\n    setCarrierCreateSignal((value) => value + 1);\n  };\n\n  const createRecommendedTargets = async (host: ChinaCarrierProbeOverviewHost) => {\n    const carriers = (["cm", "cu", "ct"] as HostProbeCarrier[]).filter(\n      (carrier) => (host.carriers?.[carrier] || []).length === 0,\n    );\n    if (carriers.length === 0) {\n      toast.info(`${host.hostName} 已配置三网目标`);\n      return;\n    }\n    try {\n      for (const carrier of carriers) {\n        const preset = CHINA_CARRIER_RECOMMENDED_DEFAULTS[carrier];\n        await createRecommendedMutation.mutateAsync({\n          name: preset.serviceName,\n          method: preset.method,\n          targetIp: preset.targetIp,\n          targetPort: null,\n          probeKind: "china_carrier",\n          carrier,\n          region: preset.region,\n          hostScope: "specific",\n          hostIds: [Number(host.hostId)],\n          excludeHostIds: [],\n          intervalSeconds: preset.intervalSeconds,\n          isEnabled: true,\n        });\n      }\n      await Promise.all([\n        trpcUtils.hosts.probeServices.invalidate(),\n        trpcUtils.hosts.chinaCarrierProbeOverview.invalidate(),\n      ]);\n      toast.success(`已为 ${host.hostName} ${carriers.length === 3 ? "配置" : "补齐"}推荐三网目标`);\n    } catch (error: any) {\n      await Promise.all([\n        trpcUtils.hosts.probeServices.invalidate(),\n        trpcUtils.hosts.chinaCarrierProbeOverview.invalidate(),\n      ]);\n      toast.error(error?.message || "推荐三网目标创建失败");\n    }\n  };''')
+
+          replace_once(panel,
+          '''  const [section, setSection] = useState<AdvancedProbeSection>("carrier");''',
+          '''  const trpcUtils = trpc.useUtils();\n  const [section, setSection] = useState<AdvancedProbeSection>("carrier");''')
+
+          replace_once(panel,
+          '''            onOpenHistory={openHistory}\n            onCreateCarrier={createCarrierTarget}\n          />''',
+          '''            onOpenHistory={openHistory}\n            onCreateCarrier={createCarrierTarget}\n            onCreateDefaults={createRecommendedTargets}\n          />''')
+
+          replace_once(panel,
+          '''              defaultProbeKind="china_carrier"\n              defaultCarrier={createSignal > 0 ? null : defaultCarrier}\n            />''',
+          '''              defaultProbeKind="china_carrier"\n              defaultCarrier={createSignal > 0 ? null : defaultCarrier}\n              defaultHostId={createSignal > 0 ? null : defaultHostId}\n              defaultFormValues={createSignal > 0 ? undefined : defaultCarrierFormValues}\n            />''')
+
+          replace_once(panel,
+          '''              <p className="mt-1 text-xs text-muted-foreground">目标由管理员自行配置，不内置或硬编码运营商 IP。</p>''',
+          '''              <p className="mt-1 text-xs text-muted-foreground">提供上海三网推荐默认值，可一键生成；服务名、地区、目标 IP、周期和主机范围创建后仍可编辑覆盖。</p>''')
+          PY
+
+          git diff --check
+          git status --short
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "chatgpt-actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add shared/chinaCarrierProbeDefaults.ts \
+            client/src/components/hosts/HostProbeServiceManager.tsx \
+            client/src/components/hosts/ChinaCarrierProbeOverview.tsx \
+            client/src/components/hosts/AdvancedProbePanel.tsx
+          git commit -m "feat(probes): add recommended China carrier defaults"
+          git push origin HEAD:chatgpt/p0-2a-carrier-probes
