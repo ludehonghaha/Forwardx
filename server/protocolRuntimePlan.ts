@@ -15,6 +15,13 @@ export type ManagedVlessRuntimeUser = {
   uuid: string;
 };
 
+export type ManagedMieruRuntimeUser = {
+  assignmentId: number;
+  userId: number;
+  username: string;
+  password: string;
+};
+
 export type ManagedProtocolEndpointRow = {
   id: number;
   protocol: string;
@@ -23,6 +30,7 @@ export type ManagedProtocolEndpointRow = {
   configJson: unknown;
   isEnabled: boolean;
   vlessUsers?: ManagedVlessRuntimeUser[];
+  mieruUsers?: ManagedMieruRuntimeUser[];
 };
 
 export type ManagedProtocolGostService = {
@@ -104,6 +112,11 @@ export function buildManagedProtocolGostServices(rows: ManagedProtocolEndpointRo
  * Compile the single managed Mieru endpoint on a host into one mita config.
  * Client-only settings intentionally stay in subscriptions and never create
  * additional server listeners.
+ *
+ * When mieruUsers is present, it is authoritative. This lets one managed
+ * listener serve multiple ForwardX assignments with independent credentials
+ * and native per-user Mieru accounting. Endpoint credentials are retained only
+ * as a legacy fallback for callers that have not populated assignment users.
  */
 export function buildManagedMieruRuntimePlan(rows: ManagedProtocolEndpointRow[]): ManagedMieruRuntimePlan | null {
   const candidates = [...rows]
@@ -113,14 +126,36 @@ export function buildManagedMieruRuntimePlan(rows: ManagedProtocolEndpointRow[])
 
   const row = candidates[0];
   const config = parseProtocolAccessConfig(row.configJson);
-  const username = protocolConfigText(config, "username");
-  const password = protocolConfigSecret(config, "password");
   const listenPort = managedProtocolListenPort(config, Number(row.publicPort));
   const transport = protocolConfigText(config, "transport");
   const mtu = Number(config.mtu ?? 1400);
-  if (!username || !password || listenPort < 1 || listenPort > 65535) return null;
+  if (listenPort < 1 || listenPort > 65535) return null;
   if (transport !== "TCP" && transport !== "UDP") return null;
   if (!Number.isInteger(mtu) || mtu < 1280 || mtu > 1400) return null;
+
+  const users: Array<{ name: string; password: string }> = [];
+  const seenNames = new Set<string>();
+  const seenPasswords = new Set<string>();
+  if (Array.isArray(row.mieruUsers)) {
+    const sourceUsers = [...row.mieruUsers]
+      .sort((left, right) => Number(left.assignmentId) - Number(right.assignmentId));
+    for (const item of sourceUsers) {
+      const assignmentId = Number(item?.assignmentId || 0);
+      const userId = Number(item?.userId || 0);
+      const username = String(item?.username || "").trim();
+      const password = String(item?.password || "");
+      if (!Number.isInteger(assignmentId) || assignmentId <= 0 || !Number.isInteger(userId) || userId <= 0) return null;
+      if (!username || !password || seenNames.has(username) || seenPasswords.has(password)) return null;
+      seenNames.add(username);
+      seenPasswords.add(password);
+      users.push({ name: username, password });
+    }
+  } else {
+    const username = protocolConfigText(config, "username");
+    const password = protocolConfigSecret(config, "password");
+    if (!username || !password) return null;
+    users.push({ name: username, password });
+  }
 
   return {
     endpointId: Number(row.id),
@@ -128,7 +163,7 @@ export function buildManagedMieruRuntimePlan(rows: ManagedProtocolEndpointRow[])
     transport,
     config: {
       portBindings: [{ port: listenPort, protocol: transport }],
-      users: [{ name: username, password }],
+      users,
       loggingLevel: "INFO",
       mtu,
     },
