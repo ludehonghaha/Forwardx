@@ -65,7 +65,6 @@ func xrayStatsQueryArgs(server string) []string {
 		"statsquery",
 		"--server=" + strings.TrimSpace(server),
 		"-pattern", xrayStatsPattern,
-		"-reset",
 	}
 }
 
