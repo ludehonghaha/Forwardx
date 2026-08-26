@@ -108,18 +108,19 @@ export async function getChinaCarrierProbeOverview(nowMs = Date.now()): Promise<
   if (serviceIds.length > 0) {
     const list = inList(serviceIds);
     const latestRows = await queryRaw<any>(
-      `SELECT s.${q("serviceId")}, s.${q("hostId")}, s.${q("latencyMs")}, s.${q("isTimeout")},
-              s.${q("successCount")}, s.${q("lossCount")}, s.${q("packetLossPermille")}, s.${q("recordedAt")}
-         FROM ${q("host_probe_service_stats")} s
-         INNER JOIN (
-           SELECT ${q("serviceId")}, ${q("hostId")}, MAX(${q("id")}) AS ${q("id")}
-             FROM ${q("host_probe_service_stats")}
-            WHERE ${q("serviceId")} IN ${list.sql}
-            GROUP BY ${q("serviceId")}, ${q("hostId")}
-         ) latest
-           ON latest.${q("serviceId")} = s.${q("serviceId")}
-          AND latest.${q("hostId")} = s.${q("hostId")}
-          AND latest.${q("id")} = s.${q("id")}`,
+      `SELECT ranked.${q("serviceId")}, ranked.${q("hostId")}, ranked.${q("latencyMs")}, ranked.${q("isTimeout")},
+              ranked.${q("successCount")}, ranked.${q("lossCount")}, ranked.${q("packetLossPermille")}, ranked.${q("recordedAt")}
+         FROM (
+           SELECT s.${q("serviceId")}, s.${q("hostId")}, s.${q("latencyMs")}, s.${q("isTimeout")},
+                  s.${q("successCount")}, s.${q("lossCount")}, s.${q("packetLossPermille")}, s.${q("recordedAt")}, s.${q("id")},
+                  ROW_NUMBER() OVER (
+                    PARTITION BY s.${q("serviceId")}, s.${q("hostId")}
+                    ORDER BY s.${q("recordedAt")} DESC, s.${q("id")} DESC
+                  ) AS ${q("rn")}
+             FROM ${q("host_probe_service_stats")} s
+            WHERE s.${q("serviceId")} IN ${list.sql}
+         ) ranked
+        WHERE ranked.${q("rn")} = 1`,
       list.params,
     );
     for (const row of latestRows) {
