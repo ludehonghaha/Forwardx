@@ -23,12 +23,21 @@ func xrayCounterDelta(current, acknowledged uint64) uint64 {
 
 // diffXrayAssignmentTraffic calculates the bytes that have not yet been
 // acknowledged by the Panel and the cumulative baseline to commit only after
-// that report is acknowledged. Unchanged counters are omitted from deltas but
-// still appear in nextBaselines so an ACK can advance the durable checkpoint.
+// that report is acknowledged. Baselines not present in this Xray snapshot are
+// retained: statsquery may omit an idle counter, and forgetting it would replay
+// already-accounted bytes if that assignment appears again later.
 func diffXrayAssignmentTraffic(
 	current []xrayAssignmentTrafficStat,
 	acknowledged map[int]xrayTrafficBaseline,
 ) (deltas []xrayAssignmentTrafficStat, nextBaselines []xrayTrafficBaseline) {
+	nextByAssignment := make(map[int]xrayTrafficBaseline, len(acknowledged)+len(current))
+	for assignmentID, baseline := range acknowledged {
+		if assignmentID <= 0 || baseline.AssignmentID != assignmentID {
+			continue
+		}
+		nextByAssignment[assignmentID] = baseline
+	}
+
 	for _, stat := range current {
 		if stat.AssignmentID <= 0 {
 			continue
@@ -42,13 +51,16 @@ func diffXrayAssignmentTraffic(
 		if delta.BytesIn > 0 || delta.BytesOut > 0 {
 			deltas = append(deltas, delta)
 		}
-		nextBaselines = append(nextBaselines, xrayTrafficBaseline{
+		nextByAssignment[stat.AssignmentID] = xrayTrafficBaseline{
 			AssignmentID: stat.AssignmentID,
 			BytesIn:      stat.BytesIn,
 			BytesOut:     stat.BytesOut,
-		})
+		}
 	}
 
+	for _, baseline := range nextByAssignment {
+		nextBaselines = append(nextBaselines, baseline)
+	}
 	sort.Slice(deltas, func(i, j int) bool {
 		return deltas[i].AssignmentID < deltas[j].AssignmentID
 	})
