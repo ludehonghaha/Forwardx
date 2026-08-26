@@ -21,7 +21,7 @@ export const CHINA_CARRIER_RECOMMENDED_DEFAULTS: Record<HostProbeCarrier, ChinaC
   cu: {
     serviceName: "上海联通 CU",
     region: "上海",
-    targetIp: "210.22.70.4",
+    targetIp: "210.22.84.3",
     method: "ping",
     intervalSeconds: 60,
   },
