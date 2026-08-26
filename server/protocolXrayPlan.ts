@@ -98,7 +98,7 @@ function managedRealityInbound(row: ManagedProtocolEndpointRow) {
         decryption: "none",
       },
       streamSettings: {
-        method: "raw",
+        network: "raw",
         security: "reality",
         realitySettings: {
           show: false,
