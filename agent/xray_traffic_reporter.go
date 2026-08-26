@@ -40,10 +40,11 @@ func currentXrayTrafficReportConfig() (Config, string, bool) {
 	panelURL, _ := runtimePanelURL.Load().(string)
 	token, _ := runtimeAgentToken.Load().(string)
 	panelURL = strings.TrimRight(strings.TrimSpace(panelURL), "/")
-	token = strings.TrimSpace(token)
-	if panelURL == "" || token == "" {
+	if panelURL == "" || strings.TrimSpace(token) == "" {
 		return Config{}, "", false
 	}
+	// Keep the token bytes exact: trafficReportIdentityForPanel and encrypted
+	// Agent auth intentionally use the configured token without normalization.
 	cfg := Config{PanelURL: panelURL, Token: token, Interval: 30}
 	return cfg, panelURL, true
 }
