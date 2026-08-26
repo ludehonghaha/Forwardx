@@ -7,7 +7,8 @@ import "./protocolXrayRuntimeAction.test";
 import "./repositories/protocolUserTrafficRepository.test";
 import "../shared/agentDtos.test";
 import type { ProtocolFeedEntry } from "../shared/protocolAccess";
-import { buildManagedMihomoRuntimePlan, type ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
+import type { ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
+import { buildManagedXrayRuntimePlan } from "./protocolXrayPlan";
 import { renderProtocolMihomoSubscription, renderProtocolUriSubscription } from "./protocolSubscription";
 
 const LEGACY = "550e8400-e29b-41d4-a716-446655440000";
@@ -56,46 +57,46 @@ function feedEntry(assignmentId: number, uuid: string): ProtocolFeedEntry {
   };
 }
 
-function realityUsers(plan: ReturnType<typeof buildManagedMihomoRuntimePlan>) {
-  const listener = (plan?.config.listeners as any[])?.find((item) => item?.type === "vless");
-  return (listener?.users || []) as Array<{ username: string; uuid: string; flow: string }>;
+function realityUsers(plan: ReturnType<typeof buildManagedXrayRuntimePlan>) {
+  const inbound = (plan?.config.inbounds as any[])?.find((item) => item?.protocol === "vless");
+  return (inbound?.settings?.users || []) as Array<{ id: string; level: number; email: string; flow: string }>;
 }
 
 test("managed Reality runtime uses assignment UUIDs instead of the endpoint UUID", () => {
-  const plan = buildManagedMihomoRuntimePlan([runtimeEndpoint([
+  const plan = buildManagedXrayRuntimePlan([runtimeEndpoint([
     { assignmentId: 5, userId: 2, uuid: USER_A },
     { assignmentId: 6, userId: 3, uuid: USER_B },
   ])]);
   assert.ok(plan);
   assert.deepEqual(realityUsers(plan), [
-    { username: "forwardx-2", uuid: USER_A, flow: "xtls-rprx-vision" },
-    { username: "forwardx-3", uuid: USER_B, flow: "xtls-rprx-vision" },
+    { id: USER_A, level: 0, email: "forwardx-assignment-5-user-2", flow: "xtls-rprx-vision" },
+    { id: USER_B, level: 0, email: "forwardx-assignment-6-user-3", flow: "xtls-rprx-vision" },
   ]);
   assert.equal(JSON.stringify(plan).includes(LEGACY), false);
 });
 
 test("revoking one Reality assignment removes only that UUID from desired state", () => {
-  const plan = buildManagedMihomoRuntimePlan([runtimeEndpoint([
+  const plan = buildManagedXrayRuntimePlan([runtimeEndpoint([
     { assignmentId: 6, userId: 3, uuid: USER_B },
   ])]);
   assert.ok(plan);
-  assert.deepEqual(realityUsers(plan).map((item) => item.uuid), [USER_B]);
+  assert.deepEqual(realityUsers(plan).map((item) => item.id), [USER_B]);
   assert.equal(JSON.stringify(plan).includes(USER_A), false);
   assert.equal(JSON.stringify(plan).includes(LEGACY), false);
 });
 
 test("managed Reality with no enabled assignments uses a private stable parking UUID", () => {
-  const first = buildManagedMihomoRuntimePlan([runtimeEndpoint([])]);
-  const second = buildManagedMihomoRuntimePlan([runtimeEndpoint([])]);
+  const first = buildManagedXrayRuntimePlan([runtimeEndpoint([])]);
+  const second = buildManagedXrayRuntimePlan([runtimeEndpoint([])]);
   assert.ok(first);
   assert.ok(second);
   const firstUsers = realityUsers(first);
   const secondUsers = realityUsers(second);
   assert.equal(firstUsers.length, 1);
-  assert.equal(firstUsers[0]?.username, "forwardx-parking");
-  assert.notEqual(firstUsers[0]?.uuid, LEGACY);
-  assert.notEqual(firstUsers[0]?.uuid, USER_A);
-  assert.equal(firstUsers[0]?.uuid, secondUsers[0]?.uuid);
+  assert.equal(firstUsers[0]?.email, "forwardx-parking-22");
+  assert.notEqual(firstUsers[0]?.id, LEGACY);
+  assert.notEqual(firstUsers[0]?.id, USER_A);
+  assert.equal(firstUsers[0]?.id, secondUsers[0]?.id);
   assert.equal(JSON.stringify(first).includes(LEGACY), false);
 });
 
