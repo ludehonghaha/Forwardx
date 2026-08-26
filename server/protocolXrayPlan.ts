@@ -8,6 +8,9 @@ import {
 import { isVlessUuid } from "../shared/vlessCredentials";
 import type { ManagedProtocolEndpointRow } from "./protocolRuntimePlan";
 
+export const XRAY_STATS_API_LISTEN = "127.0.0.1:0";
+export const XRAY_STATS_API_TAG = "forwardx-api";
+
 export type ManagedXrayRuntimeSocket = {
   endpointId: number;
   protocol: "vless_reality";
@@ -133,6 +136,8 @@ function managedRealityInbound(row: ManagedProtocolEndpointRow) {
  * Each ForwardX assignment becomes one Xray user with a stable email containing
  * the assignment id. P0-2B traffic accounting can therefore query/reset Xray's
  * native per-user counters without attributing a shared listener to one owner.
+ * StatsService listens on 127.0.0.1:0 so the kernel chooses a free private API
+ * port on every process start; the Agent discovers that loopback socket locally.
  */
 export function buildManagedXrayRuntimePlan(rows: ManagedProtocolEndpointRow[]): ManagedXrayRuntimePlan | null {
   const candidates = [...rows]
@@ -161,6 +166,11 @@ export function buildManagedXrayRuntimePlan(rows: ManagedProtocolEndpointRow[]):
     users,
     config: {
       log: { loglevel: "warning" },
+      api: {
+        tag: XRAY_STATS_API_TAG,
+        listen: XRAY_STATS_API_LISTEN,
+        services: ["StatsService"],
+      },
       policy: {
         levels: {
           "0": {
