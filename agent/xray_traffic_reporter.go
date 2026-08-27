@@ -138,12 +138,12 @@ func collectXrayAssignmentTraffic() ([]xrayAssignmentTrafficStat, error) {
 		}
 		return nil, fmt.Errorf("discover Xray StatsService listener: %w", err)
 	}
-	server, err := discoverXrayStatsAPIServer(ssOutput)
-	if err != nil {
+	server, ok := parseXrayStatsAPIListen(string(ssOutput))
+	if !ok {
 		if !managedServiceActive(xrayServiceName) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("discover Xray StatsService listener: expected exactly one forwardx-xray loopback listener")
 	}
 	args := xrayStatsQueryArgs(server)
 	raw, err := commandCombinedOutputWithTimeout(xrayTrafficQueryTimeout, xrayBinaryPath, args...)

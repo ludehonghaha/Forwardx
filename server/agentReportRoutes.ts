@@ -23,7 +23,7 @@ import { getTunnelMultiEntryLatency, recordTunnelMultiEntryLatency } from "./tun
 import { completeLookingGlassAgentTask, updateLookingGlassAgentTaskProgress, type LookingGlassMethod } from "./lookingGlassAgentTasks";
 import { completeIperf3AgentTask } from "./iperf3AgentTasks";
 import { completePluginAgentTask } from "./pluginAgentTasks";
-import { getAgentHostIdentityFromRequest } from "./agentAuth";
+import { getAgentHostIdentityFromRequest, getResolvedAgentToken } from "./agentAuth";
 import { applyTrafficMultiplier, normalizeTrafficMultiplier } from "../shared/trafficMultiplier";
 import { mapWithConcurrency } from "./asyncPool";
 import { forwardGroupProbeTopologyKey, tunnelProbeTopologyKey } from "./probeTopology";
@@ -39,6 +39,10 @@ import {
 import { clearRuleLatencyQueryCaches } from "./ruleLatencyQueryCache";
 import { agentTcpingReportGate } from "./agentTcpingReportGate";
 import { selectAgentTrafficReportInterval } from "./agentHeartbeatGate";
+import {
+  accountAgentProtocolTrafficReport,
+  AgentProtocolTrafficValidationError,
+} from "./agentProtocolTrafficAccounting";
 
 const VERBOSE_AGENT_REPORTS = /^(1|true|yes|on)$/i.test(String(process.env.FORWARDX_VERBOSE_AGENT_REPORTS || ""));
 
@@ -584,10 +588,31 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     const hostTraffic: AgentHostTrafficStat | null = isAgentHostTrafficStat(req.body?.hostTraffic)
       ? req.body.hostTraffic
       : compactHostTraffic(req.body?.h);
-    if (!Array.isArray(req.body?.stats) && !Array.isArray(req.body?.s) && !hostTraffic) {
-      res.status(400).json({ error: "stats array or hostTraffic is required" });
+    const hasProtocolTrafficPayload =
+      req.body?.protocolStats !== undefined || req.body?.mieruStats !== undefined;
+    if (!Array.isArray(req.body?.stats) && !Array.isArray(req.body?.s) && !hostTraffic && !hasProtocolTrafficPayload) {
+      res.status(400).json({ error: "stats array, hostTraffic, or protocol traffic is required" });
       return;
     }
+    let protocolTrafficResult: Awaited<ReturnType<typeof accountAgentProtocolTrafficReport>> | null = null;
+    if (hasProtocolTrafficPayload) {
+      protocolTrafficResult = await accountAgentProtocolTrafficReport({
+        token: String(getResolvedAgentToken(req) || ""),
+        body: req.body,
+      });
+    }
+
+    // A protocol-only report must not fall through to the generic idle
+    // traffic claim. The protocol accounting transaction above is the ACK
+    // boundary for assignment traffic and owns its own producer namespace.
+    if (stats.length === 0 && !hostTraffic && hasProtocolTrafficPayload) {
+      res.json({
+        success: true,
+        ...(protocolTrafficResult?.duplicate ? { duplicate: true } : {}),
+      });
+      return;
+    }
+
     // An idle Agent may only report the host-wide network counters. Avoid
     // opening the full traffic transaction and querying billing/rule/tunnel
     // context when there are no rule deltas to account.
@@ -816,6 +841,10 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
       }),
     });
   } catch (error) {
+    if (error instanceof AgentProtocolTrafficValidationError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error(`[Agent Traffic] Error host=${logHostId || "-"} name=${logHostName || "-"}:`, error);
     res.status(500).json({ error: "Internal server error" });
   }
