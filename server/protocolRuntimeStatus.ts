@@ -1,11 +1,12 @@
 import { isAgentVersionAtLeast } from "./agentRouteUtils";
 import type { AgentLocalRuntimeState } from "./agentHeartbeatRoute";
+import { AGENT_XRAY_RUNTIME_VERSION, XRAY_RUNTIME_SERVICE_NAME } from "./protocolXrayMigration";
 import { managedProtocolListenPort, parseProtocolAccessConfig, protocolConfigBool, protocolConfigText } from "../shared/protocolAccess";
 
 export const AGENT_PROTOCOL_LISTENER_STATE_VERSION = "2.2.191";
 export const AGENT_MIERU_LISTENER_STATE_VERSION = "2.2.192";
 export const AGENT_MIHOMO_LISTENER_STATE_VERSION = "2.2.193";
-export const AGENT_XRAY_LISTENER_STATE_VERSION = "2.2.196";
+export const AGENT_XRAY_LISTENER_STATE_VERSION = AGENT_XRAY_RUNTIME_VERSION;
 
 export type ProtocolEndpointRuntimeState =
   | "external"
@@ -116,7 +117,7 @@ export function projectProtocolEndpointRuntimeStatus(input: RuntimeStatusInput):
     return status("unknown", "等待状态", { applied, listenerHealthy: null, message: "等待 Agent 上报本地运行态快照", lastError: null, checkedAt });
   }
 
-  const runtimeServiceName = isXray ? "forwardx-xray" : isMihomo ? "forwardx-mihomo" : isMieru ? "forwardx-mita" : "forwardx-runtime";
+  const runtimeServiceName = isXray ? XRAY_RUNTIME_SERVICE_NAME : isMihomo ? "forwardx-mihomo" : isMieru ? "forwardx-mita" : "forwardx-runtime";
   const runtimeService = input.localState.services.find((item) => item.name === runtimeServiceName);
   if (runtimeService?.hasWork && !runtimeService.active) {
     const message = runtimeService.message || `${runtimeServiceName} 服务未运行`;
