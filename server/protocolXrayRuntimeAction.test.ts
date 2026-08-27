@@ -38,7 +38,7 @@ test("Xray runtime sync installs, validates, starts and verifies managed Reality
   assert.equal(managed.format, "json");
   assert.equal(managed.mode, 0o600);
   assert.equal(managed.serviceName, XRAY_SERVICE_NAME);
-  assert.match(managed.validateCommand, /run -format json -test -c \{\{path\}\}/);
+  assert.equal(managed.validateCommand, "'/usr/local/bin/forwardx-xray' run -format json -test -c {{path}}");
   assert.deepEqual(JSON.parse(Buffer.from(managed.contentBase64, "base64").toString("utf8")), plan.config);
 
   const commands = action.commands.join("\n");
