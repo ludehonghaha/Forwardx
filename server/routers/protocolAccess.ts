@@ -16,7 +16,7 @@ import {
 import { ensureAdminOrSelf } from "./helpers";
 import { reserveSpecificHostPort, type HostPortReservation } from "../portReservations";
 import { reserveManagedProtocolPort } from "../protocolManagedPort";
-import { latestHostProtocolAccessRevision } from "../configAudit";
+import { latestHostProtocolAccessRevision, recordConfigAuditEvent } from "../configAudit";
 import { getAgentLocalRuntimeStateSnapshot } from "../agentHeartbeatRoute";
 import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
 import {
@@ -95,6 +95,41 @@ function provisionManagedProtocolConfig(
     }
   }
   return config;
+}
+
+async function recordManagedMieruAssignmentRevision(
+  endpoint: any,
+  mutation: {
+    operation: "set" | "remove";
+    assignmentId?: number;
+    userId: number;
+    isEnabled?: boolean;
+  },
+) {
+  const endpointId = Number(endpoint?.id || 0);
+  const hostId = Number(endpoint?.hostId || 0);
+  if (
+    endpoint?.runtimeMode !== "managed"
+    || endpoint?.protocol !== "mieru"
+    || !Number.isInteger(endpointId)
+    || endpointId <= 0
+    || !Number.isInteger(hostId)
+    || hostId <= 0
+  ) return 0;
+  return recordConfigAuditEvent({
+    resourceType: "protocol_endpoint",
+    resourceId: endpointId,
+    hostId,
+    action: "update",
+    before: { managedMieruAssignmentMutation: null },
+    after: {
+      managedMieruAssignmentMutation: {
+        ...mutation,
+        nonce: randomUUID(),
+      },
+    },
+    source: "protocol_assignment",
+  });
 }
 
 async function validateEndpoint(input: {
@@ -344,7 +379,7 @@ export const protocolAccessRouter = router({
       : bridgeStructureChanged
         ? null
         : input.forwardRuleId === undefined ? current.forwardRuleId : input.forwardRuleId;
-    if (runtimeMode === "managed") {
+    if (runtimeMode === "managed" && protocol !== "mieru") {
       const assignments = await db.listProtocolEndpointAssignments(current.id);
       if (assignments.some((item: any) => {
         const credential = parseProtocolAccessConfig(item.access?.credentialJson);
@@ -419,7 +454,7 @@ export const protocolAccessRouter = router({
     if (endpoint.runtimeMode === "managed" && (
       protocolConfigSecret(input.credential, "password") || protocolConfigText(input.credential, "username")
     )) {
-      throw new Error("Agent 托管端点使用单一共享凭据，用户分配不能覆盖运行时用户名或密码");
+      throw new Error("Agent 托管端点的运行时凭据由 ForwardX 管理，用户分配不能手动覆盖用户名或密码");
     }
     const errors = validateProtocolFeedEntry({
       assignmentId: 1,
@@ -440,7 +475,23 @@ export const protocolAccessRouter = router({
       if (synced.changed) refreshHostId = synced.hostId;
       return assignmentId;
     });
-    if (refreshHostId > 0) pushProtocolTrafficBridgeRefresh(refreshHostId, "protocol-traffic-bridge-assignment-updated");
+    if (endpoint.runtimeMode === "managed" && endpoint.protocol === "mieru") {
+      await recordManagedMieruAssignmentRevision(endpoint, {
+        operation: "set",
+        assignmentId: id,
+        userId: input.userId,
+        isEnabled: input.isEnabled,
+      });
+      if (refreshHostId <= 0) refreshHostId = Number(endpoint.hostId || 0);
+    }
+    if (refreshHostId > 0) {
+      pushProtocolTrafficBridgeRefresh(
+        refreshHostId,
+        endpoint.runtimeMode === "managed" && endpoint.protocol === "mieru"
+          ? "managed-mieru-assignment-updated"
+          : "protocol-traffic-bridge-assignment-updated",
+      );
+    }
     return { id };
   }),
 
@@ -448,13 +499,28 @@ export const protocolAccessRouter = router({
     endpointId: z.number().int().positive(),
     userId: z.number().int().positive(),
   })).mutation(async ({ input }) => {
+    const endpoint = await db.getProtocolEndpointById(input.endpointId);
     let refreshHostId = 0;
     await db.withDatabaseTransaction(async () => {
       await db.removeProtocolUserAccess(input.endpointId, input.userId);
       const synced = await syncManagedProtocolTrafficBridge(input.endpointId);
       if (synced.changed) refreshHostId = synced.hostId;
     });
-    if (refreshHostId > 0) pushProtocolTrafficBridgeRefresh(refreshHostId, "protocol-traffic-bridge-assignment-removed");
+    if (endpoint?.runtimeMode === "managed" && endpoint?.protocol === "mieru") {
+      await recordManagedMieruAssignmentRevision(endpoint, {
+        operation: "remove",
+        userId: input.userId,
+      });
+      if (refreshHostId <= 0) refreshHostId = Number(endpoint.hostId || 0);
+    }
+    if (refreshHostId > 0) {
+      pushProtocolTrafficBridgeRefresh(
+        refreshHostId,
+        endpoint?.runtimeMode === "managed" && endpoint?.protocol === "mieru"
+          ? "managed-mieru-assignment-removed"
+          : "protocol-traffic-bridge-assignment-removed",
+      );
+    }
     return { success: true };
   }),
 
