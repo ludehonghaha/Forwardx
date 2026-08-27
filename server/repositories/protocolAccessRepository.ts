@@ -10,6 +10,7 @@ import {
 import {
   PROTOCOL_ACCESS_PROTOCOLS,
   parseProtocolAccessConfig,
+  protocolConfigSecret,
   protocolConfigText,
   type ProtocolAccessProtocol,
   type ProtocolFeedEntry,
@@ -17,6 +18,7 @@ import {
 import { isVlessUuid } from "../../shared/vlessCredentials";
 import { recordConfigAuditEvent } from "../configAudit";
 import { getDb, insertAndGetId, nowDate, withDatabaseTransaction } from "../dbRuntime";
+import { planManagedMieruCredentialBackfill } from "../protocolMieruCredentials";
 import {
   managedVlessCredentialForWrite,
   planManagedVlessCredentialBackfill,
@@ -36,6 +38,10 @@ function dbEnabled(value: unknown) {
 
 function isManagedVlessEndpoint(endpoint: any) {
   return endpoint?.protocol === "vless_reality" && endpoint?.runtimeMode === "managed";
+}
+
+function isManagedMieruEndpoint(endpoint: any) {
+  return endpoint?.protocol === "mieru" && endpoint?.runtimeMode === "managed";
 }
 
 function protocolEndpointAuditSnapshot(row: any) {
@@ -69,6 +75,22 @@ async function ensureManagedVlessAssignmentCredentials(endpoint: any) {
   return changed.length > 0 ? protocolUserAccessRows(Number(endpoint.id)) : rows;
 }
 
+async function ensureManagedMieruAssignmentCredentials(endpoint: any) {
+  if (!isManagedMieruEndpoint(endpoint)) return [];
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await protocolUserAccessRows(Number(endpoint.id));
+  const planned = planManagedMieruCredentialBackfill(endpoint.configJson, rows as any[]);
+  const changed = planned.filter((item) => item.changed);
+  for (const item of changed) {
+    await db.update(protocolUserAccess).set({
+      credentialJson: stringifyConfig(item.credential),
+      updatedAt: nowDate(),
+    } as any).where(eq(protocolUserAccess.id, item.id));
+  }
+  return changed.length > 0 ? protocolUserAccessRows(Number(endpoint.id)) : rows;
+}
+
 function managedVlessRuntimeUsers(rows: any[]) {
   return (rows || []).flatMap((row: any) => {
     if (!dbEnabled(row?.isEnabled)) return [];
@@ -78,6 +100,50 @@ function managedVlessRuntimeUsers(rows: any[]) {
       assignmentId: Number(row.id),
       userId: Number(row.userId),
       uuid,
+    }];
+  });
+}
+
+function managedProtocolUserEligible(user: any) {
+  if (!user || !dbEnabled(user.accountEnabled)) return false;
+  if (String(user.forwardAccessPauseReason || "").trim()) return false;
+  const expiresAt = user.expiresAt ? new Date(user.expiresAt).getTime() : 0;
+  if (expiresAt > 0 && expiresAt <= Date.now()) return false;
+  const trafficLimit = Math.max(0, Number(user.trafficLimit) || 0);
+  const trafficUsed = Math.max(0, Number(user.trafficUsed) || 0);
+  return !(trafficLimit > 0 && trafficUsed >= trafficLimit);
+}
+
+async function managedMieruRuntimeUsers(endpoint: any) {
+  await ensureManagedMieruAssignmentCredentials(endpoint);
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    access: protocolUserAccess,
+    user: {
+      id: users.id,
+      accountEnabled: users.accountEnabled,
+      forwardAccessPauseReason: users.forwardAccessPauseReason,
+      trafficLimit: users.trafficLimit,
+      trafficUsed: users.trafficUsed,
+      expiresAt: users.expiresAt,
+    },
+  }).from(protocolUserAccess)
+    .innerJoin(users, eq(protocolUserAccess.userId, users.id))
+    .where(eq(protocolUserAccess.endpointId, Number(endpoint.id)))
+    .orderBy(asc(protocolUserAccess.id));
+
+  return rows.flatMap((row: any) => {
+    if (!dbEnabled(row?.access?.isEnabled) || !managedProtocolUserEligible(row?.user)) return [];
+    const credential = parseProtocolAccessConfig(row.access.credentialJson);
+    const username = protocolConfigText(credential, "username");
+    const password = protocolConfigSecret(credential, "password");
+    if (!username || !password) return [];
+    return [{
+      assignmentId: Number(row.access.id),
+      userId: Number(row.access.userId),
+      username,
+      password,
     }];
   });
 }
@@ -104,9 +170,14 @@ export async function listManagedProtocolEndpointsForHost(hostId: number) {
     eq(protocolEndpoints.isEnabled, true),
   )).orderBy(asc(protocolEndpoints.id));
   return Promise.all(endpoints.map(async (endpoint: any) => {
-    if (!isManagedVlessEndpoint(endpoint)) return endpoint;
-    const accessRows = await ensureManagedVlessAssignmentCredentials(endpoint);
-    return { ...endpoint, vlessUsers: managedVlessRuntimeUsers(accessRows as any[]) };
+    if (isManagedVlessEndpoint(endpoint)) {
+      const accessRows = await ensureManagedVlessAssignmentCredentials(endpoint);
+      return { ...endpoint, vlessUsers: managedVlessRuntimeUsers(accessRows as any[]) };
+    }
+    if (isManagedMieruEndpoint(endpoint)) {
+      return { ...endpoint, mieruUsers: await managedMieruRuntimeUsers(endpoint) };
+    }
+    return endpoint;
   }));
 }
 
@@ -174,7 +245,10 @@ export async function listProtocolEndpointAssignments(endpointId: number) {
   const db = await getDb();
   if (!db) return [];
   const endpoint = await getProtocolEndpointById(endpointId);
-  if (endpoint) await ensureManagedVlessAssignmentCredentials(endpoint);
+  if (endpoint) {
+    await ensureManagedVlessAssignmentCredentials(endpoint);
+    await ensureManagedMieruAssignmentCredentials(endpoint);
+  }
   return db.select({
     access: protocolUserAccess,
     user: {
@@ -226,6 +300,12 @@ export async function setProtocolUserAccess(input: {
       input.credential,
       usedUuids,
     ));
+  } else if (isManagedMieruEndpoint(endpoint)) {
+    const accessRows = await ensureManagedMieruAssignmentCredentials(endpoint);
+    existingRows = (accessRows as any[]).filter((row: any) => Number(row.userId) === Number(input.userId));
+    credentialJson = existingRows[0]
+      ? String(existingRows[0].credentialJson || "{}")
+      : stringifyConfig({});
   } else {
     existingRows = await db.select().from(protocolUserAccess).where(and(
       eq(protocolUserAccess.endpointId, input.endpointId),
@@ -241,9 +321,10 @@ export async function setProtocolUserAccess(input: {
   };
   if (existingRows[0]) {
     await db.update(protocolUserAccess).set(payload as any).where(eq(protocolUserAccess.id, existingRows[0].id));
+    if (isManagedMieruEndpoint(endpoint)) await ensureManagedMieruAssignmentCredentials(endpoint);
     return existingRows[0].id;
   }
-  return insertAndGetId("protocol_user_access", {
+  const id = await insertAndGetId("protocol_user_access", {
     endpointId: input.endpointId,
     userId: input.userId,
     credentialJson: payload.credentialJson,
@@ -251,6 +332,8 @@ export async function setProtocolUserAccess(input: {
     createdAt: nowDate(),
     updatedAt: nowDate(),
   });
+  if (isManagedMieruEndpoint(endpoint)) await ensureManagedMieruAssignmentCredentials(endpoint);
+  return id;
 }
 
 export async function removeProtocolUserAccess(endpointId: number, userId: number) {
@@ -331,7 +414,7 @@ export async function getProtocolFeedByToken(tokenValue: string) {
   if (!tokenRow || !tokenRow.user.accountEnabled) return undefined;
   if (tokenRow.user.expiresAt && new Date(tokenRow.user.expiresAt).getTime() <= Date.now()) return undefined;
 
-  const legacyManagedVlessEndpoints = await db.select({
+  const managedCredentialEndpoints = await db.select({
     id: protocolEndpoints.id,
     protocol: protocolEndpoints.protocol,
     runtimeMode: protocolEndpoints.runtimeMode,
@@ -340,12 +423,14 @@ export async function getProtocolFeedByToken(tokenValue: string) {
     .innerJoin(protocolEndpoints, eq(protocolUserAccess.endpointId, protocolEndpoints.id))
     .where(and(
       eq(protocolUserAccess.userId, tokenRow.user.id),
-      eq(protocolEndpoints.protocol, "vless_reality"),
       eq(protocolEndpoints.runtimeMode, "managed"),
     ));
-  const uniqueLegacyEndpoints = new Map<number, any>();
-  for (const endpoint of legacyManagedVlessEndpoints as any[]) uniqueLegacyEndpoints.set(Number(endpoint.id), endpoint);
-  await Promise.all(Array.from(uniqueLegacyEndpoints.values()).map((endpoint) => ensureManagedVlessAssignmentCredentials(endpoint)));
+  const uniqueManagedEndpoints = new Map<number, any>();
+  for (const endpoint of managedCredentialEndpoints as any[]) uniqueManagedEndpoints.set(Number(endpoint.id), endpoint);
+  await Promise.all(Array.from(uniqueManagedEndpoints.values()).map(async (endpoint) => {
+    if (isManagedVlessEndpoint(endpoint)) await ensureManagedVlessAssignmentCredentials(endpoint);
+    if (isManagedMieruEndpoint(endpoint)) await ensureManagedMieruAssignmentCredentials(endpoint);
+  }));
 
   const rows = await db.select({
     assignmentId: protocolUserAccess.id,

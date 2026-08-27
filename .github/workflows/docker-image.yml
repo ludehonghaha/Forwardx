@@ -12,6 +12,7 @@ on:
   push:
     branches:
       - main
+      - fix/p0-2b-mieru-multi-user
     paths-ignore:
       - "agent/**"
       - "forwardx-fxp/**"
@@ -219,6 +220,10 @@ jobs:
             primary_tag="${IMAGE_NAME}:v${VERSION}"
             secondary_tag="${IMAGE_NAME}:latest"
             publish_mode="release"
+          elif [ "$GITHUB_REF" = "refs/heads/fix/p0-2b-mieru-multi-user" ]; then
+            primary_tag="${IMAGE_NAME}:p0-2b-gray-${GITHUB_SHA:0:8}"
+            secondary_tag="${IMAGE_NAME}:sha-${GITHUB_SHA:0:12}"
+            publish_mode="p0-2b-gray"
           else
             primary_tag="${IMAGE_NAME}:main"
             secondary_tag="${IMAGE_NAME}:sha-${GITHUB_SHA:0:12}"

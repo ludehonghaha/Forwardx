@@ -4,6 +4,7 @@ import {
   directManagedProtocolConfigAfterBridge,
   managedProtocolTrafficBridgeMatches,
   managedProtocolTrafficOwnerUserId,
+  managedProtocolUsesNativeUserAccounting,
   protocolTrafficBridgeMarker,
   selectProtocolTrafficBridgeForwardType,
   withoutProtocolTrafficBridgeMarker,
@@ -19,6 +20,12 @@ test("managed protocol traffic owner accepts one enabled user and rejects ambigu
     { access: { userId: 7, isEnabled: true }, user: { id: 7 } },
     { access: { userId: 8, isEnabled: true }, user: { id: 8 } },
   ]), /无法把同一监听端口的流量准确拆分给多个用户/);
+});
+
+test("managed Mieru uses native per-user accounting instead of the single-owner bridge", () => {
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "mieru", runtimeMode: "managed" }), true);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "mieru", runtimeMode: "external" }), false);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "shadowsocks", runtimeMode: "managed" }), false);
 });
 
 test("traffic bridge marker round-trips and can be removed without changing other config", () => {

@@ -5,6 +5,19 @@ export type AgentTrafficStat = {
   connections?: number;
 };
 
+/**
+ * Per-assignment traffic from a managed protocol runtime such as Xray.
+ *
+ * Deliberately do not trust the Agent with userId/endpointId/hostId ownership.
+ * The authenticated Panel resolves assignmentId against its own database before
+ * accounting the bytes.
+ */
+export type AgentProtocolTrafficStat = {
+  assignmentId: number;
+  bytesIn?: number;
+  bytesOut?: number;
+};
+
 export type AgentHostTrafficStat = {
   bytesIn?: number;
   bytesOut?: number;
@@ -133,6 +146,21 @@ export type SelfTestMeta =
 export function isAgentTrafficStat(value: unknown): value is AgentTrafficStat {
   const item = value as Partial<AgentTrafficStat>;
   return !!item && Number.isFinite(Number(item.ruleId));
+}
+
+export function isAgentProtocolTrafficStat(value: unknown): value is AgentProtocolTrafficStat {
+  const item = value as Partial<AgentProtocolTrafficStat>;
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const assignmentId = Number(item.assignmentId);
+  if (!Number.isInteger(assignmentId) || assignmentId <= 0) return false;
+  const hasBytes = item.bytesIn !== undefined || item.bytesOut !== undefined;
+  if (!hasBytes) return false;
+  for (const raw of [item.bytesIn, item.bytesOut]) {
+    if (raw === undefined) continue;
+    const number = Number(raw);
+    if (!Number.isSafeInteger(number) || number < 0) return false;
+  }
+  return true;
 }
 
 export function isAgentHostTrafficStat(value: unknown): value is AgentHostTrafficStat {

@@ -11,6 +11,10 @@ import {
   hasVerifiedAgentAuthProof,
   resolveAgentTokenFromAuthorization,
 } from "./agentAuth";
+import {
+  accountAgentProtocolTrafficReport,
+  AgentProtocolTrafficValidationError,
+} from "./agentProtocolTrafficAccounting";
 import { panelCryptoNowMs } from "./panelClock";
 
 export const AGENT_TUNNEL_PATHS = new Set([
@@ -33,9 +37,23 @@ export const AGENT_TUNNEL_PATHS = new Set([
   "/api/agent/rule-status-batch",
 ]);
 
+const LEGACY_TRAFFIC_REPORT_PREFIX = "legacy:";
+const MAX_TRAFFIC_REPORT_ID_LENGTH = 128;
+
 function normalizeTunnelPath(value: unknown) {
   const path = String(value || "").trim();
   return AGENT_TUNNEL_PATHS.has(path) ? path : "";
+}
+
+function hasProtocolTrafficPayload(body: any) {
+  return (Array.isArray(body?.protocolStats) && body.protocolStats.length > 0)
+    || (Array.isArray(body?.mieruStats) && body.mieruStats.length > 0);
+}
+
+export function legacyTrafficReportIdAfterProtocolAccounting(value: unknown) {
+  const reportId = String(value || "").trim();
+  if (!reportId) return "";
+  return `${LEGACY_TRAFFIC_REPORT_PREFIX}${reportId}`.slice(0, MAX_TRAFFIC_REPORT_ID_LENGTH);
 }
 
 export function getAgentTunneledPath(req: Request) {
@@ -60,6 +78,7 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
   const isSyncRequest = req.path === "/api/sync";
   let token: string | null = null;
   let payload: any = null;
+  let tunneledPath = "";
   const protocolNowMs = panelCryptoNowMs();
   try {
     token = await resolveAgentTokenFromAuthorization(req, rawBodyText, protocolNowMs);
@@ -109,7 +128,7 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
     res.setHeader(AGENT_AUTH_RESULT_HEADER, AGENT_AUTH_RESULT_ACCEPTED);
     req.body = payload;
     (req as any).agentToken = token;
-    const tunneledPath = isSyncRequest ? normalizeTunnelPath(req.body?.path) : "";
+    tunneledPath = isSyncRequest ? normalizeTunnelPath(req.body?.path) : "";
     if (isSyncRequest && !tunneledPath) {
       res.status(400).json({ error: "Invalid encrypted request" });
       return;
@@ -133,6 +152,37 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     return originalJson(env);
   };
+
+  const effectivePath = tunneledPath || req.path;
+  if (effectivePath === "/api/agent/traffic") {
+    const protocolTrafficPayload = hasProtocolTrafficPayload(req.body);
+    const originalReportId = protocolTrafficPayload ? String(req.body?.reportId || "").trim() : "";
+    try {
+      await accountAgentProtocolTrafficReport({ token: tokenForResp, body: req.body });
+    } catch (err: any) {
+      const statusCode = err instanceof AgentProtocolTrafficValidationError ? err.statusCode : 500;
+      res.status(statusCode).json({
+        error: "Protocol traffic accounting failed",
+        message: String(err?.message || "Unknown protocol traffic accounting error"),
+      });
+      return;
+    }
+
+    // Protocol traffic and the legacy host/rule traffic route consume the same
+    // Agent request independently. Historical databases still enforce
+    // UNIQUE(hostId, reportId), so forwarding the exact same reportId to both
+    // consumers makes the second claim fail even though producerId differs.
+    // Keep the protocol claim on the original reportId for backward-compatible
+    // retries, then namespace only the downstream legacy claim. This lets an
+    // already-persisted protocol report retry without double-accounting while
+    // still receiving a successful ACK from the legacy route.
+    if (protocolTrafficPayload && originalReportId) {
+      req.body = {
+        ...req.body,
+        reportId: legacyTrafficReportIdAfterProtocolAccounting(originalReportId),
+      };
+    }
+  }
 
   next();
 }
