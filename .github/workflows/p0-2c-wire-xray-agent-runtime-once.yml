@@ -75,23 +75,8 @@ jobs:
                   raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
               text = text.replace(old, new, 1)
 
-          anchor = '''func requiredMihomoRuntimeServicesFromLocalConfig() []string {
-\tlistens, ok := readMihomoRuntimeServiceListens(mihomoConfigPath)
-\tif ok && len(listens) > 0 {
-\t\treturn []string{mihomoServiceName}
-\t}
-\treturn nil
-}
-'''
-          addition = anchor + '''
-func requiredXrayRuntimeServicesFromLocalConfig() []string {
-\tlistens, ok := readXrayRuntimeServiceListens(xrayConfigPath)
-\tif ok && len(listens) > 0 {
-\t\treturn []string{xrayServiceName}
-\t}
-\treturn nil
-}
-'''
+          anchor = 'func requiredMihomoRuntimeServicesFromLocalConfig() []string {\n\tlistens, ok := readMihomoRuntimeServiceListens(mihomoConfigPath)\n\tif ok && len(listens) > 0 {\n\t\treturn []string{mihomoServiceName}\n\t}\n\treturn nil\n}\n'
+          addition = anchor + '\nfunc requiredXrayRuntimeServicesFromLocalConfig() []string {\n\tlistens, ok := readXrayRuntimeServiceListens(xrayConfigPath)\n\tif ok && len(listens) > 0 {\n\t\treturn []string{xrayServiceName}\n\t}\n\treturn nil\n}\n'
           count = text.count(anchor)
           if count != 1:
               raise SystemExit(f'required Xray service helper: expected exactly 1 match, found {count}')
