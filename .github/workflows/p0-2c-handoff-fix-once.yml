@@ -1,0 +1,89 @@
+name: P0-2C handoff fix once
+
+on:
+  push:
+    branches:
+      - fix/p0-2c-reality-multi-user
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/p0-2c-reality-multi-user
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Patch heartbeat handoff ordering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('server/agentHeartbeatRoute.ts')
+          text = path.read_text()
+
+          old1 = '''    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
+          if (!deferActionsForLocalState && mihomoRuntimeRelevant
+          '''
+          new1 = '''    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
+          let mihomoRuntimeSyncQueued = false;
+          if (!deferActionsForLocalState && mihomoRuntimeRelevant
+          '''
+
+          old2 = '''      )) actions.push(mihomoRuntimeSyncAction);
+          }
+          const xrayDesiredRelevant = !!managedXrayRuntimePlan;
+          '''
+          new2 = '''      )) {
+                actions.push(mihomoRuntimeSyncAction);
+                mihomoRuntimeSyncQueued = true;
+              }
+          }
+          const xrayDesiredRelevant = !!managedXrayRuntimePlan;
+          '''
+
+          old3 = '''      && xrayRuntimeRelevant
+                && !deferXrayForMihomoHandoff
+                && (xrayRuntimeConfigChanged || runtimeSyncBootstrap || xrayPeriodicReconcileDue)) {
+          '''
+          new3 = '''      && xrayRuntimeRelevant
+                && !deferXrayForMihomoHandoff
+                && !mihomoRuntimeSyncQueued
+                && (xrayRuntimeConfigChanged || runtimeSyncBootstrap || xrayPeriodicReconcileDue)) {
+          '''
+
+          for label, old, new in [('anchor1', old1, new1), ('anchor2', old2, new2), ('anchor3', old3, new3)]:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label} expected exactly 1 match, got {count}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+      - name: Verify targeted Panel paths
+        run: |
+          pnpm install --frozen-lockfile
+          node --import tsx --test \
+            server/protocolXrayMigration.test.ts \
+            server/protocolXrayRuntimeAction.test.ts \
+            server/protocolManagedRuntimePlans.test.ts \
+            server/protocolRuntimeStatus.test.ts
+          pnpm build
+      - name: Commit patch and self-delete
+        run: |
+          rm -f .github/workflows/p0-2c-handoff-fix-once.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add server/agentHeartbeatRoute.ts .github/workflows/p0-2c-handoff-fix-once.yml
+          git diff --cached --check
+          git commit -m "fix(p0-2c): serialize Mihomo to Xray handoff"
+          git push origin HEAD:fix/p0-2c-reality-multi-user
