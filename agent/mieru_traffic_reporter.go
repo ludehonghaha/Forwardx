@@ -36,8 +36,9 @@ type mieruTrafficBaseline struct {
 }
 
 type mieruTrafficBaselineState struct {
-	Identity  string                 `json:"identity"`
-	Baselines []mieruTrafficBaseline `json:"baselines"`
+	Identity    string                 `json:"identity"`
+	Initialized bool                   `json:"initialized"`
+	Baselines   []mieruTrafficBaseline `json:"baselines"`
 }
 
 type pendingMieruTrafficReport struct {
@@ -130,14 +131,15 @@ func reportMieruAssignmentTrafficOnce() error {
 	if len(current) == 0 {
 		return nil
 	}
-	acknowledged, err := loadMieruTrafficBaselines(identity)
+	acknowledged, initialized, err := loadMieruTrafficBaselines(identity)
 	if err != nil {
 		return fmt.Errorf("load Mieru traffic baselines: %w", err)
 	}
-	deltas, nextBaselines := diffMieruAssignmentTraffic(current, acknowledged)
-	if len(deltas) == 0 {
-		// The first observation is a baseline only. Persist it immediately so
-		// pre-upgrade Mita counters are never charged as new ForwardX traffic.
+	deltas, nextBaselines := diffMieruAssignmentTraffic(current, acknowledged, initialized)
+	if !initialized || len(deltas) == 0 {
+		// Only the reporter's first observation is baseline-only. Once that
+		// baseline exists, a newly assigned username starts from zero and its
+		// first observed bytes are real post-assignment traffic that must count.
 		return commitMieruTrafficBaselines(identity, nextBaselines)
 	}
 
@@ -222,6 +224,7 @@ func mieruCounterDelta(current, acknowledged uint64) uint64 {
 func diffMieruAssignmentTraffic(
 	current []mieruAssignmentTrafficStat,
 	acknowledged map[string]mieruTrafficBaseline,
+	accountNewUsers bool,
 ) (deltas []mieruAssignmentTrafficStat, nextBaselines []mieruTrafficBaseline) {
 	next := make(map[string]mieruTrafficBaseline, len(acknowledged)+len(current))
 	for username, baseline := range acknowledged {
@@ -235,11 +238,15 @@ func diffMieruAssignmentTraffic(
 			continue
 		}
 		previous, existed := acknowledged[stat.Username]
-		if existed {
+		if existed || accountNewUsers {
 			delta := mieruAssignmentTrafficStat{
 				Username: stat.Username,
-				BytesIn:  mieruCounterDelta(stat.BytesIn, previous.BytesIn),
-				BytesOut: mieruCounterDelta(stat.BytesOut, previous.BytesOut),
+				BytesIn:  stat.BytesIn,
+				BytesOut: stat.BytesOut,
+			}
+			if existed {
+				delta.BytesIn = mieruCounterDelta(stat.BytesIn, previous.BytesIn)
+				delta.BytesOut = mieruCounterDelta(stat.BytesOut, previous.BytesOut)
 			}
 			if delta.BytesIn > 0 || delta.BytesOut > 0 {
 				deltas = append(deltas, delta)
@@ -275,22 +282,30 @@ func normalizeMieruTrafficBaselines(rows []mieruTrafficBaseline) (map[string]mie
 	return result, nil
 }
 
-func loadMieruTrafficBaselines(identity string) (map[string]mieruTrafficBaseline, error) {
+func loadMieruTrafficBaselines(identity string) (map[string]mieruTrafficBaseline, bool, error) {
 	raw, err := os.ReadFile(mieruTrafficBaselinePath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return map[string]mieruTrafficBaseline{}, nil
+			return map[string]mieruTrafficBaseline{}, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	var state mieruTrafficBaselineState
 	if err := json.Unmarshal(raw, &state); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if strings.TrimSpace(state.Identity) != strings.TrimSpace(identity) {
-		return map[string]mieruTrafficBaseline{}, nil
+		return map[string]mieruTrafficBaseline{}, false, nil
 	}
-	return normalizeMieruTrafficBaselines(state.Baselines)
+	baselines, err := normalizeMieruTrafficBaselines(state.Baselines)
+	if err != nil {
+		return nil, false, err
+	}
+	// Older branch builds did not persist Initialized. A matching baseline file
+	// with at least one row is nevertheless already initialized and must not
+	// suppress the first bytes of a subsequently added assignment.
+	initialized := state.Initialized || len(baselines) > 0
+	return baselines, initialized, nil
 }
 
 func commitMieruTrafficBaselines(identity string, baselines []mieruTrafficBaseline) error {
@@ -300,7 +315,11 @@ func commitMieruTrafficBaselines(identity string, baselines []mieruTrafficBaseli
 	if _, err := normalizeMieruTrafficBaselines(baselines); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(mieruTrafficBaselineState{Identity: identity, Baselines: baselines})
+	raw, err := json.Marshal(mieruTrafficBaselineState{
+		Identity:    identity,
+		Initialized: true,
+		Baselines:   baselines,
+	})
 	if err != nil {
 		return err
 	}
