@@ -46,6 +46,18 @@ function mihomoState(
   };
 }
 
+function xrayState(
+  listeners: Array<{ runtime: string; port: number; protocol: "tcp" | "udp"; ready: boolean }>,
+  active = true,
+) {
+  return {
+    rules: [],
+    tunnels: [],
+    services: [{ name: "forwardx-xray", active, hasWork: true }],
+    listeners,
+  };
+}
+
 test("checks managed Mieru against the single mita transport listener", () => {
   const result = projectProtocolEndpointRuntimeStatus({
     endpoint: endpoint({
@@ -161,7 +173,7 @@ test("keeps external endpoints outside Agent runtime status", () => {
 });
 
 test("Mihomo entry protocols require Agent 2.2.193 runtime reporting", () => {
-  for (const protocol of ["snell", "vless_reality", "hysteria2"]) {
+  for (const protocol of ["snell", "hysteria2"]) {
     const result = projectProtocolEndpointRuntimeStatus({
       endpoint: endpoint({ protocol }),
       host: host({ agentVersion: "2.2.192", agentLastAppliedRevision: 12 }),
@@ -174,27 +186,58 @@ test("Mihomo entry protocols require Agent 2.2.193 runtime reporting", () => {
   }
 });
 
-test("Snell and Reality require a real Mihomo TCP listener", () => {
-  for (const protocol of ["snell", "vless_reality"]) {
-    const healthy = projectProtocolEndpointRuntimeStatus({
-      endpoint: endpoint({ protocol, configJson: { listenPort: 24567, udp: true } }),
-      host: host({ agentVersion: "2.2.193" }),
-      hostProtocolRevision: 12,
-      localState: mihomoState([{ runtime: "mihomo", port: 24567, protocol: "tcp", ready: true }]),
-    });
-    assert.equal(healthy.state, "healthy", protocol);
-    assert.equal(healthy.listenerHealthy, true, protocol);
-    assert.match(healthy.message, /TCP.*24567/, protocol);
+test("Reality requires Agent 2.2.196 Xray runtime reporting", () => {
+  const result = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "vless_reality" }),
+    host: host({ agentVersion: "2.2.195", agentLastAppliedRevision: 12 }),
+    hostProtocolRevision: 12,
+    localState: xrayState([]),
+  });
+  assert.equal(result.state, "unsupported");
+  assert.equal(result.listenerHealthy, null);
+  assert.match(result.message, /2\.2\.196/);
+});
 
-    const wrongTransport = projectProtocolEndpointRuntimeStatus({
-      endpoint: endpoint({ protocol, configJson: { listenPort: 24567, udp: true } }),
-      host: host({ agentVersion: "2.2.193" }),
-      hostProtocolRevision: 12,
-      localState: mihomoState([{ runtime: "mihomo", port: 24567, protocol: "udp", ready: true }]),
-    });
-    assert.equal(wrongTransport.state, "unhealthy", protocol);
-    assert.match(wrongTransport.lastError || "", /TCP/, protocol);
-  }
+test("Snell requires a real Mihomo TCP listener", () => {
+  const healthy = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "snell", configJson: { listenPort: 24567, udp: true } }),
+    host: host({ agentVersion: "2.2.193" }),
+    hostProtocolRevision: 12,
+    localState: mihomoState([{ runtime: "mihomo", port: 24567, protocol: "tcp", ready: true }]),
+  });
+  assert.equal(healthy.state, "healthy");
+  assert.equal(healthy.listenerHealthy, true);
+  assert.match(healthy.message, /TCP.*24567/);
+
+  const wrongTransport = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "snell", configJson: { listenPort: 24567, udp: true } }),
+    host: host({ agentVersion: "2.2.193" }),
+    hostProtocolRevision: 12,
+    localState: mihomoState([{ runtime: "mihomo", port: 24567, protocol: "udp", ready: true }]),
+  });
+  assert.equal(wrongTransport.state, "unhealthy");
+  assert.match(wrongTransport.lastError || "", /TCP/);
+});
+
+test("Reality requires a real Xray TCP listener", () => {
+  const healthy = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "vless_reality", configJson: { listenPort: 24567, udp: true } }),
+    host: host({ agentVersion: "2.2.196" }),
+    hostProtocolRevision: 12,
+    localState: xrayState([{ runtime: "xray", port: 24567, protocol: "tcp", ready: true }]),
+  });
+  assert.equal(healthy.state, "healthy");
+  assert.equal(healthy.listenerHealthy, true);
+  assert.match(healthy.message, /TCP.*24567/);
+
+  const wrongRuntime = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "vless_reality", configJson: { listenPort: 24567, udp: true } }),
+    host: host({ agentVersion: "2.2.196" }),
+    hostProtocolRevision: 12,
+    localState: mihomoState([{ runtime: "mihomo", port: 24567, protocol: "tcp", ready: true }]),
+  });
+  assert.equal(wrongRuntime.state, "unhealthy");
+  assert.match(wrongRuntime.lastError || "", /TCP/);
 });
 
 test("Hysteria2 requires a real Mihomo UDP listener", () => {
@@ -228,10 +271,21 @@ test("Mihomo service failure is reported as runtime unhealthy", () => {
   assert.match(result.lastError || "", /forwardx-mihomo/);
 });
 
-test("Mihomo entry protocols stay pending until the Agent applies their revision", () => {
+test("Xray service failure is reported as Reality runtime unhealthy", () => {
+  const result = projectProtocolEndpointRuntimeStatus({
+    endpoint: endpoint({ protocol: "vless_reality", configJson: { listenPort: 40006 } }),
+    host: host({ agentVersion: "2.2.196" }),
+    hostProtocolRevision: 12,
+    localState: xrayState([{ runtime: "xray", port: 40006, protocol: "tcp", ready: false }], false),
+  });
+  assert.equal(result.state, "unhealthy");
+  assert.match(result.lastError || "", /forwardx-xray/);
+});
+
+test("managed entry protocols stay pending until the Agent applies their revision", () => {
   const result = projectProtocolEndpointRuntimeStatus({
     endpoint: endpoint({ protocol: "vless_reality" }),
-    host: host({ agentVersion: "2.2.193", agentLastAppliedRevision: 11 }),
+    host: host({ agentVersion: "2.2.196", agentLastAppliedRevision: 11 }),
     hostProtocolRevision: 12,
   });
   assert.equal(result.state, "pending");
