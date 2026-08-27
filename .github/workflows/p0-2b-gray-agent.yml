@@ -5,6 +5,8 @@ on:
     branches:
       - fix/p0-2b-mieru-multi-user
     paths:
+      - "agent/**"
+      - "shared/versions.ts"
       - ".github/workflows/p0-2b-gray-agent.yml"
   workflow_dispatch:
 
@@ -69,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f agent/mieru_traffic_reporter.go
-          grep -q "mieru" agent/mieru_traffic_reporter.go
+          grep -q "MITA_UDS_PATH=/run/forwardx-mita/mita.sock" agent/mieru_traffic_reporter.go
           chmod +x dist/p0-2b-gray-agent/forwardx-agent-p0-2b-gray-linux-amd64
           dist/p0-2b-gray-agent/forwardx-agent-p0-2b-gray-linux-amd64 -h >/tmp/agent-help.txt 2>&1 || true
           grep -q -- "-config" /tmp/agent-help.txt
