@@ -471,9 +471,11 @@ export default function ProtocolAccessPage() {
     setAssignment.mutate({
       endpointId: Number(assignmentEndpoint.id),
       userId,
-      credential: assignmentEndpoint.protocol === "mieru"
-        ? (assignmentUsername || assignmentPassword ? { username: assignmentUsername.trim(), password: assignmentPassword } : {})
-        : (assignmentPassword ? { password: assignmentPassword } : {}),
+      credential: assignmentEndpoint.runtimeMode === "managed" && assignmentEndpoint.protocol === "mieru"
+        ? {}
+        : assignmentEndpoint.protocol === "mieru"
+          ? (assignmentUsername || assignmentPassword ? { username: assignmentUsername.trim(), password: assignmentPassword } : {})
+          : (assignmentPassword ? { password: assignmentPassword } : {}),
       isEnabled: assignmentEnabled,
     });
   };
@@ -490,7 +492,9 @@ export default function ProtocolAccessPage() {
     setAssignment.mutate({
       endpointId: Number(assignmentEndpoint.id),
       userId: Number(assignment.user?.id || assignment.access?.userId),
-      credential: parseProtocolAccessConfig(assignment.access?.credentialJson),
+      credential: assignmentEndpoint.runtimeMode === "managed" && assignmentEndpoint.protocol === "mieru"
+        ? {}
+        : parseProtocolAccessConfig(assignment.access?.credentialJson),
       isEnabled,
     });
   };
@@ -1020,7 +1024,7 @@ export default function ProtocolAccessPage() {
               <div className="space-y-2">
                 <Label>{assignmentEndpoint?.protocol === "mieru" ? "独立 Mieru 密码（可选）" : "独立 SS 密码（可选）"}</Label>
                 <Input disabled={assignmentEndpoint?.runtimeMode === "managed"} type="password" value={assignmentPassword} onChange={(event) => setAssignmentPassword(event.target.value)} autoComplete="new-password" />
-                {assignmentEndpoint?.runtimeMode === "managed" && <p className="text-xs text-muted-foreground">托管端点固定使用共享用户名和密码，用户分配只控制订阅权限。</p>}
+                {assignmentEndpoint?.runtimeMode === "managed" && <p className="text-xs text-muted-foreground">托管 Mieru 的独立凭据由 ForwardX 自动管理；用户分配这里只控制接入权限。</p>}
               </div>
               <Button onClick={saveAssignment} disabled={!assignmentUserId || setAssignment.isPending}>
                 <UserPlus className="mr-2 h-4 w-4" /> 保存分配
