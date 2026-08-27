@@ -172,7 +172,15 @@ func reportMieruAssignmentTrafficOnce() error {
 }
 
 func collectMieruAssignmentTraffic() ([]mieruAssignmentTrafficStat, error) {
-	raw, err := commandOutputWithTimeout(mieruTrafficQueryTimeout, managedMieruBinaryPath, "get", "metrics")
+	raw, err := commandCombinedOutputWithTimeout(
+		mieruTrafficQueryTimeout,
+		"/usr/bin/env",
+		"MITA_UDS_PATH=/run/forwardx-mita/mita.sock",
+		"MITA_INSECURE_UDS=1",
+		managedMieruBinaryPath,
+		"get",
+		"metrics",
+	)
 	if err != nil {
 		// An installed but currently idle/retired runtime is not an accounting
 		// failure. Avoid noisy logs while reconciliation is stopping the service.
