@@ -46,10 +46,11 @@ test("Xray Reality compiles multiple ForwardX assignments into one listener", ()
   const inbound = realityInbound(plan);
   assert.ok(inbound);
   assert.equal(inbound.port, 32676);
-  assert.deepEqual(inbound.settings.users, [
+  assert.deepEqual(inbound.settings.clients, [
     { id: USER_A, level: 0, email: "forwardx-assignment-5-user-2", flow: "xtls-rprx-vision" },
     { id: USER_B, level: 0, email: "forwardx-assignment-6-user-3", flow: "xtls-rprx-vision" },
   ]);
+  assert.equal(inbound.settings.users, undefined);
   assert.equal(JSON.stringify(plan).includes(LEGACY), false);
 });
 
@@ -96,13 +97,14 @@ test("Xray Reality with no enabled assignments uses a deterministic private park
   const second = buildManagedXrayRuntimePlan([endpoint([])]);
   assert.ok(first);
   assert.ok(second);
-  const firstUsers = realityInbound(first).settings.users;
-  const secondUsers = realityInbound(second).settings.users;
-  assert.equal(firstUsers.length, 1);
-  assert.equal(firstUsers[0].email, "forwardx-parking-22");
-  assert.equal(firstUsers[0].id, secondUsers[0].id);
-  assert.notEqual(firstUsers[0].id, LEGACY);
-  assert.notEqual(firstUsers[0].id, USER_A);
+  const firstClients = realityInbound(first).settings.clients;
+  const secondClients = realityInbound(second).settings.clients;
+  assert.equal(firstClients.length, 1);
+  assert.equal(firstClients[0].email, "forwardx-parking-22");
+  assert.equal(firstClients[0].id, secondClients[0].id);
+  assert.notEqual(firstClients[0].id, LEGACY);
+  assert.notEqual(firstClients[0].id, USER_A);
+  assert.equal(realityInbound(first).settings.users, undefined);
   assert.deepEqual(first.users, []);
 });
 
