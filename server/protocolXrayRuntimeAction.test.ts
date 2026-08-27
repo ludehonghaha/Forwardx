@@ -48,7 +48,7 @@ test("Xray runtime sync installs, validates, starts and verifies managed Reality
   assert.match(commands, /run -test -c/);
 });
 
-test("Xray runtime sync stops cleanly when the Agent has no managed Reality", () => {
+test("Xray runtime sync stops and removes stale config when the Agent has no managed Reality", () => {
   const action = buildManagedXrayRuntimeSyncAction(null);
 
   assert.equal(action.forwardType, "xray-runtime-sync");
@@ -57,6 +57,8 @@ test("Xray runtime sync stops cleanly when the Agent has no managed Reality", ()
   const commands = action.commands.join("\n");
   assert.match(commands, /forwardx-xray/);
   assert.match(commands, /stop/);
+  assert.match(commands, new RegExp(XRAY_CONFIG_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(commands, /rm -f/);
   assert.doesNotMatch(commands, /run -test -c/);
   assert.doesNotMatch(commands, /Xray-linux-64\.zip/);
 });
