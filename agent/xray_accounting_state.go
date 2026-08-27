@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -13,6 +14,8 @@ const (
 	xrayTrafficBaselineSchema = 1
 	xrayTrafficBaselineFile   = "xray_traffic_baseline.state"
 )
+
+var errXrayTrafficBaselineIdentityMismatch = errors.New("xray traffic baseline identity mismatch")
 
 type persistedXrayTrafficBaselineState struct {
 	Schema    int                   `json:"schema"`
@@ -57,7 +60,7 @@ func decodeXrayTrafficBaselineState(raw []byte, identity string) (map[int]xrayTr
 	}
 	expectedIdentity := strings.TrimSpace(identity)
 	if expectedIdentity == "" || strings.TrimSpace(state.Identity) != expectedIdentity {
-		return nil, fmt.Errorf("xray traffic baseline identity mismatch")
+		return nil, errXrayTrafficBaselineIdentityMismatch
 	}
 	normalized, err := normalizeXrayTrafficBaselines(state.Baselines)
 	if err != nil {
