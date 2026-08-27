@@ -67,7 +67,7 @@ function managedRealityInbound(row: ManagedProtocolEndpointRow) {
     : [];
   const seenUuids = new Set<string>();
   const runtimeUsers: ManagedXrayRuntimeUser[] = [];
-  const users: Array<{ id: string; level: 0; email: string; flow: "xtls-rprx-vision" }> = [];
+  const clients: Array<{ id: string; level: 0; email: string; flow: "xtls-rprx-vision" }> = [];
 
   for (const item of sourceUsers) {
     const assignmentId = Number(item?.assignmentId || 0);
@@ -78,11 +78,11 @@ function managedRealityInbound(row: ManagedProtocolEndpointRow) {
     seenUuids.add(uuid);
     const email = assignmentEmail(assignmentId, userId);
     runtimeUsers.push({ assignmentId, userId, email, uuid });
-    users.push({ id: uuid, level: 0, email, flow: "xtls-rprx-vision" });
+    clients.push({ id: uuid, level: 0, email, flow: "xtls-rprx-vision" });
   }
 
-  if (users.length === 0) {
-    users.push({
+  if (clients.length === 0) {
+    clients.push({
       id: parkingRealityUuid(Number(row.id), privateKey),
       level: 0,
       email: `forwardx-parking-${Number(row.id)}`,
@@ -97,7 +97,10 @@ function managedRealityInbound(row: ManagedProtocolEndpointRow) {
       port: listenPort,
       protocol: "vless",
       settings: {
-        users,
+        // Xray 26.3.27 only consumes inbound VLESS identities from `clients`.
+        // `users` is an outbound field in that release and is ignored here,
+        // which would start a valid-looking server with zero accepted users.
+        clients,
         decryption: "none",
       },
       streamSettings: {
