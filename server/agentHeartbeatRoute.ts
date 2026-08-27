@@ -6295,6 +6295,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       AGENT_MIHOMO_RUNTIME_RECONCILE_MS,
     );
     const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
+    let mihomoRuntimeSyncQueued = false;
     if (!deferActionsForLocalState && mihomoRuntimeRelevant
       && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {
       const mihomoRuntimeSyncAction = {
@@ -6319,7 +6320,10 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         mihomoRuntimeConfigChanged || runtimeSyncBootstrap,
         responseIssuedAt,
         AGENT_MIHOMO_RUNTIME_RECONCILE_MS,
-      )) actions.push(mihomoRuntimeSyncAction);
+      )) {
+        actions.push(mihomoRuntimeSyncAction);
+        mihomoRuntimeSyncQueued = true;
+      }
     }
     const xrayDesiredRelevant = !!managedXrayRuntimePlan;
     const xrayPeriodicReconcileDue = xrayDesiredRelevant && runtimeSyncReconcileDue(
@@ -6333,6 +6337,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     if (!deferActionsForLocalState
       && xrayRuntimeRelevant
       && !deferXrayForMihomoHandoff
+      && !mihomoRuntimeSyncQueued
       && (xrayRuntimeConfigChanged || runtimeSyncBootstrap || xrayPeriodicReconcileDue)) {
       const xrayRuntimeSyncAction = buildManagedXrayRuntimeSyncAction(managedXrayRuntimePlan) as any;
       if (shouldSendRuntimeSyncAction(
