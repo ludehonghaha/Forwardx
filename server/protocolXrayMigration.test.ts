@@ -4,6 +4,7 @@ import type { ManagedXrayRuntimePlan } from "./protocolXrayPlan";
 import {
   AGENT_XRAY_RUNTIME_VERSION,
   agentSupportsManagedXrayRuntime,
+  managedXrayRuntimeNeedsApply,
   shouldDeferXrayForMihomoRealityHandoff,
 } from "./protocolXrayMigration";
 
@@ -36,6 +37,17 @@ test("allows Xray after Mihomo releases the Reality port", () => {
     listeners: [{ runtime: "mihomo", port: 24568, protocol: "tcp", ready: true }],
   }), false);
   assert.equal(shouldDeferXrayForMihomoRealityHandoff(plan(), {
+    listeners: [{ runtime: "xray", port: 24567, protocol: "tcp", ready: true }],
+  }), false);
+});
+
+test("second phase keeps applying until every desired Xray listener is ready", () => {
+  assert.equal(managedXrayRuntimeNeedsApply(plan(), null), true);
+  assert.equal(managedXrayRuntimeNeedsApply(plan(), { listeners: [] }), true);
+  assert.equal(managedXrayRuntimeNeedsApply(plan(), {
+    listeners: [{ runtime: "xray", port: 24567, protocol: "tcp", ready: false }],
+  }), true);
+  assert.equal(managedXrayRuntimeNeedsApply(plan(), {
     listeners: [{ runtime: "xray", port: 24567, protocol: "tcp", ready: true }],
   }), false);
 });
