@@ -5,6 +5,7 @@ import {
   AGENT_XRAY_RUNTIME_VERSION,
   agentSupportsManagedXrayRuntime,
   managedXrayRuntimeNeedsApply,
+  managedXrayRuntimeNeedsCleanup,
   shouldDeferXrayForMihomoRealityHandoff,
 } from "./protocolXrayMigration";
 
@@ -49,5 +50,23 @@ test("second phase keeps applying until every desired Xray listener is ready", (
   }), true);
   assert.equal(managedXrayRuntimeNeedsApply(plan(), {
     listeners: [{ runtime: "xray", port: 24567, protocol: "tcp", ready: true }],
+  }), false);
+});
+
+test("stale Xray work is cleaned up after the final Reality endpoint disappears", () => {
+  assert.equal(managedXrayRuntimeNeedsCleanup(null, {
+    services: [{ name: "forwardx-xray", hasWork: true, active: true }],
+    listeners: [],
+  }), true);
+  assert.equal(managedXrayRuntimeNeedsCleanup(null, {
+    services: [{ name: "forwardx-xray", hasWork: false, active: true }],
+    listeners: [{ runtime: "xray", port: 24567, protocol: "tcp", ready: true }],
+  }), true);
+  assert.equal(managedXrayRuntimeNeedsCleanup(null, {
+    services: [{ name: "forwardx-xray", hasWork: false, active: false }],
+    listeners: [],
+  }), false);
+  assert.equal(managedXrayRuntimeNeedsCleanup(plan(), {
+    services: [{ name: "forwardx-xray", hasWork: true, active: true }],
   }), false);
 });
