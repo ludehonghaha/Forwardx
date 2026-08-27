@@ -18,6 +18,15 @@ export function agentSupportsManagedXrayRuntime(agentVersion: unknown) {
   return isAgentVersionAtLeast(String(agentVersion || ""), AGENT_XRAY_RUNTIME_VERSION);
 }
 
+function xrayListenerReadyOnPort(localState: LocalRuntimeStateLike, port: number) {
+  return Array.isArray(localState?.listeners) && localState.listeners.some((listener) => (
+    String(listener?.runtime || "").trim().toLowerCase() === "xray"
+    && String(listener?.protocol || "").trim().toLowerCase() === "tcp"
+    && listener?.ready === true
+    && Number(listener?.port || 0) === port
+  ));
+}
+
 /**
  * A legacy managed Reality listener belongs to Mihomo until the new Agent has
  * applied the Mihomo plan that excludes Reality. Never start Xray while that
@@ -37,4 +46,21 @@ export function shouldDeferXrayForMihomoRealityHandoff(
     && listener?.ready === true
     && desiredPorts.has(Number(listener?.port || 0))
   ));
+}
+
+/**
+ * Revision-only reconciliation is insufficient immediately after the first
+ * handoff heartbeat because applying the Mihomo release may advance the Agent
+ * revision before Xray has ever started. Keep the second phase driven by real
+ * listener readiness so takeover and later drift repair are deterministic.
+ */
+export function managedXrayRuntimeNeedsApply(
+  plan: ManagedXrayRuntimePlan | null,
+  localState: LocalRuntimeStateLike,
+) {
+  if (!plan) return false;
+  return plan.sockets.some((socket) => {
+    const port = Number(socket.listenPort || 0);
+    return port <= 0 || !xrayListenerReadyOnPort(localState, port);
+  });
 }
