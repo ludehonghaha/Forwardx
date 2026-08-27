@@ -31,37 +31,25 @@ jobs:
           path = Path('server/agentHeartbeatRoute.ts')
           text = path.read_text()
 
-          old1 = '''    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
-          if (!deferActionsForLocalState && mihomoRuntimeRelevant
-          '''
-          new1 = '''    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
-          let mihomoRuntimeSyncQueued = false;
-          if (!deferActionsForLocalState && mihomoRuntimeRelevant
-          '''
+          replacements = [
+              (
+                  'anchor1',
+                  '    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;',
+                  '    const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;\n    let mihomoRuntimeSyncQueued = false;',
+              ),
+              (
+                  'anchor2',
+                  '      )) actions.push(mihomoRuntimeSyncAction);',
+                  '      )) {\n        actions.push(mihomoRuntimeSyncAction);\n        mihomoRuntimeSyncQueued = true;\n      }',
+              ),
+              (
+                  'anchor3',
+                  '      && !deferXrayForMihomoHandoff\n',
+                  '      && !deferXrayForMihomoHandoff\n      && !mihomoRuntimeSyncQueued\n',
+              ),
+          ]
 
-          old2 = '''      )) actions.push(mihomoRuntimeSyncAction);
-          }
-          const xrayDesiredRelevant = !!managedXrayRuntimePlan;
-          '''
-          new2 = '''      )) {
-                actions.push(mihomoRuntimeSyncAction);
-                mihomoRuntimeSyncQueued = true;
-              }
-          }
-          const xrayDesiredRelevant = !!managedXrayRuntimePlan;
-          '''
-
-          old3 = '''      && xrayRuntimeRelevant
-                && !deferXrayForMihomoHandoff
-                && (xrayRuntimeConfigChanged || runtimeSyncBootstrap || xrayPeriodicReconcileDue)) {
-          '''
-          new3 = '''      && xrayRuntimeRelevant
-                && !deferXrayForMihomoHandoff
-                && !mihomoRuntimeSyncQueued
-                && (xrayRuntimeConfigChanged || runtimeSyncBootstrap || xrayPeriodicReconcileDue)) {
-          '''
-
-          for label, old, new in [('anchor1', old1, new1), ('anchor2', old2, new2), ('anchor3', old3, new3)]:
+          for label, old, new in replacements:
               count = text.count(old)
               if count != 1:
                   raise SystemExit(f'{label} expected exactly 1 match, got {count}')
@@ -81,9 +69,10 @@ jobs:
       - name: Commit patch and self-delete
         run: |
           rm -f .github/workflows/p0-2c-handoff-fix-once.yml
+          rm -f .github/p0-2c-handoff-trigger
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add server/agentHeartbeatRoute.ts .github/workflows/p0-2c-handoff-fix-once.yml
+          git add server/agentHeartbeatRoute.ts .github/workflows/p0-2c-handoff-fix-once.yml .github/p0-2c-handoff-trigger
           git diff --cached --check
           git commit -m "fix(p0-2c): serialize Mihomo to Xray handoff"
           git push origin HEAD:fix/p0-2c-reality-multi-user
