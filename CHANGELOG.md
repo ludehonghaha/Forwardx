@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.3.284] - 2026-08-27
+
+### 新增
+
+- 托管 Mieru 支持同一端点、同一监听端口分配给多个 ForwardX 用户，并为每个分配自动维护独立用户名与密码；首个既有用户可平滑继承旧凭据，避免迁移中断。
+- Mita 单运行时可同时下发多个用户，Agent 读取 Mieru 原生 per-user metrics 并按用户独立累计流量、更新 `trafficUsed` 与协议流量 bucket。
+- 用户启用、停用、到期或超限只影响对应 Mieru 用户，不会重建端点或影响同端口其他用户；重新启用后保留原独立凭据。
+
+### 修复与优化
+
+- 修复 Mieru Reporter 未继承 Mita UDS 环境变量导致无法读取真实 per-user metrics 的问题。
+- 修复协议流量 claim 与 legacy traffic claim 共用原始 reportId 引发唯一约束冲突、HTTP ACK 失败和 pending 重试的问题；legacy claim 使用独立命名空间并保持旧 pending 幂等恢复。
+- 修复托管 Mieru 用户启用/停用时前端错误回传用户名与密码、被后端凭据保护拒绝的问题；托管凭据继续只由 ForwardX 自动管理。
+
+### 版本
+
+- 面板与 APK Release `2.3.284`，Agent `2.2.195`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.283] - 2026-08-25
 
 ### 修复与优化
