@@ -121,8 +121,9 @@ async function recordManagedMieruAssignmentRevision(
     resourceId: endpointId,
     hostId,
     action: "update",
-    before: { managedMieruAssignmentMutation: null },
+    before: { protocol: "mieru", managedMieruAssignmentMutation: null },
     after: {
+      protocol: "mieru",
       managedMieruAssignmentMutation: {
         ...mutation,
         nonce: randomUUID(),
