@@ -33,16 +33,6 @@ jobs:
 
           replacements = [
               (
-                  'service constant',
-                  'const mihomoServiceName = "forwardx-mihomo"\n',
-                  'const mihomoServiceName = "forwardx-mihomo"\nconst xrayServiceName = "forwardx-xray"\n',
-              ),
-              (
-                  'config constant',
-                  'const mihomoConfigPath = "/etc/forwardx/mihomo/config.yaml"\n',
-                  'const mihomoConfigPath = "/etc/forwardx/mihomo/config.yaml"\nconst xrayConfigPath = "/etc/forwardx/xray/config.json"\n',
-              ),
-              (
                   'local readiness config',
                   '\t\t{mieruConfigPath, mieruServiceName, "mieru"},\n\t\t{mihomoConfigPath, mihomoServiceName, "mihomo"},\n',
                   '\t\t{mieruConfigPath, mieruServiceName, "mieru"},\n\t\t{mihomoConfigPath, mihomoServiceName, "mihomo"},\n\t\t{xrayConfigPath, xrayServiceName, "xray"},\n',
