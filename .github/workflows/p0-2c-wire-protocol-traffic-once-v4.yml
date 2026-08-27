@@ -1,0 +1,134 @@
+name: P0-2C Wire Protocol Traffic Once V4
+
+on:
+  push:
+    branches:
+      - fix/p0-2c-reality-multi-user
+    paths:
+      - .github/workflows/p0-2c-wire-protocol-traffic-once-v4.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: fix/p0-2c-reality-multi-user
+          fetch-depth: 0
+
+      - name: Reapply Panel protocol ACK wiring and integration test
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/p0-2c-wire-protocol-traffic-once-v2.yml').read_text()
+
+          def extract_run(start_name: str, end_name: str, output: str):
+              start = f"      - name: {start_name}\n        shell: bash\n        run: |\n"
+              end = f"\n      - name: {end_name}"
+              if source.count(start) != 1 or source.count(end) != 1:
+                  raise SystemExit(f'workflow block markers not unique: {start_name}')
+              body = source.split(start, 1)[1].split(end, 1)[0]
+              lines = body.splitlines()
+              normalized = "\n".join(line[10:] if line.startswith('          ') else line for line in lines) + "\n"
+              Path(output).write_text(normalized)
+
+          extract_run('Patch protocol traffic route', 'Reuse protocol traffic route integration test', '/tmp/p0-2c-panel-patch.sh')
+          extract_run('Reuse protocol traffic route integration test', 'Setup pnpm', '/tmp/p0-2c-panel-test.sh')
+          PY
+          bash /tmp/p0-2c-panel-patch.sh
+          bash /tmp/p0-2c-panel-test.sh
+
+      - name: Fix Xray StatsService discovery
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('agent/xray_traffic_reporter.go')
+          text = path.read_text()
+          old = '''\tserver, err := discoverXrayStatsAPIServer(ssOutput)
+          \tif err != nil {
+          \t\tif !managedServiceActive(xrayServiceName) {
+          \t\t\treturn nil, nil
+          \t\t}
+          \t\treturn nil, err
+          \t}
+          '''
+          new = '''\tserver, ok := parseXrayStatsAPIListen(string(ssOutput))
+          \tif !ok {
+          \t\tif !managedServiceActive(xrayServiceName) {
+          \t\t\treturn nil, nil
+          \t\t}
+          \t\treturn nil, fmt.Errorf("discover Xray StatsService listener: expected exactly one forwardx-xray loopback listener")
+          \t}
+          '''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Xray StatsService discovery patch expected 1 match, found {count}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache-dependency-path: agent/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Panel protocol accounting
+        run: |
+          pnpm check:versions
+          pnpm exec tsc --noEmit
+          node --import tsx --test \
+            server/agentProtocolTrafficAccounting.test.ts \
+            server/agentProtocolTrafficRoute.test.ts \
+            server/protocolXrayPlan.test.ts \
+            server/protocolXrayMigration.test.ts \
+            server/protocolXrayRuntimeAction.test.ts
+          pnpm build
+
+      - name: Verify Agent reporter
+        working-directory: agent
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Commit verified ACK-safe protocol accounting
+        shell: bash
+        run: |
+          rm .github/workflows/p0-2c-wire-protocol-traffic-once.yml
+          rm .github/workflows/p0-2c-wire-protocol-traffic-once-v2.yml
+          rm .github/workflows/p0-2c-wire-protocol-traffic-once-v3.yml
+          rm .github/workflows/p0-2c-wire-protocol-traffic-once-v4.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            agent/xray_traffic_reporter.go \
+            server/agentReportRoutes.ts \
+            server/agentProtocolTrafficRoute.test.ts \
+            .github/workflows/p0-2c-wire-protocol-traffic-once.yml \
+            .github/workflows/p0-2c-wire-protocol-traffic-once-v2.yml \
+            .github/workflows/p0-2c-wire-protocol-traffic-once-v3.yml \
+            .github/workflows/p0-2c-wire-protocol-traffic-once-v4.yml
+          git commit -m "fix(p0-2c): account Xray protocol traffic before ACK"
+          git push origin HEAD:fix/p0-2c-reality-multi-user
