@@ -64,7 +64,10 @@ export function buildManagedXrayRuntimeSyncAction(
       verifyXrayRuntimeCmd(plan),
     );
   } else {
-    commands.push(stopManagedServiceCmd(XRAY_SERVICE_NAME));
+    commands.push(
+      stopManagedServiceCmd(XRAY_SERVICE_NAME),
+      `rm -f ${shQuote(XRAY_CONFIG_PATH)} ${shQuote(`${XRAY_CONFIG_PATH}.sha256`)} 2>/dev/null || true`,
+    );
   }
 
   const managedConfigs: ManagedXrayRuntimeSyncAction["managedConfigs"] = plan ? [{
