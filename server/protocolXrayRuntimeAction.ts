@@ -75,7 +75,7 @@ export function buildManagedXrayRuntimeSyncAction(
     contentBase64: Buffer.from(JSON.stringify(plan.config, null, 2), "utf8").toString("base64"),
     format: "json",
     mode: 0o600,
-    validateCommand: `${shQuote(XRAY_BIN)} run -test -c {{path}}`,
+    validateCommand: `${shQuote(XRAY_BIN)} run -format json -test -c {{path}}`,
     serviceName: XRAY_SERVICE_NAME,
   }] : [];
 
