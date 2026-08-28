@@ -19,6 +19,12 @@ import { addUserTraffic, setUserForwardAccess } from "./repositories/userReposit
 const MAX_PROTOCOL_TRAFFIC_STATS = 4096;
 const PROTOCOL_REPORT_PRODUCER_PREFIX = "protocol:";
 
+// The encrypted /api/sync tunnel accounts protocol traffic before it rewrites
+// the reportId for the downstream legacy traffic consumer. Carry that result
+// on the Express request so the normal traffic route does not account the same
+// protocol payload a second time.
+export const agentProtocolTrafficAccountingResultKey = Symbol("agentProtocolTrafficAccountingResult");
+
 type ProtocolAssignmentOwnership = {
   assignmentId: number;
   endpointId: number;

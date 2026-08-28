@@ -19,8 +19,11 @@ test("protocol-only Agent traffic route accounts two Reality assignments exactly
     const runtime = await import(url("server/dbRuntime.ts"));
     const schema = await import(url("server/dbSchema.ts"));
     const reports = await import(url("server/agentReportRoutes.ts"));
+    const encryption = await import(url("server/agentEncryptionMiddleware.ts"));
+    const crypto = await import(url("server/agentCrypto.ts"));
 
     let server;
+    let encryptedServer;
     try {
       await runtime.connectDatabase({ type: "sqlite", sqlite: { path: process.env.FORWARDX_TEST_DB } });
       await schema.ensureDatabaseSchema();
@@ -117,8 +120,59 @@ test("protocol-only Agent traffic route accounts two Reality assignments exactly
         Number((await runtime.queryRaw('SELECT COUNT(*) AS count FROM agent_traffic_reports WHERE "hostId" = ? AND "reportId" = ?', [7, "xray-two-users-1"]))[0].count),
         1,
       );
+
+      const encryptedAgentApiRouter = express.Router();
+      reports.registerAgentReportRoutes(encryptedAgentApiRouter);
+      const encryptedApp = express();
+      encryptedApp.use(express.json());
+      encryptedApp.post("/api/sync", encryption.agentEncryptionMiddleware, (req, res, next) => {
+        const tunneledPath = encryption.getAgentTunneledPath(req);
+        assert.equal(tunneledPath, "/api/agent/traffic");
+        req.url = tunneledPath;
+        encryptedAgentApiRouter.handle(req, res, next);
+      });
+      encryptedServer = http.createServer(encryptedApp);
+      await new Promise((resolve, reject) => {
+        encryptedServer.once("error", reject);
+        encryptedServer.listen(0, "127.0.0.1", resolve);
+      });
+      const encryptedAddress = encryptedServer.address();
+      assert.ok(encryptedAddress && typeof encryptedAddress === "object");
+      const encryptedPayload = {
+        stats: [],
+        protocolStats: [{ assignmentId: 501, bytesIn: 13, bytesOut: 17 }],
+        reportId: "xray-encrypted-once",
+        reportProducerId: "xray-agent-boot-1",
+      };
+      const encryptedResponse = await fetch("http://127.0.0.1:" + encryptedAddress.port + "/api/sync", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer xray-route-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(crypto.encryptPayload({
+          path: "/api/agent/traffic",
+          payload: encryptedPayload,
+        }, "xray-route-token")),
+      });
+      assert.equal(encryptedResponse.status, 200);
+      assert.deepEqual(
+        crypto.decryptPayload(await encryptedResponse.json(), "xray-route-token", { rememberReplay: false }),
+        { success: true },
+      );
+      assert.deepEqual(
+        await runtime.queryRaw(
+          'SELECT assignment_id AS assignmentId, bytes_in AS bytesIn, bytes_out AS bytesOut FROM protocol_user_traffic_buckets ORDER BY assignment_id',
+        ),
+        [
+          { assignmentId: 501, bytesIn: 113, bytesOut: 917 },
+          { assignmentId: 502, bytesIn: 200, bytesOut: 1800 },
+        ],
+      );
     } finally {
+      if (encryptedServer) await new Promise((resolve) => encryptedServer.close(resolve));
       if (server) await new Promise((resolve) => server.close(resolve));
+      crypto.resetAgentCryptoCaches?.();
       await runtime.disconnectDatabase?.();
     }
   `;

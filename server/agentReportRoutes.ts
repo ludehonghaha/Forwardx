@@ -41,6 +41,7 @@ import { agentTcpingReportGate } from "./agentTcpingReportGate";
 import { selectAgentTrafficReportInterval } from "./agentHeartbeatGate";
 import {
   accountAgentProtocolTrafficReport,
+  agentProtocolTrafficAccountingResultKey,
   AgentProtocolTrafficValidationError,
 } from "./agentProtocolTrafficAccounting";
 
@@ -596,10 +597,13 @@ agentRouter.post("/api/agent/traffic", async (req: Request, res: Response) => {
     }
     let protocolTrafficResult: Awaited<ReturnType<typeof accountAgentProtocolTrafficReport>> | null = null;
     if (hasProtocolTrafficPayload) {
-      protocolTrafficResult = await accountAgentProtocolTrafficReport({
-        token: String(getResolvedAgentToken(req) || ""),
-        body: req.body,
-      });
+      protocolTrafficResult = (req as any)[agentProtocolTrafficAccountingResultKey] || null;
+      if (!protocolTrafficResult) {
+        protocolTrafficResult = await accountAgentProtocolTrafficReport({
+          token: String(getResolvedAgentToken(req) || ""),
+          body: req.body,
+        });
+      }
     }
 
     // A protocol-only report must not fall through to the generic idle
