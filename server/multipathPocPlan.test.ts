@@ -51,7 +51,7 @@ test("compiles a two-leg client outbound with conservative PoC defaults", () => 
 });
 
 test("compiles the matching server inbound without copying child credentials", () => {
-  const inbound = buildMultipathPocInbound(line, legs);
+  const inbound = buildMultipathPocInbound(line, legs) as Record<string, unknown> | null;
   assert.equal(inbound?.type, "multipath");
   assert.equal(inbound?.listen, "0.0.0.0");
   assert.equal(inbound?.listen_port, 39000);
