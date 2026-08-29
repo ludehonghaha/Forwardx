@@ -22,10 +22,14 @@ test("managed protocol traffic owner accepts one enabled user and rejects ambigu
   ]), /无法把同一监听端口的流量准确拆分给多个用户/);
 });
 
-test("managed Mieru uses native per-user accounting instead of the single-owner bridge", () => {
+test("managed Mieru and Reality use native per-user accounting instead of the single-owner bridge", () => {
   assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "mieru", runtimeMode: "managed" }), true);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "vless_reality", runtimeMode: "managed" }), true);
   assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "mieru", runtimeMode: "external" }), false);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "vless_reality", runtimeMode: "external" }), false);
   assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "shadowsocks", runtimeMode: "managed" }), false);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "snell", runtimeMode: "managed" }), false);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "hysteria2", runtimeMode: "managed" }), false);
 });
 
 test("traffic bridge marker round-trips and can be removed without changing other config", () => {
