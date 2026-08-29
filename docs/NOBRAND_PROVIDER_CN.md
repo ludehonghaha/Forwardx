@@ -1,6 +1,6 @@
 # ForwardX × NoBrand-OneClick Provider 边界
 
-> 状态：Provider 设计边界完成；允许进入只读发现 / external import PoC。禁止直接让 ForwardX 与 NoBrand 同时接管同一协议 runtime。
+> 状态：Provider ownership 边界完成；P2-0 已进入“schema v3 只读状态解析”阶段。禁止直接让 ForwardX 与 NoBrand 同时接管同一协议 runtime。
 
 ## 1. 上游基线
 
@@ -46,7 +46,7 @@ ForwardX 不直接编辑这些文件，不按进程名 kill，不覆盖 unit，�
 
 ## 3. 为什么不能直接“套脚本”
 
-ForwardX 的 managed Mieru 已采用“每台 Agent 主机一个 Mita listener，多 ForwardX assignment 独立凭据与流量”的模型。
+ForwardX 的 managed Mieru 已采用“ForwardX 管理的 Mita runtime + 多 ForwardX assignment 独立凭据与流量”的模型。
 
 NoBrand 3.0 的 Mieru 则是每个启用用户稳定 `instance_id`、独立 Mita 实例、独占 listener，并由 NoBrand 独立管理 quota / expiry / tc / firewall。
 
@@ -59,11 +59,47 @@ NoBrand 3.0 的 Mieru 则是每个启用用户稳定 `instance_id`、独立 Mita
 
 因此 **NoBrand Provider 首版必须从“发现和导入外部节点”开始，而不是复制 NoBrand 的用户管理。**
 
-## 4. P2-0 Provider 首版
+## 4. 已审计的 schema v3 只读边界
 
-### 4.1 只读探测
+进一步审计 NoBrand 3.0 源码后，P2-0 不再把 `nobrand nodes` 的人类表格当作机器 API。NoBrand v3 已有明确的权威状态根和 fail-closed schema 标记，可作为只读 Provider 的稳定输入。
 
-Agent 只执行公开 CLI：
+权威根：
+
+```text
+/var/lib/nobrand-oneclick/state.json
+```
+
+只有根标记同时满足下列条件，ForwardX 才允许继续读取子状态：
+
+```json
+{
+  "schema_version": 3,
+  "project": "NoBrand-OneClick",
+  "ownership": "nobrand-v3"
+}
+```
+
+任何旧版、未知 schema、缺失 ownership 或错误 project 都必须 fail closed：不读取子状态、不猜测、不迁移、更不修改。
+
+当前已确认的 v3 数据源：
+
+```text
+/var/lib/nobrand-oneclick/mieru/install-state.env
+/var/lib/nobrand-oneclick/mieru/users.json
+/var/lib/nobrand-oneclick/snell/instances/*.json
+/var/lib/nobrand-oneclick/hysteria2/state.json
+/var/lib/nobrand-oneclick/vless-sudoku/state.json
+```
+
+其中 Mieru `install-state.env` 由 NoBrand 使用 Bash `printf %q` 写入。ForwardX **绝不 source/执行它**；只允许解析 Provider 所需的简单枚举和整数键，例如 schema、ownership、protocol、MTU、multiplexing、handshake mode、traffic-pattern mode 与 Low Entropy mode。出现需要 shell 求值的未知值时拒绝猜测。
+
+## 5. P2-0 只读 Provider
+
+### 5.1 发现
+
+Agent 后续只负责把经过路径、权限和 schema 检查的状态内容读回面板解析，不执行 install/reconfigure/delete，也不修改任何 NoBrand 文件。
+
+CLI 可以继续用于人工诊断：
 
 ```text
 nobrand --version
@@ -72,31 +108,43 @@ nobrand status
 nobrand doctor
 ```
 
-不得直接解析或修改 NoBrand 私有 state 文件作为首版 API。
+但 `nobrand nodes` 当前主要输出固定宽度的人类表格，因此不作为 ForwardX 的持久机器解析合同。
 
-只读结果用于判断：
+### 5.2 当前无损映射
 
-- 是否安装 NoBrand；
-- 版本；
-- 持久化协议/节点；
-- display endpoint；
-- Running / Stopped；
-- doctor 是否通过。
+P2-0 parser 只输出 ForwardX 能完整表达的 external node：
 
-### 4.2 显式导入 external endpoint
+- **Mieru**：要求 root schema v3、Mieru install-state v3、`users.json` version 2、`deployment_model=isolated-v2` 一致；读取每个稳定 `instance_id`、用户名、密码、display endpoint、MTU、multiplexing 与 handshake mode。NoBrand `BOTH` 会明确拆成 TCP / UDP 两个 external node，UDP 端口为基准端口 + 1。
+- **Snell v4/v5**：读取稳定 instance id、版本、PSK 与 display endpoint。NoBrand 官方 Mihomo 导出对普通 Snell 使用 `udp: true`，因此未启用 QUIC Proxy Mode 时 ForwardX 同样输出普通 Snell UDP relay。若 v5 启用了独立的 QUIC Proxy Mode，则整节点先 skip：NoBrand 自己已标记该客户端语义为 `NOT VERIFIED`，ForwardX 不把它错误降级成普通 `udp: true`。
+- **Hysteria2**：读取 auth、SNI、Salamander obfs、display endpoint，并按 NoBrand 自签证书语义生成 `insecure=true` 的 external 配置。
+- **VLESS + FinalMask/Sudoku**：当前 ForwardX 支持的是 VLESS Reality，二者不是同一种协议。P2-0 必须显式 skip，绝不能伪装成 Reality 导入。
 
-管理员选择一个 NoBrand 节点后，ForwardX 创建/更新 `runtimeMode=external` 的协议端点。
+Mieru 还有两个必须 fail closed 的客户端能力：
+
+1. **traffic-pattern**：NoBrand 的 `install-state.env` 只记录 `off / conservative / aggressive` 模式；真正下发到客户端的 `traffic-pattern` 是 NoBrand 调用 Mita `export traffic-pattern` 后得到的实际生成值。因此当前纯状态 parser 只允许 `TRAFFIC_PATTERN=off`，并且在 ForwardX 订阅中完全不输出 `traffic-pattern`。只要启用 conservative/aggressive，就先 skip，直到后续 Agent 能以只读方式拿到实际导出值。
+2. **Low Entropy**：ForwardX 当前协议模型尚未表达 NoBrand 的实验性 Low Entropy 客户端参数，所以 P2-0 只允许 `LOW_ENTROPY_MODE_OFF`。启用任意 Low Entropy 模式时显式 skip，不静默丢参数。
+
+所有结果只生成 `runtimeMode=external` 所需的 endpoint/credential 快照；parser 本身不读文件、不写数据库、不操作 runtime。
+
+### 5.3 Display Endpoint
+
+NoBrand 的 `advertise_host` / `advertise_port` 是客户端真正应连接的地址，优先于后台 listener。
+
+当 NoBrand 使用 `advertise_mode=auto` 或 Mieru 用户没有自定义 display endpoint 时，必须由 Agent 提供当前主机可验证的公网地址；没有可靠公网地址就 skip，不用 `0.0.0.0`、localhost 或猜测地址代替。
+
+### 5.4 显式导入 external endpoint
+
+管理员选择一个已发现节点后，ForwardX 才创建/更新 `runtimeMode=external` 的协议端点。
 
 规则：
 
 - ForwardX 保存自己订阅所需的 endpoint/credential 快照；
 - 不把 external endpoint 下发到 ForwardX managed runtime；
 - ForwardX 删除“导入记录”不等于删除 NoBrand 节点；
-- NoBrand 删除节点后，ForwardX 只标记 provider drift / unavailable，不自行重建。
+- NoBrand 删除节点后，ForwardX 只标记 provider drift / unavailable，不自行重建；
+- refresh 使用稳定 source key 去重，不拿显示名称当唯一主键。
 
-凭据必须来自 NoBrand 的正式 show/export 命令或管理员显式提供，不从监听进程、日志或私有 state 反推。
-
-### 4.3 Provider identity
+## 6. Provider identity
 
 后续数据模型至少需要区分：
 
@@ -112,11 +160,18 @@ providerStatus
 
 首版可先作为协议端点 metadata，不必立即新增第二套节点表。
 
-`providerExternalId` 必须是 NoBrand 可稳定识别的实例/用户标识；不能只拿显示名称当主键。
+稳定外部标识当前定义：
 
-## 5. NoBrand delegated actions（第二阶段，默认关闭）
+```text
+mieru:<instance_id>:tcp|udp
+snell:<instance_id>
+hysteria2:default
+vless-sudoku:default   # 仅用于报告 skip/drift，当前不导入
+```
 
-只有只读 Provider 稳定后，才考虑由 ForwardX Agent 调用 NoBrand 正式 CLI，例如安装/重启/删除某个 NoBrand-owned实例。
+## 7. NoBrand delegated actions（第二阶段，默认关闭）
+
+只有只读 Provider 稳定后，才考虑由 ForwardX Agent 调用 NoBrand 正式 CLI，例如安装/重启/删除某个 NoBrand-owned 实例。
 
 如果实现，必须满足：
 
@@ -127,7 +182,7 @@ providerStatus
 5. NoBrand CLI 失败时不执行“第二套修复逻辑”；
 6. 卸载/删除必须明确提示会作用于 NoBrand-owned 资源。
 
-## 6. 订阅策略
+## 8. 订阅策略
 
 NoBrand Provider 的价值是把现有 NoBrand 节点纳入 ForwardX 的稳定用户订阅，而不是再创造第二条订阅体系。
 
@@ -138,23 +193,23 @@ NoBrand Provider 的价值是把现有 NoBrand 节点纳入 ForwardX 的稳定�
 - NoBrand 的 Display Endpoint 应作为客户端地址，真实 listener 仅用于 provider health；
 - ForwardX 不把“节点导入成功”等同于“链路由 ForwardX 计量”。external 流量能力必须如实显示。
 
-## 7. P2-0 验收
+## 9. P2-0 验收
 
 首版完成的定义：
 
-1. Agent 能识别 NoBrand 是否安装和版本；
-2. 能只读列出节点和 Running/Stopped；
-3. 不读取/修改 NoBrand secret state；
-4. 选择一个节点后能显式导入为 ForwardX external endpoint；
-5. refresh 不重复创建 endpoint；
-6. NoBrand 节点停止/删除后能显示 drift；
-7. 删除 ForwardX 导入记录不会删除 NoBrand runtime；
-8. 普通 ForwardX managed Mieru/Mihomo/Xray desired state 完全不受影响；
-9. 统一订阅只输出客户端确实支持的完整参数；
-10. provider 不把 external 流量伪装成 ForwardX managed 流量。
+1. Agent 能识别精确 NoBrand schema v3 ownership；
+2. 只读获取受支持的 v3 状态内容，不执行 shell state；
+3. parser 能无损发现 Mieru / Snell / Hysteria2，并报告 unsupported / malformed / lossy 状态；
+4. Mieru traffic-pattern、Low Entropy 或 Snell v5 QUIC Proxy Mode 无法无损表达时必须 skip，不输出错误客户端参数；
+5. 选择一个节点后能显式导入为 ForwardX external endpoint；
+6. refresh 按稳定 source key 更新，不重复创建 endpoint；
+7. NoBrand 节点停止/删除后能显示 drift；
+8. 删除 ForwardX 导入记录不会删除 NoBrand runtime；
+9. 普通 ForwardX managed Mieru/Mihomo/Xray desired state 完全不受影响；
+10. 统一订阅只输出客户端确实支持的完整参数；provider 不把 external 流量伪装成 ForwardX managed 流量。
 
-## 8. 当前结论
+## 10. 当前结论
 
-**GO：只读 NoBrand Provider + external import PoC。**
+**GO：schema v3 只读 NoBrand Provider + external import PoC。**
 
-**BLOCKED：让 ForwardX 与 NoBrand 同时管理同一 runtime；以及在未完成 ownership 验收前开放一键删除/卸载。**
+**BLOCKED：任何 NoBrand runtime 写操作、自动 install/reconfigure/delete，以及在 ownership 验收前开放一键删除/卸载。**
