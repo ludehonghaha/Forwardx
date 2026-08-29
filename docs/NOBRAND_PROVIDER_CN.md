@@ -115,7 +115,7 @@ nobrand doctor
 P2-0 parser 只输出 ForwardX 能完整表达的 external node：
 
 - **Mieru**：要求 root schema v3、Mieru install-state v3、`users.json` version 2、`deployment_model=isolated-v2` 一致；读取每个稳定 `instance_id`、用户名、密码、display endpoint、MTU、multiplexing 与 handshake mode。NoBrand `BOTH` 会明确拆成 TCP / UDP 两个 external node，UDP 端口为基准端口 + 1。
-- **Snell v4/v5**：读取稳定 instance id、版本、PSK、display endpoint 与 v5 QUIC/UDP 状态。
+- **Snell v4/v5**：读取稳定 instance id、版本、PSK 与 display endpoint。NoBrand 官方 Mihomo 导出对普通 Snell 使用 `udp: true`，因此未启用 QUIC Proxy Mode 时 ForwardX 同样输出普通 Snell UDP relay。若 v5 启用了独立的 QUIC Proxy Mode，则整节点先 skip：NoBrand 自己已标记该客户端语义为 `NOT VERIFIED`，ForwardX 不把它错误降级成普通 `udp: true`。
 - **Hysteria2**：读取 auth、SNI、Salamander obfs、display endpoint，并按 NoBrand 自签证书语义生成 `insecure=true` 的 external 配置。
 - **VLESS + FinalMask/Sudoku**：当前 ForwardX 支持的是 VLESS Reality，二者不是同一种协议。P2-0 必须显式 skip，绝不能伪装成 Reality 导入。
 
@@ -200,7 +200,7 @@ NoBrand Provider 的价值是把现有 NoBrand 节点纳入 ForwardX 的稳定�
 1. Agent 能识别精确 NoBrand schema v3 ownership；
 2. 只读获取受支持的 v3 状态内容，不执行 shell state；
 3. parser 能无损发现 Mieru / Snell / Hysteria2，并报告 unsupported / malformed / lossy 状态；
-4. Mieru traffic-pattern 或 Low Entropy 无法无损表达时必须 skip，不输出错误客户端参数；
+4. Mieru traffic-pattern、Low Entropy 或 Snell v5 QUIC Proxy Mode 无法无损表达时必须 skip，不输出错误客户端参数；
 5. 选择一个节点后能显式导入为 ForwardX external endpoint；
 6. refresh 按稳定 source key 更新，不重复创建 endpoint；
 7. NoBrand 节点停止/删除后能显示 drift；
