@@ -178,11 +178,26 @@ function pushMieruNodes(
   const mtu = integer(install.get("MTU"), 1280, 1400);
   const multiplexing = text(install.get("MULTIPLEXING"));
   const handshakeMode = text(install.get("HANDSHAKE_MODE"));
-  const trafficPattern = text(install.get("TRAFFIC_PATTERN"));
+  const trafficPatternMode = text(install.get("TRAFFIC_PATTERN")).toLowerCase();
+  const lowEntropyMode = text(install.get("LOW_ENTROPY_MODE")).toUpperCase();
   if (!mtu
       || !["MULTIPLEXING_OFF", "MULTIPLEXING_LOW", "MULTIPLEXING_MIDDLE", "MULTIPLEXING_HIGH"].includes(multiplexing)
       || !["HANDSHAKE_STANDARD", "HANDSHAKE_NO_WAIT"].includes(handshakeMode)) {
     skipped.push({ sourceKey: "mieru", reason: "Mieru 客户端参数不足，拒绝猜测配置" });
+    return;
+  }
+  // NoBrand stores only the traffic-pattern mode in install-state.env. When
+  // enabled, its client export asks Mita for the actual generated pattern and
+  // emits that opaque value. Passing through "conservative"/"aggressive" (or
+  // literal "off") would silently produce a different client configuration.
+  if (trafficPatternMode !== "off") {
+    skipped.push({ sourceKey: "mieru", reason: "Mieru 已启用 traffic-pattern，需读取 Mita 实际导出值后才能无损导入" });
+    return;
+  }
+  // ForwardX does not yet model NoBrand's experimental low-entropy client
+  // option. Import only the exact off state rather than dropping it silently.
+  if (lowEntropyMode !== "LOW_ENTROPY_MODE_OFF") {
+    skipped.push({ sourceKey: "mieru", reason: "Mieru 已启用 Low Entropy，ForwardX 当前不能无损表达该客户端参数" });
     return;
   }
 
@@ -221,7 +236,7 @@ function pushMieruNodes(
           mtu,
           multiplexing,
           handshakeMode,
-          trafficPattern,
+          trafficPattern: "",
           udp: true,
           provider: "nobrand-v3",
         },
