@@ -159,6 +159,7 @@ test("compiles Snell Reality and Hysteria2 into one shared Mihomo runtime", () =
   assert.equal((plan?.config.listeners as any[])[0]?.type, "snell");
   assert.equal((plan?.config.listeners as any[])[1]?.type, "vless");
   assert.equal((plan?.config.listeners as any[])[2]?.type, "hysteria2");
+  assert.equal((plan?.config.listeners as any[])[2]?.["ignore-client-bandwidth"], false);
 });
 
 test("rejects duplicate sockets instead of compiling overlapping managed listeners", () => {
