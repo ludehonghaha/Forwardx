@@ -91,7 +91,7 @@ NoBrand 3.0 的 Mieru 则是每个启用用户稳定 `instance_id`、独立 Mita
 /var/lib/nobrand-oneclick/vless-sudoku/state.json
 ```
 
-其中 Mieru `install-state.env` 由 NoBrand 使用 Bash `printf %q` 写入。ForwardX **绝不 source/执行它**；只允许解析 Provider 所需的简单枚举和整数键，例如 schema、ownership、protocol、MTU、multiplexing、handshake mode 和 traffic pattern。出现需要 shell 求值的未知值时拒绝猜测。
+其中 Mieru `install-state.env` 由 NoBrand 使用 Bash `printf %q` 写入。ForwardX **绝不 source/执行它**；只允许解析 Provider 所需的简单枚举和整数键，例如 schema、ownership、protocol、MTU、multiplexing、handshake mode、traffic-pattern mode 与 Low Entropy mode。出现需要 shell 求值的未知值时拒绝猜测。
 
 ## 5. P2-0 只读 Provider
 
@@ -114,10 +114,15 @@ nobrand doctor
 
 P2-0 parser 只输出 ForwardX 能完整表达的 external node：
 
-- **Mieru**：要求 root schema v3、Mieru install-state v3、`users.json` version 2、`deployment_model=isolated-v2` 一致；读取每个稳定 `instance_id`、用户名、密码、display endpoint 与客户端参数。NoBrand `BOTH` 会明确拆成 TCP / UDP 两个 external node，UDP 端口为基准端口 + 1。
+- **Mieru**：要求 root schema v3、Mieru install-state v3、`users.json` version 2、`deployment_model=isolated-v2` 一致；读取每个稳定 `instance_id`、用户名、密码、display endpoint、MTU、multiplexing 与 handshake mode。NoBrand `BOTH` 会明确拆成 TCP / UDP 两个 external node，UDP 端口为基准端口 + 1。
 - **Snell v4/v5**：读取稳定 instance id、版本、PSK、display endpoint 与 v5 QUIC/UDP 状态。
 - **Hysteria2**：读取 auth、SNI、Salamander obfs、display endpoint，并按 NoBrand 自签证书语义生成 `insecure=true` 的 external 配置。
 - **VLESS + FinalMask/Sudoku**：当前 ForwardX 支持的是 VLESS Reality，二者不是同一种协议。P2-0 必须显式 skip，绝不能伪装成 Reality 导入。
+
+Mieru 还有两个必须 fail closed 的客户端能力：
+
+1. **traffic-pattern**：NoBrand 的 `install-state.env` 只记录 `off / conservative / aggressive` 模式；真正下发到客户端的 `traffic-pattern` 是 NoBrand 调用 Mita `export traffic-pattern` 后得到的实际生成值。因此当前纯状态 parser 只允许 `TRAFFIC_PATTERN=off`，并且在 ForwardX 订阅中完全不输出 `traffic-pattern`。只要启用 conservative/aggressive，就先 skip，直到后续 Agent 能以只读方式拿到实际导出值。
+2. **Low Entropy**：ForwardX 当前协议模型尚未表达 NoBrand 的实验性 Low Entropy 客户端参数，所以 P2-0 只允许 `LOW_ENTROPY_MODE_OFF`。启用任意 Low Entropy 模式时显式 skip，不静默丢参数。
 
 所有结果只生成 `runtimeMode=external` 所需的 endpoint/credential 快照；parser 本身不读文件、不写数据库、不操作 runtime。
 
@@ -194,14 +199,14 @@ NoBrand Provider 的价值是把现有 NoBrand 节点纳入 ForwardX 的稳定�
 
 1. Agent 能识别精确 NoBrand schema v3 ownership；
 2. 只读获取受支持的 v3 状态内容，不执行 shell state；
-3. parser 能无损发现 Mieru / Snell / Hysteria2，并报告 unsupported / malformed 状态；
-4. 选择一个节点后能显式导入为 ForwardX external endpoint；
-5. refresh 按稳定 source key 更新，不重复创建 endpoint；
-6. NoBrand 节点停止/删除后能显示 drift；
-7. 删除 ForwardX 导入记录不会删除 NoBrand runtime；
-8. 普通 ForwardX managed Mieru/Mihomo/Xray desired state 完全不受影响；
-9. 统一订阅只输出客户端确实支持的完整参数；
-10. provider 不把 external 流量伪装成 ForwardX managed 流量。
+3. parser 能无损发现 Mieru / Snell / Hysteria2，并报告 unsupported / malformed / lossy 状态；
+4. Mieru traffic-pattern 或 Low Entropy 无法无损表达时必须 skip，不输出错误客户端参数；
+5. 选择一个节点后能显式导入为 ForwardX external endpoint；
+6. refresh 按稳定 source key 更新，不重复创建 endpoint；
+7. NoBrand 节点停止/删除后能显示 drift；
+8. 删除 ForwardX 导入记录不会删除 NoBrand runtime；
+9. 普通 ForwardX managed Mieru/Mihomo/Xray desired state 完全不受影响；
+10. 统一订阅只输出客户端确实支持的完整参数；provider 不把 external 流量伪装成 ForwardX managed 流量。
 
 ## 10. 当前结论
 
