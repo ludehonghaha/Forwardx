@@ -1,0 +1,154 @@
+name: P0-2C Gray Reality Refresh Fix Once
+
+on:
+  push:
+    branches:
+      - fix/p0-2c-reality-multi-user
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: p0-2c-gray-reality-refresh-fix-once-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/forwardx
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            node_arch: x64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            node_arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.title=ForwardX
+            org.opencontainers.image.description=ForwardX P0-2C Reality assignment refresh fix Gray Panel
+            org.opencontainers.image.version=2.3.284
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.forwardx.version=2.3.284
+          build-args: |
+            FORWARDX_VERSION=2.3.284
+          cache-from: type=gha,scope=forwardx-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=forwardx-${{ matrix.arch }}
+      - name: Verify native runtime
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          EXPECTED_NODE_ARCH: ${{ matrix.node_arch }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE_NAME}@${DIGEST}"
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            --entrypoint node \
+            -e "EXPECTED_NODE_ARCH=${EXPECTED_NODE_ARCH}" \
+            "${IMAGE_NAME}@${DIGEST}" \
+            -e '
+              const Database = require("better-sqlite3");
+              const db = new Database(":memory:");
+              const value = db.prepare("select 1 as value").pluck().get();
+              db.close();
+              if (value !== 1) throw new Error("SQLite runtime check failed");
+              if (process.arch !== process.env.EXPECTED_NODE_ARCH) throw new Error(`Expected ${process.env.EXPECTED_NODE_ARCH}, got ${process.arch}`);
+              if (process.env.FORWARDX_IMAGE_VERSION !== "2.3.284") throw new Error(`Expected 2.3.284, got ${process.env.FORWARDX_IMAGE_VERSION}`);
+            '
+      - name: Export digest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p0-2c-gray-reality-refresh-fix-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/p0-2c-reality-multi-user
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: p0-2c-gray-reality-refresh-fix-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - name: Merge and verify isolated gray image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t digest_files < <(find "${RUNNER_TEMP}/digests" -maxdepth 1 -type f | sort)
+          test "${#digest_files[@]}" -eq 2
+          sources=()
+          for f in "${digest_files[@]}"; do
+            sources+=("${IMAGE_NAME}@sha256:$(basename "$f")")
+          done
+          TAG="${IMAGE_NAME}:p0-2c-gray-${GITHUB_SHA:0:8}"
+          docker buildx imagetools create -t "$TAG" "${sources[@]}"
+          raw="$(docker buildx imagetools inspect "$TAG" --raw)"
+          echo "$raw" | jq -e '
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1
+            and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1
+          '
+          digest="$(docker buildx imagetools inspect "$TAG" | awk '$1 == "Digest:" { d=$2 } END { print d }')"
+          test -n "$digest"
+          echo "P0_2C_GRAY_TAG=$TAG"
+          echo "P0_2C_GRAY_DIGEST=$digest"
+          echo "P0_2C_GRAY_IMAGE=${TAG}@${digest}"
+      - name: Self-delete gray workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/p0-2c-gray-reality-refresh-fix-once.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/p0-2c-gray-reality-refresh-fix-once.yml
+          git diff --cached --check
+          git commit -m "ci(p0-2c): remove Reality refresh-fix gray one-shot"
+          git push origin HEAD:fix/p0-2c-reality-multi-user
