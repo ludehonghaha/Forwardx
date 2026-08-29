@@ -32,6 +32,8 @@ export type MultipathPocLine = {
   handshakeTimeout?: string;
 };
 
+const UINT32_MAX = 0xffffffff;
+
 const DEFAULTS = {
   tcpFastOpen: true,
   activationThresholdMbps: 120,
@@ -46,7 +48,11 @@ const DEFAULTS = {
 } as const;
 
 function validPositiveInteger(value: number) {
-  return Number.isInteger(value) && value > 0;
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function validUint32(value: number) {
+  return validPositiveInteger(value) && value <= UINT32_MAX;
 }
 
 function validDuration(value: string) {
@@ -60,7 +66,7 @@ function normalizedLegs(legs: MultipathPocLeg[]) {
   const tags = ordered.map((leg) => String(leg.outboundTag || "").trim());
   if (!tags[0] || !tags[1] || tags[0] === tags[1]) return null;
   for (const leg of ordered) {
-    if (leg.expectedBandwidthMbps !== undefined && (!Number.isFinite(leg.expectedBandwidthMbps) || leg.expectedBandwidthMbps <= 0)) return null;
+    if (leg.expectedBandwidthMbps !== undefined && !validUint32(leg.expectedBandwidthMbps)) return null;
   }
   return ordered.map((leg, index) => ({ ...leg, outboundTag: tags[index] }));
 }
@@ -86,13 +92,13 @@ function normalizedLine(line: MultipathPocLine) {
   if (!validPositiveInteger(id) || !server || !validPositiveInteger(serverPort) || serverPort > 65535) return null;
   if (preferredLegIndex !== 0 && preferredLegIndex !== 1) return null;
   if (udpLegIndex !== 0 && udpLegIndex !== 1) return null;
-  if (!Number.isFinite(activationThresholdMbps) || activationThresholdMbps <= 0) return null;
+  if (!validUint32(activationThresholdMbps)) return null;
   if (activationAfterBytes !== undefined && !validPositiveInteger(activationAfterBytes)) return null;
   if (!validDuration(activationWindow) || !validDuration(leg1ReplayTimeout) || !validDuration(handshakeTimeout)) return null;
-  if (!validPositiveInteger(chunkSize) || chunkSize < 1024 || chunkSize > 1024 * 1024) return null;
-  if (!validPositiveInteger(queueFrames) || queueFrames < 8 || queueFrames > 4096) return null;
+  if (!validUint32(chunkSize) || chunkSize < 1024 || chunkSize > 1024 * 1024) return null;
+  if (!validUint32(queueFrames) || queueFrames < 8 || queueFrames > 4096) return null;
   if (chunkSize * queueFrames > 64 * 1024 * 1024) return null;
-  if (!validPositiveInteger(maxReorderFrames)) return null;
+  if (!validUint32(maxReorderFrames)) return null;
   if (!validPositiveInteger(maxReorderBytes) || maxReorderBytes > 512 * 1024 * 1024) return null;
   if (!validPositiveInteger(leg1ReplayBytes) || leg1ReplayBytes > 512 * 1024 * 1024) return null;
 
@@ -119,7 +125,6 @@ function normalizedLine(line: MultipathPocLine) {
 
 function sharedSchedulingConfig(line: NonNullable<ReturnType<typeof normalizedLine>>, legs: NonNullable<ReturnType<typeof normalizedLegs>>) {
   const config: Record<string, unknown> = {
-    tcp_fast_open: line.tcpFastOpen,
     activation_threshold_mbps: line.activationThresholdMbps,
     activation_window: line.activationWindow,
     chunk_size: line.chunkSize,
@@ -136,9 +141,9 @@ function sharedSchedulingConfig(line: NonNullable<ReturnType<typeof normalizedLi
 }
 
 /**
- * Compile only the experimental multipath outbound stanza. Child outbounds are
- * intentionally external inputs: ForwardX must not duplicate or reinterpret
- * their credentials here.
+ * Compile only the experimental multipath outbound stanza. The emitted keys
+ * deliberately mirror the pinned upstream MultipathOutboundOptions struct.
+ * Child outbounds are external inputs: ForwardX does not duplicate credentials.
  */
 export function buildMultipathPocOutbound(lineInput: MultipathPocLine, legInput: MultipathPocLeg[]) {
   const line = normalizedLine(lineInput);
@@ -154,11 +159,16 @@ export function buildMultipathPocOutbound(lineInput: MultipathPocLine, legInput:
     udp_outbound: udpLeg.outboundTag,
     server: line.server,
     server_port: line.serverPort,
+    tcp_fast_open: line.tcpFastOpen,
     ...sharedSchedulingConfig(line, legs),
   };
 }
 
-/** Compile only the matching server inbound stanza for isolated PoC runtime use. */
+/**
+ * Compile only the matching server inbound stanza. `tcp_fast_open` is not
+ * emitted here because the pinned upstream MultipathInboundOptions does not
+ * define that field.
+ */
 export function buildMultipathPocInbound(lineInput: MultipathPocLine, legInput: MultipathPocLeg[]) {
   const line = normalizedLine(lineInput);
   const legs = normalizedLegs(legInput);
