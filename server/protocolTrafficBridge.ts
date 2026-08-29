@@ -78,11 +78,13 @@ export function directManagedProtocolConfigAfterBridge(configValue: unknown, pub
   return config;
 }
 
-/** Managed Mieru exposes native per-user counters, so it must never use the
- * single-owner port bridge for billing. Other managed protocol families keep
- * the bridge until they gain an equivalent native accounting path. */
+/** Managed Mieru and managed VLESS+Reality expose native per-user counters, so
+ * they must never use the single-owner port bridge for billing. Other managed
+ * protocol families keep the bridge until they gain an equivalent native
+ * accounting path. */
 export function managedProtocolUsesNativeUserAccounting(endpoint: any) {
-  return endpoint?.runtimeMode === "managed" && endpoint?.protocol === "mieru";
+  return endpoint?.runtimeMode === "managed"
+    && (endpoint?.protocol === "mieru" || endpoint?.protocol === "vless_reality");
 }
 
 export function managedProtocolTrafficOwnerUserId(assignments: any[]) {
