@@ -250,20 +250,39 @@ test("renders VLESS Reality into URI and Mihomo feeds", () => {
   assert.match(mihomo.content, /short-id: "0011223344556677"/);
 });
 
-test("renders Hysteria2 into URI and Mihomo feeds with Salamander", () => {
+test("renders Hysteria2 into URI and Mihomo feeds with Salamander and explicit h3 ALPN", () => {
   const uri = renderProtocolUriSubscription([hysteria2Entry()]);
   assert.equal(uri.included, 1);
   const decoded = Buffer.from(uri.content, "base64").toString("utf8");
   assert.match(decoded, /^hysteria2:\/\/hy2-secret@hy2\.example\.com:8443\/\?/);
   assert.match(decoded, /sni=www.cloudflare.com/);
+  assert.match(decoded, /alpn=h3/);
   assert.match(decoded, /obfs=salamander/);
 
   const mihomo = renderProtocolMihomoSubscription([hysteria2Entry()]);
   assert.equal(mihomo.included, 1);
   assert.match(mihomo.content, /type: hysteria2/);
   assert.match(mihomo.content, /password: "hy2-secret"/);
+  assert.match(mihomo.content, /sni: "www.cloudflare.com"\n    alpn:\n      - "h3"/);
   assert.match(mihomo.content, /skip-cert-verify: true/);
   assert.match(mihomo.content, /obfs: salamander/);
+});
+
+test("Hysteria2 subscriptions preserve an explicit ALPN list", () => {
+  const custom = hysteria2Entry({
+    endpointConfig: {
+      password: "hy2-secret",
+      sni: "example.com",
+      insecure: true,
+      alpn: ["h3", "custom-hy2"],
+    },
+  });
+  const uri = renderProtocolUriSubscription([custom]);
+  const decoded = Buffer.from(uri.content, "base64").toString("utf8");
+  assert.match(decoded, /alpn=h3%2Ccustom-hy2/);
+
+  const mihomo = renderProtocolMihomoSubscription([custom]);
+  assert.match(mihomo.content, /alpn:\n      - "h3"\n      - "custom-hy2"/);
 });
 
 test("one total Mihomo subscription preserves all selected entry protocols", () => {
