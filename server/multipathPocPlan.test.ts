@@ -50,13 +50,25 @@ test("compiles a two-leg client outbound with conservative PoC defaults", () => 
   });
 });
 
-test("compiles the matching server inbound without copying child credentials", () => {
+test("compiles the matching server inbound using only upstream inbound fields", () => {
   const inbound = buildMultipathPocInbound(line, legs) as Record<string, unknown> | null;
-  assert.equal(inbound?.type, "multipath");
-  assert.equal(inbound?.listen, "0.0.0.0");
-  assert.equal(inbound?.listen_port, 39000);
-  assert.deepEqual(inbound?.bandwidth_mbps, [160, 700]);
-  assert.equal(inbound?.max_reorder_frames, 2048);
+  assert.deepEqual(inbound, {
+    type: "multipath",
+    tag: "forwardx-multipath-1",
+    listen: "0.0.0.0",
+    listen_port: 39000,
+    activation_threshold_mbps: 120,
+    activation_window: "1s",
+    chunk_size: 65536,
+    queue_frames: 256,
+    max_reorder_bytes: 67108864,
+    leg1_replay_bytes: 67108864,
+    leg1_replay_timeout: "5s",
+    handshake_timeout: "10s",
+    bandwidth_mbps: [160, 700],
+    max_reorder_frames: 2048,
+  });
+  assert.equal("tcp_fast_open" in (inbound || {}), false);
   assert.equal(JSON.stringify(inbound).includes("password"), false);
   assert.equal(JSON.stringify(inbound).includes("outbounds"), false);
 });
@@ -74,7 +86,9 @@ test("rejects malformed leg sets and an unusable UDP fallback", () => {
   assert.equal(buildMultipathPocOutbound({ ...line, udpLegIndex: 1 }, [legs[0], { ...legs[1], supportsUdp: false }]), null);
 });
 
-test("rejects invalid ports and queue memory above the upstream safety bound", () => {
+test("rejects values that cannot fit the pinned upstream numeric types", () => {
   assert.equal(buildMultipathPocOutbound({ ...line, serverPort: 70000 }, legs), null);
+  assert.equal(buildMultipathPocOutbound({ ...line, activationThresholdMbps: 1.5 }, legs), null);
+  assert.equal(buildMultipathPocOutbound(line, [legs[0], { ...legs[1], expectedBandwidthMbps: 700.5 }]), null);
   assert.equal(buildMultipathPocOutbound({ ...line, chunkSize: 1024 * 1024, queueFrames: 4096 }, legs), null);
 });
