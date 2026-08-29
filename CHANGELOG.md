@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.285] - 2026-08-29
+
+### 新增
+
+- 托管 VLESS + Reality 改由 Xray `settings.clients` 在同一监听端口承载多个 ForwardX 用户，并为每个分配维护稳定、独立的 UUID 与 Xray 用户身份。
+- Agent 读取 Xray StatsService 原生 per-user 流量统计，并将各分配的上下行流量严格一次写入对应 ForwardX 协议流量 bucket。
+
+### 修复与优化
+
+- 修复加密 `/api/sync` 上报在中间件与路由层重复执行协议流量计量的问题，确保同一报告只入账一次。
+- 修复 Reality 分配新增、删除、启用或停用后未强制推进配置 revision 并刷新 Agent 的问题。
+- 托管 Reality 停用旧的单 owner traffic bridge，统一使用 Xray 原生多用户计量；其他非原生计量协议继续保留单 owner 保护。
+
+### 版本
+
+- 面板与 APK Release `2.3.285`，Agent `2.2.196`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.284] - 2026-08-27
 
 ### 新增
