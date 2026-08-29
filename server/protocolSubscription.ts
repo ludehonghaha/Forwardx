@@ -5,6 +5,7 @@ import {
   protocolConfigPort,
   protocolConfigSecret,
   protocolConfigText,
+  type ProtocolAccessConfig,
   type ProtocolFeedEntry,
   validateProtocolFeedEntry,
 } from "../shared/protocolAccess";
@@ -57,6 +58,19 @@ function uniqueEntryNames(entries: ProtocolFeedEntry[]) {
   }));
 }
 
+function hysteria2Alpn(config: ProtocolAccessConfig) {
+  const raw = config.alpn;
+  if (Array.isArray(raw)) {
+    const values = raw
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (values.length > 0) return values;
+  }
+  const single = protocolConfigText(config, "alpn");
+  return single ? [single] : ["h3"];
+}
+
 function renderVlessRealityUri(entry: ProtocolFeedEntry, name: string) {
   const query = new URLSearchParams({
     encryption: "none",
@@ -76,6 +90,7 @@ function renderHysteria2Uri(entry: ProtocolFeedEntry, name: string) {
   const query = new URLSearchParams();
   const sni = protocolConfigText(entry.endpointConfig, "sni");
   if (sni) query.set("sni", sni);
+  query.set("alpn", hysteria2Alpn(entry.endpointConfig).join(","));
   if (protocolConfigBool(entry.endpointConfig, "insecure", false)) query.set("insecure", "1");
   const obfsMode = protocolConfigText(entry.endpointConfig, "obfsMode");
   if (obfsMode) {
@@ -227,6 +242,7 @@ function renderHysteria2Proxy(entry: ProtocolFeedEntry, name: string) {
   ];
   const sni = protocolConfigText(entry.endpointConfig, "sni");
   if (sni) lines.push(`    sni: ${yamlString(sni)}`);
+  lines.push("    alpn:", ...hysteria2Alpn(entry.endpointConfig).map((value) => `      - ${yamlString(value)}`));
   if (protocolConfigBool(entry.endpointConfig, "insecure", false)) lines.push("    skip-cert-verify: true");
   const obfsMode = protocolConfigText(entry.endpointConfig, "obfsMode");
   if (obfsMode) {
