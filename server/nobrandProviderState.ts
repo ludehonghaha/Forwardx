@@ -268,6 +268,14 @@ function pushSnellNodes(
       skipped.push({ sourceKey, reason: "Snell 版本、凭据或客户端入口无效" });
       continue;
     }
+    // NoBrand's Mihomo export always uses ordinary `udp: true`. Its separate
+    // Snell v5 QUIC Proxy Mode opens same-port UDP but the upstream exporter
+    // explicitly marks the client semantics NOT VERIFIED. Do not silently map
+    // that runtime feature to Mihomo's ordinary Snell UDP relay flag.
+    if (version === 5 && state.quic_proxy_enabled === true) {
+      skipped.push({ sourceKey, reason: "Snell v5 已启用 QUIC Proxy Mode；NoBrand 标记客户端语义未验证，当前拒绝降级为普通 Snell UDP" });
+      continue;
+    }
     nodes.push({
       sourceKey,
       protocol: "snell",
@@ -276,7 +284,7 @@ function pushSnellNodes(
       publicPort: endpoint.port,
       endpointConfig: {
         version,
-        udp: version === 5 && state.quic_proxy_enabled === true,
+        udp: true,
         obfsMode: "",
         provider: "nobrand-v3",
       },
