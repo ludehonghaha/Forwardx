@@ -13,6 +13,7 @@ import {
 } from "./agentAuth";
 import {
   accountAgentProtocolTrafficReport,
+  agentProtocolTrafficAccountingResultKey,
   AgentProtocolTrafficValidationError,
 } from "./agentProtocolTrafficAccounting";
 import { panelCryptoNowMs } from "./panelClock";
@@ -158,7 +159,10 @@ export async function agentEncryptionMiddleware(req: Request, res: Response, nex
     const protocolTrafficPayload = hasProtocolTrafficPayload(req.body);
     const originalReportId = protocolTrafficPayload ? String(req.body?.reportId || "").trim() : "";
     try {
-      await accountAgentProtocolTrafficReport({ token: tokenForResp, body: req.body });
+      (req as any)[agentProtocolTrafficAccountingResultKey] = await accountAgentProtocolTrafficReport({
+        token: tokenForResp,
+        body: req.body,
+      });
     } catch (err: any) {
       const statusCode = err instanceof AgentProtocolTrafficValidationError ? err.statusCode : 500;
       res.status(statusCode).json({

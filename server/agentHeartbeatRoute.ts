@@ -114,6 +114,14 @@ import { runAgentRuntimeRecovery } from "./agentRuntimeRecovery";
 import { observePresenceCapableHostActivity, registerPresenceCapableHost } from "./agentFastLiveness";
 import { recordAuthenticatedAgentActivity } from "./agentActivity";
 import { buildManagedMieruRuntimePlan, buildManagedMihomoRuntimePlan, buildManagedProtocolGostServices } from "./protocolRuntimePlan";
+import { buildManagedEntryRuntimePlans } from "./protocolManagedRuntimePlans";
+import {
+  agentSupportsManagedXrayRuntime,
+  managedXrayRuntimeNeedsApply,
+  managedXrayRuntimeNeedsCleanup,
+  shouldDeferXrayForMihomoRealityHandoff,
+} from "./protocolXrayMigration";
+import { buildManagedXrayRuntimeSyncAction } from "./protocolXrayRuntimeAction";
 import {
   MIHOMO_CONFIG_DIR,
   MIHOMO_CONFIG_PATH,
@@ -206,6 +214,7 @@ const AGENT_GOST_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_NGINX_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_MIERU_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_MIHOMO_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
+const AGENT_XRAY_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_MIMIC_RUNTIME_RECONCILE_MS = 5 * 60 * 1000;
 const AGENT_REBOOT_DETECTION_GRACE_MS = 1000;
 const AGENT_PLUGIN_SYNC_RESEND_MS = 5 * 60 * 1000;
@@ -1739,7 +1748,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       latestHostProtocolAccessRevision(Number(host.id), "vless_reality"),
       latestHostProtocolAccessRevision(Number(host.id), "hysteria2"),
     ]);
-    const mihomoAccessRevision = Math.max(snellAccessRevision, realityAccessRevision, hysteria2AccessRevision);
+    const xrayRuntimeSupported = agentSupportsManagedXrayRuntime(effectiveAgentVersion);
+    const mihomoAccessRevision = xrayRuntimeSupported
+      ? Math.max(snellAccessRevision, hysteria2AccessRevision)
+      : Math.max(snellAccessRevision, realityAccessRevision, hysteria2AccessRevision);
+    const xrayAccessRevision = xrayRuntimeSupported ? realityAccessRevision : 0;
     const rules = await gateForwardRulesForRuntime(rawRules as any[]);
     const actions: any[] = [];
     const dnsWatches = new Map<string, AgentDnsWatch>();
@@ -3468,7 +3481,21 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       .filter(Boolean);
     const managedProtocolGostServices = buildManagedProtocolGostServices(managedProtocolEndpoints as any[]);
     const managedMieruRuntimePlan = buildManagedMieruRuntimePlan(managedProtocolEndpoints as any[]);
-    const managedMihomoRuntimePlan = buildManagedMihomoRuntimePlan(managedProtocolEndpoints as any[]);
+    const managedEntryRuntimePlans = xrayRuntimeSupported
+      ? buildManagedEntryRuntimePlans(managedProtocolEndpoints as any[])
+      : null;
+    const managedMihomoRuntimePlan = xrayRuntimeSupported
+      ? managedEntryRuntimePlans?.mihomo || null
+      : buildManagedMihomoRuntimePlan(managedProtocolEndpoints as any[]);
+    const managedXrayRuntimePlan = xrayRuntimeSupported
+      ? managedEntryRuntimePlans?.xray || null
+      : null;
+    const deferXrayForMihomoHandoff = xrayRuntimeSupported
+      && shouldDeferXrayForMihomoRealityHandoff(managedXrayRuntimePlan, localRuntimeState.state);
+    const xrayRuntimeNeedsApply = xrayRuntimeSupported
+      && managedXrayRuntimeNeedsApply(managedXrayRuntimePlan, localRuntimeState.state);
+    const xrayRuntimeNeedsCleanup = xrayRuntimeSupported
+      && managedXrayRuntimeNeedsCleanup(managedXrayRuntimePlan, localRuntimeState.state);
     const mieruServerConfig = managedMieruRuntimePlan?.config || {
       portBindings: [],
       users: [],
@@ -5996,7 +6023,11 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
     const dnsRuntimeChanged = dnsChangedReports.length > 0;
     const gostProtocolRuntimeConfigChanged = shadowsocksAccessRevision > Number(agentLastAppliedRevision || 0);
     const mieruRuntimeConfigChanged = mieruAccessRevision > Number(agentLastAppliedRevision || 0);
-    const mihomoRuntimeConfigChanged = mihomoAccessRevision > Number(agentLastAppliedRevision || 0);
+    const mihomoRuntimeConfigChanged = mihomoAccessRevision > Number(agentLastAppliedRevision || 0)
+      || deferXrayForMihomoHandoff;
+    const xrayRuntimeConfigChanged = xrayAccessRevision > Number(agentLastAppliedRevision || 0)
+      || xrayRuntimeNeedsApply
+      || xrayRuntimeNeedsCleanup;
     const gostRuntimeConfigChanged = actions.some((action) => actionMayAffectRuntimeFamily(action, SHARED_GOST_FORWARD_TYPES))
       || dnsRuntimeChanged
       || gostProtocolRuntimeConfigChanged;
@@ -6264,6 +6295,7 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
       AGENT_MIHOMO_RUNTIME_RECONCILE_MS,
     );
     const mihomoRuntimeRelevant = mihomoDesiredRelevant || mihomoRuntimeConfigChanged;
+    let mihomoRuntimeSyncQueued = false;
     if (!deferActionsForLocalState && mihomoRuntimeRelevant
       && (mihomoRuntimeConfigChanged || runtimeSyncBootstrap || mihomoPeriodicReconcileDue)) {
       const mihomoRuntimeSyncAction = {
@@ -6288,7 +6320,33 @@ agentRouter.post("/api/agent/heartbeat", async (req: Request, res: Response) => 
         mihomoRuntimeConfigChanged || runtimeSyncBootstrap,
         responseIssuedAt,
         AGENT_MIHOMO_RUNTIME_RECONCILE_MS,
-      )) actions.push(mihomoRuntimeSyncAction);
+      )) {
+        actions.push(mihomoRuntimeSyncAction);
+        mihomoRuntimeSyncQueued = true;
+      }
+    }
+    const xrayDesiredRelevant = !!managedXrayRuntimePlan;
+    const xrayPeriodicReconcileDue = xrayDesiredRelevant && runtimeSyncReconcileDue(
+      Number(host.id),
+      "xray-runtime-sync",
+      responseIssuedAt,
+      AGENT_XRAY_RUNTIME_RECONCILE_MS,
+    );
+    const xrayRuntimeRelevant = xrayRuntimeSupported
+      && (xrayDesiredRelevant || xrayRuntimeConfigChanged);
+    if (!deferActionsForLocalState
+      && xrayRuntimeRelevant
+      && !deferXrayForMihomoHandoff
+      && !mihomoRuntimeSyncQueued
+      && (xrayRuntimeConfigChanged || runtimeSyncBootstrap || xrayPeriodicReconcileDue)) {
+      const xrayRuntimeSyncAction = buildManagedXrayRuntimeSyncAction(managedXrayRuntimePlan) as any;
+      if (shouldSendRuntimeSyncAction(
+        Number(host.id),
+        xrayRuntimeSyncAction,
+        xrayRuntimeConfigChanged || runtimeSyncBootstrap,
+        responseIssuedAt,
+        AGENT_XRAY_RUNTIME_RECONCILE_MS,
+      )) actions.push(xrayRuntimeSyncAction);
     }
     if (!deferActionsForLocalState && mimicRuntimeSyncWanted) {
       const mimicDnsRefreshToken = anyTunnelDnsRefresh(

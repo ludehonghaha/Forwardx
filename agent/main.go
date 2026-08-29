@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.195"
+var Version = "2.2.196"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -1070,6 +1070,7 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		{nginxConfigPath, nginxServiceName, "nginx"},
 		{mieruConfigPath, mieruServiceName, "mieru"},
 		{mihomoConfigPath, mihomoServiceName, "mihomo"},
+		{xrayConfigPath, xrayServiceName, "xray"},
 	}
 	for _, cfg := range configs {
 		var listens []runtimeListenConfig
@@ -1080,6 +1081,8 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 			listens, ok = readMieruRuntimeServiceListens(cfg.path)
 		} else if cfg.kind == "mihomo" {
 			listens, ok = readMihomoRuntimeServiceListens(cfg.path)
+		} else if cfg.kind == "xray" {
+			listens, ok = readXrayRuntimeServiceListens(cfg.path)
 		} else {
 			listens, ok = readGostRuntimeServiceListens(cfg.path)
 		}
@@ -5560,6 +5563,8 @@ func runtimeActionServicesHealthy(a action) bool {
 		services = requiredMieruRuntimeServicesFromLocalConfig()
 	case "mihomo-runtime-sync":
 		services = requiredMihomoRuntimeServicesFromLocalConfig()
+	case "xray-runtime-sync":
+		services = requiredXrayRuntimeServicesFromLocalConfig()
 	case "nginx-runtime-sync":
 		services = requiredNginxRuntimeServicesFromLocalConfig()
 	case "gost-runtime-sync":
@@ -5685,6 +5690,9 @@ func managedConfigRuntimeListens(spec managedConfigSpec) ([]runtimeListenConfig,
 	if strings.Contains(strings.ToLower(spec.ServiceName), "mihomo") || strings.Contains(strings.ToLower(path), "/mihomo/") {
 		return readMihomoRuntimeServiceListens(path)
 	}
+	if strings.Contains(strings.ToLower(spec.ServiceName), "xray") || strings.Contains(strings.ToLower(path), "/xray/") {
+		return readXrayRuntimeServiceListens(path)
+	}
 	if strings.HasSuffix(strings.ToLower(path), ".json") {
 		return readGostRuntimeServiceListens(path)
 	}
@@ -5711,6 +5719,7 @@ func requiredRuntimeServicesFromLocalConfig() []string {
 	services := requiredSharedRuntimeServicesFromLocalConfig()
 	services = append(services, requiredMieruRuntimeServicesFromLocalConfig()...)
 	services = append(services, requiredMihomoRuntimeServicesFromLocalConfig()...)
+	services = append(services, requiredXrayRuntimeServicesFromLocalConfig()...)
 	services = append(services, managedMimicServicesFromLocalConfig()...)
 	return services
 }
@@ -5744,6 +5753,14 @@ func requiredMihomoRuntimeServicesFromLocalConfig() []string {
 	listens, ok := readMihomoRuntimeServiceListens(mihomoConfigPath)
 	if ok && len(listens) > 0 {
 		return []string{mihomoServiceName}
+	}
+	return nil
+}
+
+func requiredXrayRuntimeServicesFromLocalConfig() []string {
+	listens, ok := readXrayRuntimeServiceListens(xrayConfigPath)
+	if ok && len(listens) > 0 {
+		return []string{xrayServiceName}
 	}
 	return nil
 }

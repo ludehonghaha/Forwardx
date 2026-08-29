@@ -22,6 +22,7 @@ import { projectProtocolEndpointRuntimeStatus } from "../protocolRuntimeStatus";
 import {
   PROTOCOL_TRAFFIC_BRIDGE_CONFIG_KEY,
   protocolTrafficBridgeMarker,
+  managedProtocolUsesNativeUserAccounting,
   pushProtocolTrafficBridgeRefresh,
   retireManagedProtocolTrafficBridge,
   syncManagedProtocolTrafficBridge,
@@ -97,7 +98,7 @@ function provisionManagedProtocolConfig(
   return config;
 }
 
-async function recordManagedMieruAssignmentRevision(
+async function recordManagedNativeAssignmentRevision(
   endpoint: any,
   mutation: {
     operation: "set" | "remove";
@@ -108,9 +109,10 @@ async function recordManagedMieruAssignmentRevision(
 ) {
   const endpointId = Number(endpoint?.id || 0);
   const hostId = Number(endpoint?.hostId || 0);
+  const protocol = String(endpoint?.protocol || "");
   if (
     endpoint?.runtimeMode !== "managed"
-    || endpoint?.protocol !== "mieru"
+    || (protocol !== "mieru" && protocol !== "vless_reality")
     || !Number.isInteger(endpointId)
     || endpointId <= 0
     || !Number.isInteger(hostId)
@@ -121,10 +123,10 @@ async function recordManagedMieruAssignmentRevision(
     resourceId: endpointId,
     hostId,
     action: "update",
-    before: { protocol: "mieru", managedMieruAssignmentMutation: null },
+    before: { protocol, managedNativeAssignmentMutation: null },
     after: {
-      protocol: "mieru",
-      managedMieruAssignmentMutation: {
+      protocol,
+      managedNativeAssignmentMutation: {
         ...mutation,
         nonce: randomUUID(),
       },
@@ -476,8 +478,8 @@ export const protocolAccessRouter = router({
       if (synced.changed) refreshHostId = synced.hostId;
       return assignmentId;
     });
-    if (endpoint.runtimeMode === "managed" && endpoint.protocol === "mieru") {
-      await recordManagedMieruAssignmentRevision(endpoint, {
+    if (managedProtocolUsesNativeUserAccounting(endpoint)) {
+      await recordManagedNativeAssignmentRevision(endpoint, {
         operation: "set",
         assignmentId: id,
         userId: input.userId,
@@ -490,7 +492,9 @@ export const protocolAccessRouter = router({
         refreshHostId,
         endpoint.runtimeMode === "managed" && endpoint.protocol === "mieru"
           ? "managed-mieru-assignment-updated"
-          : "protocol-traffic-bridge-assignment-updated",
+          : endpoint.runtimeMode === "managed" && endpoint.protocol === "vless_reality"
+            ? "managed-reality-assignment-updated"
+            : "protocol-traffic-bridge-assignment-updated",
       );
     }
     return { id };
@@ -507,19 +511,21 @@ export const protocolAccessRouter = router({
       const synced = await syncManagedProtocolTrafficBridge(input.endpointId);
       if (synced.changed) refreshHostId = synced.hostId;
     });
-    if (endpoint?.runtimeMode === "managed" && endpoint?.protocol === "mieru") {
-      await recordManagedMieruAssignmentRevision(endpoint, {
+    if (managedProtocolUsesNativeUserAccounting(endpoint)) {
+      await recordManagedNativeAssignmentRevision(endpoint, {
         operation: "remove",
         userId: input.userId,
       });
-      if (refreshHostId <= 0) refreshHostId = Number(endpoint.hostId || 0);
+      if (refreshHostId <= 0) refreshHostId = Number(endpoint?.hostId || 0);
     }
     if (refreshHostId > 0) {
       pushProtocolTrafficBridgeRefresh(
         refreshHostId,
         endpoint?.runtimeMode === "managed" && endpoint?.protocol === "mieru"
           ? "managed-mieru-assignment-removed"
-          : "protocol-traffic-bridge-assignment-removed",
+          : endpoint?.runtimeMode === "managed" && endpoint?.protocol === "vless_reality"
+            ? "managed-reality-assignment-removed"
+            : "protocol-traffic-bridge-assignment-removed",
       );
     }
     return { success: true };

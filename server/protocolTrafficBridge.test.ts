@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   directManagedProtocolConfigAfterBridge,
@@ -22,10 +23,14 @@ test("managed protocol traffic owner accepts one enabled user and rejects ambigu
   ]), /无法把同一监听端口的流量准确拆分给多个用户/);
 });
 
-test("managed Mieru uses native per-user accounting instead of the single-owner bridge", () => {
+test("managed Mieru and Reality use native per-user accounting instead of the single-owner bridge", () => {
   assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "mieru", runtimeMode: "managed" }), true);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "vless_reality", runtimeMode: "managed" }), true);
   assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "mieru", runtimeMode: "external" }), false);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "vless_reality", runtimeMode: "external" }), false);
   assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "shadowsocks", runtimeMode: "managed" }), false);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "snell", runtimeMode: "managed" }), false);
+  assert.equal(managedProtocolUsesNativeUserAccounting({ protocol: "hysteria2", runtimeMode: "managed" }), false);
 });
 
 test("traffic bridge marker round-trips and can be removed without changing other config", () => {
@@ -193,4 +198,13 @@ test("restoring direct managed protocol config removes marker and restores publi
     },
   }, 24001);
   assert.deepEqual(config, { listenPort: 24001, password: "secret" });
+});
+
+
+test("managed native-user assignment mutations force revision and Agent refresh", () => {
+  const source = readFileSync(new URL("./routers/protocolAccess.ts", import.meta.url), "utf8");
+  assert.match(source, /managedProtocolUsesNativeUserAccounting\(endpoint\)/);
+  assert.match(source, /recordManagedNativeAssignmentRevision\(endpoint/);
+  assert.match(source, /managed-reality-assignment-updated/);
+  assert.match(source, /managed-reality-assignment-removed/);
 });
