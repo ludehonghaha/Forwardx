@@ -40,29 +40,32 @@ const mieruInstallState = [
   "PROTOCOL=BOTH",
   "MTU=1400",
   "TRAFFIC_PATTERN=off",
+  "LOW_ENTROPY_MODE=LOW_ENTROPY_MODE_OFF",
   "MULTIPLEXING=MULTIPLEXING_OFF",
   "HANDSHAKE_MODE=HANDSHAKE_NO_WAIT",
 ].join("\n");
+
+const mieruUsersState = {
+  version: 2,
+  deployment_model: "isolated-v2",
+  protocol: "BOTH",
+  users: [{
+    instance_id: "u0123456789abcdef",
+    name: "dual-user",
+    password: "mieru-secret",
+    port: 11464,
+    advertise_host: "211.136.162.188",
+    advertise_port: 15800,
+    enabled: true,
+  }],
+};
 
 test("NoBrand provider translates trusted v3 Mieru/Snell/HY2 state into external feed-compatible nodes", () => {
   const parsed = parseNoBrandProviderSnapshot({
     registry: nobrandRegistry,
     autoPublicHost: "203.0.113.9",
     mieruInstallState,
-    mieruUsers: {
-      version: 2,
-      deployment_model: "isolated-v2",
-      protocol: "BOTH",
-      users: [{
-        instance_id: "u0123456789abcdef",
-        name: "dual-user",
-        password: "mieru-secret",
-        port: 11464,
-        advertise_host: "211.136.162.188",
-        advertise_port: 15800,
-        enabled: true,
-      }],
-    },
+    mieruUsers: mieruUsersState,
     snellStates: [{
       protocol: "snell",
       instance_id: "s0123456789abcdef",
@@ -105,6 +108,8 @@ test("NoBrand provider translates trusted v3 Mieru/Snell/HY2 state into external
   assert.equal(mieruUdp?.publicPort, 15801);
   assert.equal(mieruTcp?.endpointConfig.transport, "TCP");
   assert.equal(mieruUdp?.endpointConfig.transport, "UDP");
+  assert.equal(mieruTcp?.endpointConfig.trafficPattern, "");
+  assert.equal(mieruUdp?.endpointConfig.trafficPattern, "");
   assert.deepEqual(mieruTcp?.credential, { username: "dual-user", password: "mieru-secret" });
 
   const snell = parsed.nodes.find((node) => node.protocol === "snell");
@@ -160,20 +165,30 @@ test("NoBrand provider refuses to guess Mieru settings when v3 install state dis
     registry: JSON.stringify(nobrandRegistry),
     autoPublicHost: "203.0.113.9",
     mieruInstallState: mieruInstallState.replace("PROTOCOL=BOTH", "PROTOCOL=TCP"),
-    mieruUsers: {
-      version: 2,
-      deployment_model: "isolated-v2",
-      protocol: "BOTH",
-      users: [{
-        instance_id: "u0123456789abcdef",
-        name: "user",
-        password: "secret",
-        port: 11464,
-        advertise_host: "",
-        advertise_port: "",
-      }],
-    },
+    mieruUsers: mieruUsersState,
   });
   assert.deepEqual(parsed.nodes, []);
   assert.equal(parsed.skipped.some((item) => item.sourceKey === "mieru" && item.reason.includes("状态不一致")), true);
+});
+
+test("NoBrand provider skips Mieru when traffic-pattern needs an actual Mita export", () => {
+  const parsed = parseNoBrandProviderSnapshot({
+    registry: nobrandRegistry,
+    autoPublicHost: "203.0.113.9",
+    mieruInstallState: mieruInstallState.replace("TRAFFIC_PATTERN=off", "TRAFFIC_PATTERN=conservative"),
+    mieruUsers: mieruUsersState,
+  });
+  assert.deepEqual(parsed.nodes, []);
+  assert.equal(parsed.skipped.some((item) => item.sourceKey === "mieru" && item.reason.includes("实际导出值")), true);
+});
+
+test("NoBrand provider skips Mieru when Low Entropy cannot be expressed losslessly", () => {
+  const parsed = parseNoBrandProviderSnapshot({
+    registry: nobrandRegistry,
+    autoPublicHost: "203.0.113.9",
+    mieruInstallState: mieruInstallState.replace("LOW_ENTROPY_MODE=LOW_ENTROPY_MODE_OFF", "LOW_ENTROPY_MODE=LOW_ENTROPY_MODE_56"),
+    mieruUsers: mieruUsersState,
+  });
+  assert.deepEqual(parsed.nodes, []);
+  assert.equal(parsed.skipped.some((item) => item.sourceKey === "mieru" && item.reason.includes("Low Entropy")), true);
 });
