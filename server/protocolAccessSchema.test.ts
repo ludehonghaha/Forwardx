@@ -60,26 +60,28 @@ const mieruUsersState = {
   }],
 };
 
+const snellState = {
+  protocol: "snell",
+  instance_id: "s0123456789abcdef",
+  name: "snell-v5",
+  version: 5,
+  psk: "snell-secret",
+  listen_host: "0.0.0.0",
+  listen_port: 13501,
+  advertise_mode: "auto",
+  advertise_host: "",
+  advertise_port: "",
+  enabled: true,
+  quic_proxy_enabled: false,
+};
+
 test("NoBrand provider translates trusted v3 Mieru/Snell/HY2 state into external feed-compatible nodes", () => {
   const parsed = parseNoBrandProviderSnapshot({
     registry: nobrandRegistry,
     autoPublicHost: "203.0.113.9",
     mieruInstallState,
     mieruUsers: mieruUsersState,
-    snellStates: [{
-      protocol: "snell",
-      instance_id: "s0123456789abcdef",
-      name: "snell-v5",
-      version: 5,
-      psk: "snell-secret",
-      listen_host: "0.0.0.0",
-      listen_port: 13501,
-      advertise_mode: "auto",
-      advertise_host: "",
-      advertise_port: "",
-      enabled: true,
-      quic_proxy_enabled: false,
-    }],
+    snellStates: [snellState],
     hysteria2State: {
       protocol: "hysteria2",
       auth: "hy2-auth",
@@ -116,7 +118,7 @@ test("NoBrand provider translates trusted v3 Mieru/Snell/HY2 state into external
   assert.equal(snell?.publicHost, "203.0.113.9");
   assert.equal(snell?.publicPort, 13501);
   assert.equal(snell?.endpointConfig.version, 5);
-  assert.equal(snell?.endpointConfig.udp, false);
+  assert.equal(snell?.endpointConfig.udp, true);
 
   const hy2 = parsed.nodes.find((node) => node.protocol === "hysteria2");
   assert.equal(hy2?.publicHost, "109.107.137.246");
@@ -191,4 +193,14 @@ test("NoBrand provider skips Mieru when Low Entropy cannot be expressed lossless
   });
   assert.deepEqual(parsed.nodes, []);
   assert.equal(parsed.skipped.some((item) => item.sourceKey === "mieru" && item.reason.includes("Low Entropy")), true);
+});
+
+test("NoBrand provider skips Snell v5 QUIC Proxy Mode instead of mapping it to ordinary Mihomo UDP", () => {
+  const parsed = parseNoBrandProviderSnapshot({
+    registry: nobrandRegistry,
+    autoPublicHost: "203.0.113.9",
+    snellStates: [{ ...snellState, quic_proxy_enabled: true, managed_udp: true }],
+  });
+  assert.deepEqual(parsed.nodes, []);
+  assert.equal(parsed.skipped.some((item) => item.sourceKey === "snell:s0123456789abcdef" && item.reason.includes("QUIC Proxy Mode")), true);
 });
