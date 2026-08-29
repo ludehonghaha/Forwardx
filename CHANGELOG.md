@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.287] - 2026-08-30
+
+### 修复与优化
+
+- 修复托管 Hysteria2 生成 `ignore-client-bandwidth: true` 时客户端认证、延迟测试和实际联网异常的问题；现改为显式生成 `false`，并加入回归测试，实机 A/B 已验证恢复正常。
+
+### 开发与设计
+
+- 完成 Dual / `singbox-multipath` 的 P1-0A 边界设计，并加入隔离的 P1-0B 配置编译器；固定上游 `multipath-poc3` commit，严格区分 outbound/inbound 字段并增加数值与内存边界校验。当前仍未接入生产 runtime、数据库、UI 或统一订阅。
+- 明确 NoBrand Provider 首版 ownership：只读发现并导入 external 节点，禁止 ForwardX 与 NoBrand 同时管理同一 runtime；同步托管 Mieru 多用户语义文档。
+
+### 版本
+
+- 面板与 APK Release `2.3.287`，Agent `2.2.196`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.286] - 2026-08-29
 
 ### 修复与优化
@@ -366,4 +381,4 @@
 
 ### 版本
 
-- 面板与 APK Release `2.3.263`，Agent `2.2.178`，ForwardX FXP runtime `2.2.109`，Android APP `2.3.96`。
+- 面板与 APK Release `2.3.263`，Agent `2.2.178`，ForwardX FXP runtime `2.2.109`，Android APP `2.3.96`.
