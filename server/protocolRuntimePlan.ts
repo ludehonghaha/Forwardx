@@ -272,7 +272,7 @@ function managedHysteria2Listener(row: ManagedProtocolEndpointRow) {
     users: { forwardx: password },
     up: 1000,
     down: 1000,
-    "ignore-client-bandwidth": true,
+    "ignore-client-bandwidth": false,
     alpn: ["h3"],
     certificate: certPath,
     "private-key": keyPath,
