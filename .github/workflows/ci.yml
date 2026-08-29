@@ -46,6 +46,7 @@ jobs:
       - name: Verify panel
         run: |
           pnpm check:versions
+          pnpm test:release-workflows
           pnpm exec tsc --noEmit
           node --import tsx --test server/agentCrypto.test.ts
           node --import tsx --test server/userTrafficHistory.test.ts
