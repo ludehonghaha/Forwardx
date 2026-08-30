@@ -8,6 +8,7 @@ import {
   saveDualMultipathDraft,
   type DualMultipathSettingsStore,
 } from "../dualMultipathControlPlane";
+import { buildDualMultipathDeploymentPlan } from "../dualMultipathDeploymentPlan";
 
 const settingsStore: DualMultipathSettingsStore = {
   getSetting: (key) => db.getSetting(key),
@@ -22,8 +23,9 @@ function badRequest(error: unknown): never {
 }
 
 /**
- * Dual multipath 目前只提供离线控制面：保存草稿、读取草稿和编译预览。
- * 本 router 故意不导入 agentEvents、runtime lifecycle 或 tunnel mutation。
+ * Dual multipath 目前只提供离线控制面：保存草稿、读取草稿、编译预览
+ * 和生成不可执行的 Dry-run 部署计划。本 router 故意不导入
+ * agentEvents、runtime lifecycle 或 tunnel mutation。
  */
 export const dualMultipathRouter = router({
   current: adminProcedure.query(async () => {
@@ -60,6 +62,18 @@ export const dualMultipathRouter = router({
     .mutation(({ input }) => {
       try {
         return compileDualMultipathPreview(input);
+      } catch (error) {
+        return badRequest(error);
+      }
+    }),
+
+  // This is a plan generator only. The result is deliberately fail-closed and
+  // contains no executable Agent/runtime action.
+  dryRunPlan: adminProcedure
+    .input(dualMultipathDraftSchema)
+    .mutation(({ input }) => {
+      try {
+        return buildDualMultipathDeploymentPlan(input);
       } catch (error) {
         return badRequest(error);
       }
