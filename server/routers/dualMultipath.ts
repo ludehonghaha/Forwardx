@@ -53,9 +53,11 @@ export const dualMultipathRouter = router({
       }
     }),
 
+  // Preview is an explicit on-demand action in the UI. It still performs no
+  // writes or runtime work; mutation semantics here only avoid query caching.
   preview: adminProcedure
     .input(dualMultipathDraftSchema)
-    .query(({ input }) => {
+    .mutation(({ input }) => {
       try {
         return compileDualMultipathPreview(input);
       } catch (error) {
