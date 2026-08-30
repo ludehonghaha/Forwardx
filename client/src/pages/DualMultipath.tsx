@@ -191,7 +191,8 @@ export default function DualMultipathPage() {
               </div>
               <div className="space-y-2">
                 <Label>Multipath 服务端地址</Label>
-                <Input value={form.server} onChange={(event) => patchForm({ server: event.target.value })} placeholder="例如 10.66.67.1 或域名" />
+                <Input value={form.server} onChange={(event) => patchForm({ server: event.target.value })} placeholder="例如 127.0.0.1 或受信内网地址" />
+                <p className="text-xs text-muted-foreground">如果两条已认证代理都终止在同一台 Dual，优先使用 127.0.0.1；只有 WireGuard 等受信三层网络才填写对应内网地址。</p>
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-[180px_1fr]">
@@ -356,10 +357,25 @@ export default function DualMultipathPage() {
                     <p className="mt-1 font-mono text-xs text-muted-foreground">
                       {planData.listener.listen}:{planData.listener.port} · TCP Fast Open {planData.listener.tcpFastOpen ? "ON" : "OFF"}
                     </p>
+                    <p className="mt-1 text-xs text-muted-foreground">默认回环监听；不允许裸 multipath 端口直接暴露公网。</p>
                   </div>
                   <div className="rounded-lg border border-border/50 bg-background/50 p-3">
                     <p className="text-sm font-medium">固定上游</p>
                     <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{planData.upstream.commit}</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">OpenClash 接入</p>
+                      <Badge variant="outline">Sidecar</Badge>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">不能把自定义 multipath outbound 当成 Mihomo 普通节点直接导入。计划使用 {planData.clientCompatibility.requiredCore} sidecar 暴露本地 SOCKS，再由 OpenClash 把它当普通本地节点。</p>
+                  </div>
+                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
+                    <p className="text-sm font-medium">两条载体</p>
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">专线可以通过客户端本地 SOCKS 桥接现有代理；公网 leg1 必须使用已认证传输，不能直接连接裸 multipath listener。</p>
                   </div>
                 </div>
 
