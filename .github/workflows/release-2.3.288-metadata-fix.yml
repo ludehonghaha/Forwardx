@@ -37,14 +37,15 @@ jobs:
                   raise SystemExit("agent/main.go version marker not found")
               main.write_text(source.replace(old, new, 1))
           changelog = Path("CHANGELOG.md")
-          text = changelog.read_text()
+          text = changelog.read_text().replace("客戵端", "客户端")
           heading = "## [2.3.288] - 2026-08-30"
           if heading not in text:
               prefix = "# Changelog\n\n"
               if not text.startswith(prefix):
                   raise SystemExit("CHANGELOG header not found")
               section = base64.b64decode(os.environ["RELEASE_SECTION_B64"]).decode()
-              changelog.write_text(prefix + section + text[len(prefix):])
+              text = prefix + section + text[len(prefix):]
+          changelog.write_text(text)
           PY
 
       - name: Commit release metadata
