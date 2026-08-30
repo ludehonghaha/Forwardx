@@ -29,18 +29,20 @@ test("builds a deterministic fail-closed dry-run deployment plan", () => {
   assert.equal(first.readyToDeploy, false);
   assert.equal(first.listener.port, 39000);
   assert.equal(first.listener.tcpFastOpen, true);
+  assert.equal(first.listener.exposureVerified, false);
   assert.equal(first.topology.private, "dedicated");
   assert.equal(first.topology.direct, "hy2-public");
   assert.equal(first.fragments.serverInbound.tcp_fast_open, true);
 });
 
-test("keeps unresolved child outbounds and target binding as explicit blockers", () => {
+test("keeps unresolved child outbounds, target binding, and listener exposure as explicit blockers", () => {
   const plan = buildDualMultipathDeploymentPlan(validDraft);
   const text = plan.blockers.join("\n");
 
   assert.match(text, /dedicated/);
   assert.match(text, /hy2-public/);
   assert.match(text, /目标主机/);
+  assert.match(text, /不提供认证或加密/);
   assert.match(text, /1c36787d956d750f2ee58d73710d8006a11ccf2c/);
   assert.equal(plan.intendedArtifacts.every((artifact) => artifact.destination === null), true);
 });
@@ -59,7 +61,7 @@ test("only exposes a non-runnable upstream-native config validation command", ()
   assert.doesNotMatch(commands, /\b(systemctl|service|iptables|nft|docker|rm|mv|cp|install|chmod|chown|curl|wget|sudo)\b/i);
 });
 
-test("hard-disables every runtime mutation channel", () => {
+test("hard-disables every runtime mutation and unsafe listener channel", () => {
   const plan = buildDualMultipathDeploymentPlan(validDraft);
   assert.deepEqual(plan.safety, {
     agentPush: false,
@@ -68,6 +70,7 @@ test("hard-disables every runtime mutation channel", () => {
     systemdWrite: false,
     firewallMutation: false,
     tunnelMutation: false,
+    unauthenticatedPublicListenerAllowed: false,
   });
 });
 
