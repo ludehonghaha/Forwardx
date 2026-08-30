@@ -24,9 +24,9 @@ type dualCollectorDefaultRouteSnapshot struct {
 }
 
 type dualCollectorListenerSnapshot struct {
-	Network string
-	Listen  string
-	Port    int
+	Network string `json:"network"`
+	Listen  string `json:"listen"`
+	Port    int    `json:"port"`
 }
 
 type dualCollectorMitaRuntimeSnapshot struct {
@@ -326,7 +326,7 @@ func validateDualCollectorDefaultRoute(route dualCollectorDefaultRouteSnapshot, 
 		return fmt.Errorf("default route references unknown interface %q", route.Dev)
 	}
 	for _, address := range matched.Addresses {
-		if net.ParseIP(address).Equal(net.ParseIP(route.SourceAddress)) {
+		if net.ParseIP(strings.TrimSpace(address)).Equal(net.ParseIP(strings.TrimSpace(route.SourceAddress))) {
 			return nil
 		}
 	}
