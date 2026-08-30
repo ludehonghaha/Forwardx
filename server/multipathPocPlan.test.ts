@@ -50,13 +50,14 @@ test("compiles a two-leg client outbound with conservative PoC defaults", () => 
   });
 });
 
-test("compiles the matching server inbound using only upstream inbound fields", () => {
+test("compiles the matching server inbound using inherited ListenOptions fields", () => {
   const inbound = buildMultipathPocInbound(line, legs) as Record<string, unknown> | null;
   assert.deepEqual(inbound, {
     type: "multipath",
     tag: "forwardx-multipath-1",
     listen: "0.0.0.0",
     listen_port: 39000,
+    tcp_fast_open: true,
     activation_threshold_mbps: 120,
     activation_window: "1s",
     chunk_size: 65536,
@@ -68,7 +69,8 @@ test("compiles the matching server inbound using only upstream inbound fields", 
     bandwidth_mbps: [160, 700],
     max_reorder_frames: 2048,
   });
-  assert.equal("tcp_fast_open" in (inbound || {}), false);
+  assert.equal(inbound?.tcp_fast_open, true);
+  assert.equal(buildMultipathPocInbound({ ...line, tcpFastOpen: false }, legs)?.tcp_fast_open, false);
   assert.equal(JSON.stringify(inbound).includes("password"), false);
   assert.equal(JSON.stringify(inbound).includes("outbounds"), false);
 });
