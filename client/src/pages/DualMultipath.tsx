@@ -222,6 +222,27 @@ export default function DualMultipathPage() {
                 <Label>Outbound tag</Label>
                 <Input value={form.privateOutboundTag} onChange={(event) => patchForm({ privateOutboundTag: event.target.value })} placeholder="dedicated" />
               </div>
+              <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
+                <div className="space-y-2">
+                  <Label>本地 Mieru SOCKS5 地址</Label>
+                  <Input value={form.privateSocksHost} readOnly />
+                </div>
+                <div className="space-y-2">
+                  <Label>端口</Label>
+                  <Input type="number" min={1} max={65535} value={form.privateSocksPort} onChange={(event) => patchForm({ privateSocksPort: event.target.value })} />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Username secret ref（可选）</Label>
+                  <Input value={form.privateUsernameSecretRef} onChange={(event) => patchForm({ privateUsernameSecretRef: event.target.value })} placeholder="dual.mieru.username" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Password secret ref（可选）</Label>
+                  <Input value={form.privatePasswordSecretRef} onChange={(event) => patchForm({ privatePasswordSecretRef: event.target.value })} placeholder="dual.mieru.password" />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">这里只保存 `dual.*` 引用，不接收或显示真实 Mieru 凭据；两项要么都填，要么都留空。</p>
               <div className="space-y-2">
                 <Label>预计带宽（Mbps）</Label>
                 <Input type="number" min={1} value={form.privateBandwidthMbps} onChange={(event) => patchForm({ privateBandwidthMbps: event.target.value })} placeholder="160" />
@@ -250,6 +271,25 @@ export default function DualMultipathPage() {
                 <Label>Outbound tag</Label>
                 <Input value={form.directOutboundTag} onChange={(event) => patchForm({ directOutboundTag: event.target.value })} placeholder="hy2-public" />
               </div>
+              <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
+                <div className="space-y-2">
+                  <Label>Hysteria2 服务端</Label>
+                  <Input value={form.directHy2Server} onChange={(event) => patchForm({ directHy2Server: event.target.value })} placeholder="dual.example.invalid" />
+                </div>
+                <div className="space-y-2">
+                  <Label>端口</Label>
+                  <Input type="number" min={1} max={65535} value={form.directHy2ServerPort} onChange={(event) => patchForm({ directHy2ServerPort: event.target.value })} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>TLS server name</Label>
+                <Input value={form.directHy2TlsServerName} onChange={(event) => patchForm({ directHy2TlsServerName: event.target.value })} placeholder="dual.example.invalid" />
+              </div>
+              <div className="space-y-2">
+                <Label>Auth secret ref</Label>
+                <Input value={form.directHy2AuthSecretRef} onChange={(event) => patchForm({ directHy2AuthSecretRef: event.target.value })} placeholder="dual.hy2.auth" />
+                <p className="text-xs text-muted-foreground">预览中的 password 只会显示为 `&lt;secret:dual.hy2.auth&gt;`，不会解析 secret value。</p>
+              </div>
               <div className="space-y-2">
                 <Label>预计带宽（Mbps）</Label>
                 <Input type="number" min={1} value={form.directBandwidthMbps} onChange={(event) => patchForm({ directBandwidthMbps: event.target.value })} placeholder="700" />
@@ -265,6 +305,28 @@ export default function DualMultipathPage() {
             </CardContent>
           </Card>
         </div>
+
+        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Network className="h-4 w-4 text-primary" /> OpenClash 本地 Sidecar
+            </CardTitle>
+            <CardDescription>OpenClash/Mihomo 只连接本地 SOCKS，不直接解析自定义 multipath outbound。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-[1fr_180px]">
+              <div className="space-y-2">
+                <Label>监听地址</Label>
+                <Input value={form.openClashSocksListen} readOnly />
+                <p className="text-xs text-muted-foreground">固定回环监听，禁止对 LAN/WAN 暴露未认证的本地 SOCKS。</p>
+              </div>
+              <div className="space-y-2">
+                <Label>监听端口</Label>
+                <Input type="number" min={1} max={65535} value={form.openClashSocksPort} onChange={(event) => patchForm({ openClashSocksPort: event.target.value })} />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardHeader>
@@ -408,8 +470,8 @@ export default function DualMultipathPage() {
             ) : null}
 
             <div className="grid gap-4 xl:grid-cols-2">
-              <PreviewBlock title="客户端 multipath outbound" value={previewData?.clientOutbound} />
-              <PreviewBlock title="服务端 multipath inbound" value={previewData?.serverInbound} />
+              <PreviewBlock title="客户端完整 Sidecar 配置（脱敏）" value={previewData?.clientConfig} />
+              <PreviewBlock title="服务端 Multipath / Carrier 边界（脱敏）" value={previewData?.serverPreview} />
             </div>
           </CardContent>
         </Card>

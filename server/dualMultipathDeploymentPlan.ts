@@ -4,31 +4,32 @@ import {
   type DualMultipathDraftInput,
 } from "./dualMultipathControlPlane";
 
-export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 2 as const;
+export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 3 as const;
 
 const FULL_CONFIG_PATH_PLACEHOLDER = "<FULL_CONFIG_PATH>";
 
 /**
  * Build a deterministic, non-executable deployment plan.
  *
- * The current Dual draft only knows the two child outbound tags. It does not
- * contain their concrete sing-box outbound definitions or credentials, and it
- * is not bound to a real target host. For that reason this planner must remain
- * fail-closed: it can explain the intended artifacts and validation command,
- * but it can never claim that the configuration is ready to deploy.
+ * The current Dual draft can compile both client child outbounds, but only with
+ * unresolved secret references. It still does not define the authenticated
+ * server-side Hysteria2 runtime, a real target, artifact checksums, lifecycle,
+ * or rollback. The planner therefore remains physically non-executable.
  */
 export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput | unknown) {
   const draft = parseDualMultipathDraft(input);
   const preview = compileDualMultipathPreview(draft);
-  const privateTag = draft.legs[0].outboundTag;
-  const directTag = draft.legs[1].outboundTag;
+  const serverInbound = preview.serverPreview.multipathConfig.inbounds[0];
 
   const blockers = [
-    `缺少专线子 outbound（${privateTag}）的完整定义与凭据`,
-    `缺少直连子 outbound（${directTag}）的完整定义与凭据`,
+    "客户端 carrier 目前只包含 secret reference；尚未建立灰度 secret resolver 与进程级注入边界",
+    "现有 Mieru 客户端本地 SOCKS5 endpoint 尚未在目标 OpenWrt 上只读核验",
+    "Hysteria2 仅有客户端 outbound 预览；服务端监听、TLS 证书引用、认证用户和回环转发语义尚未设计与验证",
     "尚未绑定真实 Dual 目标主机、系统架构与安装目录",
-    "尚未确认 multipath listener 仅通过受信或已认证的子路径可达；multipath 协议本身不提供认证或加密",
-    `尚未解析并校验固定上游 commit ${preview.upstream.commit} 对应的可部署二进制产物`,
+    "尚未确认两条已认证 carrier 都能到达同一个回环 multipath listener；multipath 协议本身不提供认证或加密",
+    `尚未建立固定上游 commit ${preview.upstream.commit} 的二进制产物、架构和 SHA256 校验策略`,
+    "尚未对 secret 解析后的最终 client/server 配置执行 sing-box check",
+    "尚未设计 gray-only runtime lifecycle、健康检查与回滚步骤",
   ];
 
   return {
@@ -38,9 +39,9 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
     readyToDeploy: false as const,
     upstream: preview.upstream,
     listener: {
-      listen: String(preview.serverInbound.listen || "127.0.0.1"),
-      port: Number(preview.serverInbound.listen_port),
-      tcpFastOpen: preview.serverInbound.tcp_fast_open === true,
+      listen: String(serverInbound.listen || "127.0.0.1"),
+      port: Number(serverInbound.listen_port),
+      tcpFastOpen: serverInbound.tcp_fast_open === true,
       exposureVerified: false as const,
       safeDefault: "loopback" as const,
     },
@@ -66,8 +67,8 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       },
     },
     fragments: {
-      clientOutbound: preview.clientOutbound,
-      serverInbound: preview.serverInbound,
+      clientConfig: preview.clientConfig,
+      serverPreview: preview.serverPreview,
     },
     intendedArtifacts: [
       {
@@ -79,10 +80,10 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       },
       {
         kind: "config" as const,
-        name: "full sing-box config",
-        source: "Dual draft + two concrete child outbounds",
+        name: "redacted client sing-box config preview",
+        source: "Dual v2 draft + carrier references",
         destination: null,
-        status: "blocked" as const,
+        status: "preview-only" as const,
       },
       {
         kind: "client-adapter" as const,
@@ -98,7 +99,7 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
         label: "完整配置生成后执行 sing-box 原生校验",
         command: `sing-box check -c ${FULL_CONFIG_PATH_PLACEHOLDER}`,
         runnable: false as const,
-        reason: "当前只有 multipath 片段，尚无包含两个子 outbound 的完整配置文件",
+        reason: "当前配置仍含未解析的 secret placeholder，且尚无已校验 checksum 的 pinned binary 与最终 server runtime config",
       },
     ],
     blockers,

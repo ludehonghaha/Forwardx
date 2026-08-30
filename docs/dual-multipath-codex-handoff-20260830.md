@@ -152,3 +152,19 @@ Implement enough structure to represent the two concrete carrier shapes without 
 ## Acceptance for the next Codex pass
 
 The next pass is successful when the Draft PR can take sanitized carrier definitions and deterministically produce redacted, full client/server sidecar config previews with tests, while still being physically incapable of deploying them.
+
+## Offline carrier-aware planner update
+
+The next offline milestone now uses Dual draft version 2 (`dualMultipathDraftV2`). Loading a v1 draft remains read-only: it is upgraded in memory with fail-closed carrier defaults and is not written back until an administrator explicitly saves the v2 form.
+
+The v2 public draft stores only:
+
+- the local Mieru client SOCKS5 loopback endpoint and optional `dual.*` username/password secret references;
+- the Hysteria2 server, port, TLS server name, and a `dual.*` auth secret reference;
+- the OpenClash-facing local SOCKS loopback endpoint.
+
+It does not accept or resolve secret values. The deterministic public preview emits `<secret:...>` placeholders in the pinned sing-box fields.
+
+The client preview is now a complete offline sidecar shape: local SOCKS inbound for OpenClash, private SOCKS child first, Hysteria2 child second, multipath outbound third, and `route.final` pointing to the multipath tag. The server preview keeps the loopback-only multipath config separate from an explicitly uncompiled authenticated-carrier runtime descriptor.
+
+Deployment remains blocked. `readyToDeploy` is still false because secret resolution/injection, real gray target and install paths, pinned binary artifact checksums, the Hysteria2 server runtime, two-carrier reachability to the same loopback listener, final `sing-box check`, gray lifecycle, health checks, and rollback are unresolved. No Agent dispatch or runtime mutation was added.
