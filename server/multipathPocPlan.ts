@@ -106,7 +106,11 @@ function normalizedLine(line: MultipathPocLine) {
     id,
     server,
     serverPort,
-    listen: String(line.listen || "0.0.0.0").trim() || "0.0.0.0",
+    // Fail closed. The pinned upstream multipath protocol has no built-in
+    // authentication or encryption, so an omitted listen address must never
+    // turn into a public 0.0.0.0 listener. Topologies such as WireGuard can
+    // still opt in to an explicit trusted interface address.
+    listen: String(line.listen || "127.0.0.1").trim() || "127.0.0.1",
     preferredLegIndex,
     udpLegIndex,
     tcpFastOpen,
