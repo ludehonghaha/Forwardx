@@ -54,7 +54,10 @@ func TestDualAgentDiscoveryHandlerCoreRoundTrip(t *testing.T) {
 
 func TestDualAgentDiscoveryHandlerCoreRejectsUnknownRequestFieldsBeforeProvider(t *testing.T) {
 	handler := dualAgentDiscoveryHandlerCore{provider: panicDualDiscoveryProvider{}}
-	payload := []byte(`{"version":1,"operation":"dual-readonly-discovery","requestId":"req-invalid","targetId":"target-invalid","portProbes":[{"address":"127.0.0.1","protocol":"tcp","candidates":[24001]}],"command":"whoami"}`)
+	payload := []byte(`{"version":1}`)
+	// Replace the intentionally small seed with valid JSON carrying one forbidden
+	// field so the test exercises DisallowUnknownFields rather than malformed JSON.
+	payload = []byte("{\"version\":1,\"operation\":\"dual-readonly-discovery\",\"requestId\":\"req-invalid\",\"targetId\":\"target-invalid\",\"portProbes\":[{\"address\":\"127.0.0.1\",\"protocol\":\"tcp\",\"candidates\":[24001]}],\"command\":\"whoami\"}")
 	if _, err := handler.Handle(payload); err == nil {
 		t.Fatal("unknown request fields must be rejected before provider execution")
 	}
