@@ -16,22 +16,27 @@ const validDraft = {
   ] as const,
 };
 
-test("builds a deterministic fail-closed v4 dry-run plan", () => {
+test("builds a deterministic fail-closed v5 dry-run plan", () => {
   const first = buildDualMultipathDeploymentPlan(validDraft);
   const second = buildDualMultipathDeploymentPlan(validDraft);
   assert.deepEqual(first, second);
-  assert.equal(first.version, 4);
+  assert.equal(first.version, 5);
   assert.equal(first.mode, "dry-run");
   assert.equal(first.readyToDeploy, false);
+  assert.equal(first.readiness.status, "blocked");
   assert.equal(first.listener.listen, "127.0.0.1");
   assert.equal(first.listener.port, 39000);
   assert.equal(first.fragments.mihomoPrivateListener?.listeners[0].listen, "127.0.0.1");
   assert.equal(first.fragments.clientConfig.outbounds.length, 3);
 });
 
-test("keeps unresolved private and HY2 runtimes as explicit blockers", () => {
+test("keeps unresolved private and HY2 runtimes as explicit typed blockers", () => {
   const plan = buildDualMultipathDeploymentPlan(validDraft);
   const text = plan.blockers.join("\n");
+  const codes = new Set(plan.readiness.blockers.map((blocker) => blocker.code));
+  assert.equal(codes.has("CLIENT_PORTS_UNRESOLVED"), true);
+  assert.equal(codes.has("PRIVATE_CARRIER_DISCOVERY_UNVERIFIED"), true);
+  assert.equal(codes.has("HY2_RUNTIME_CONFIG_UNRESOLVED"), true);
   assert.match(text, /secret resolver/);
   assert.match(text, /端口占用检查与自动规划/);
   assert.match(text, /private carrier bridge/);
@@ -49,7 +54,7 @@ test("never treats unresolved auto client ports as deploy-ready", () => {
   assert.equal(validDraft.openClashIngressAdapter.portStrategy, "auto");
   assert.equal(validDraft.openClashIngressAdapter.port, null);
   assert.equal(plan.readyToDeploy, false);
-  assert.match(plan.blockers.join("\n"), /端口占用检查与自动规划/);
+  assert.equal(plan.readiness.blockers.some((blocker) => blocker.code === "CLIENT_PORTS_UNRESOLVED"), true);
 });
 
 test("models OpenClash ingress, dedicated Mihomo bridge and native HY2 in one ForwardX plan", () => {

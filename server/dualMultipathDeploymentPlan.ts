@@ -3,48 +3,34 @@ import {
   parseDualMultipathDraft,
   type DualMultipathDraftInput,
 } from "./dualMultipathControlPlane";
+import { evaluateDualDeploymentReadiness } from "./dualRuntimePlanning";
 
-export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 4 as const;
+export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 5 as const;
 
 const FULL_CONFIG_PATH_PLACEHOLDER = "<FULL_CONFIG_PATH>";
 
 /**
  * Build a deterministic, non-executable deployment plan.
  *
- * The current Dual draft can compile both client child outbounds, but only with
- * unresolved secret references. It still does not define the authenticated
- * server-side Hysteria2 runtime, a real target, artifact checksums, lifecycle,
- * or rollback. The planner therefore remains physically non-executable.
+ * Readiness is derived from typed evidence and blockers. Missing, synthetic,
+ * mismatched, or unresolved evidence fails closed; the planner itself has no
+ * runtime mutation surface.
  */
-export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput | unknown) {
+export function buildDualMultipathDeploymentPlan(
+  input: DualMultipathDraftInput | unknown,
+  evidenceInput?: unknown,
+) {
   const draft = parseDualMultipathDraft(input);
   const preview = compileDualMultipathPreview(draft);
+  const readiness = evaluateDualDeploymentReadiness(draft, evidenceInput);
   const serverInbound = preview.serverPreview.multipathConfig.inbounds[0];
-
-  const privateBridgeResolved = draft.privateCarrierBridge.status === "resolved";
-  const ingressPortResolved = draft.openClashIngressAdapter.status === "resolved";
-  const targetDiscoveryResolved = draft.targetDiscovery.status === "verified-read-only";
-  const directCarrierResolved = draft.directCarrier.status === "resolved";
-  const blockers = [
-    "客户端 carrier 目前只包含 secret reference；尚未建立灰度 secret resolver 与进程级注入边界",
-    ...(ingressPortResolved ? [] : ["Dual ingress loopback 端口尚未经过目标端口占用检查与自动规划"]),
-    ...(privateBridgeResolved ? [] : ["private carrier bridge 尚未解析到单一纯 Mieru proxy 或真实 external SOCKS5 endpoint"]),
-    ...(targetDiscoveryResolved ? [] : ["Dual 目标尚无 verified-read-only discovery snapshot"]),
-    ...(directCarrierResolved ? [] : ["Hysteria2 端口、TLS server name 与最终 runtime 仍未解析"]),
-    "Mihomo dedicated listener 尚未在 OpenClash override 机制中生成并执行原生配置校验",
-    "Hysteria2 服务端监听、TLS secret 注入和回环转发语义尚未执行原生配置校验",
-    "尚未确认 OpenWrt aarch64 与 Dual x86_64 的固定 artifact 安装目录",
-    "尚未确认两条已认证 carrier 都能到达同一个回环 multipath listener；multipath 协议本身不提供认证或加密",
-    `尚未建立固定上游 commit ${preview.upstream.commit}、with_quic 构建标签与 SHA256 校验策略`,
-    "尚未对 secret 解析后的最终 client/server 配置执行 sing-box check",
-    "尚未设计 gray-only runtime lifecycle、健康检查与回滚步骤",
-  ];
 
   return {
     version: DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION,
     mode: "dry-run" as const,
     name: draft.name,
-    readyToDeploy: false as const,
+    readyToDeploy: readiness.readyToDeploy,
+    readiness,
     upstream: preview.upstream,
     listener: {
       listen: String(serverInbound.listen || "127.0.0.1"),
@@ -86,6 +72,7 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       mihomoPrivateListener: preview.mihomoPrivateListener,
       serverPreview: preview.serverPreview,
     },
+    artifactRequirements: readiness.artifactRequirements,
     intendedArtifacts: [
       {
         kind: "binary" as const,
@@ -118,7 +105,7 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
         reason: "当前配置仍含未解析的 secret placeholder，且尚无已校验 checksum 的 pinned binary 与最终 server runtime config",
       },
     ],
-    blockers,
+    blockers: readiness.blockers.map((blocker) => blocker.message),
     safety: {
       agentPush: false as const,
       commandExecution: false as const,
