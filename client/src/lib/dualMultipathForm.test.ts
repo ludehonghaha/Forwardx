@@ -6,6 +6,13 @@ import {
   dualMultipathFormFromDraft,
 } from "./dualMultipathForm";
 
+test("defaults the same-host Dual target to loopback", () => {
+  const form = defaultDualMultipathForm();
+  assert.equal(form.server, "127.0.0.1");
+  const draft = buildDualMultipathDraftFromForm(form);
+  assert.equal(draft.line.server, "127.0.0.1");
+});
+
 test("builds the fixed private-leg-first Dual draft", () => {
   const form = defaultDualMultipathForm();
   form.server = "10.66.67.1";
@@ -24,17 +31,14 @@ test("builds the fixed private-leg-first Dual draft", () => {
 
 test("rejects ambiguous or unusable topology before API submission", () => {
   const sameTag = defaultDualMultipathForm();
-  sameTag.server = "10.66.67.1";
   sameTag.directOutboundTag = sameTag.privateOutboundTag;
   assert.throws(() => buildDualMultipathDraftFromForm(sameTag), /不同的 outbound tag/);
 
   const halfBandwidth = defaultDualMultipathForm();
-  halfBandwidth.server = "10.66.67.1";
   halfBandwidth.directBandwidthMbps = "";
   assert.throws(() => buildDualMultipathDraftFromForm(halfBandwidth), /要么都填写/);
 
   const invalidUdp = defaultDualMultipathForm();
-  invalidUdp.server = "10.66.67.1";
   invalidUdp.udpLegIndex = "1";
   invalidUdp.directSupportsUdp = false;
   assert.throws(() => buildDualMultipathDraftFromForm(invalidUdp), /直连已标记为不支持 UDP/);
@@ -65,4 +69,9 @@ test("hydrates a persisted draft back into editable form state", () => {
   assert.equal(form.activationWindow, "2s");
   assert.equal(form.udpLegIndex, "1");
   assert.equal(form.tcpFastOpen, false);
+});
+
+test("hydrates legacy drafts without a target to the safe loopback default", () => {
+  const form = dualMultipathFormFromDraft({ line: {}, legs: [] });
+  assert.equal(form.server, "127.0.0.1");
 });
