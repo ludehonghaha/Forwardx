@@ -34,18 +34,20 @@ At that commit:
 5. The pinned tree contains a real SOCKS outbound implementation (`protocol/socks/outbound.go`). It supports TCP dialing and UDP packet handling, so using a local SOCKS5 bridge as a child outbound is a supported sing-box shape; this is not a guessed field/type.
 6. The pinned tree also contains native Hysteria2 support.
 
-## Verified Mieru fact
+## Superseded Mieru assumption
 
 The existing Mieru ecosystem uses:
 
 - `mieru` = client
 - `mita` = server
 
-The Mieru client exposes a local SOCKS5 proxy. Therefore an OpenWrt/OpenClash sidecar design can keep the existing Mieru carrier unchanged and let `singbox-multipath` use the Mieru client's local SOCKS5 listener as the private leg child outbound.
+Mieru clients can expose a local SOCKS5 proxy, but the verified iStoreOS runtime does not run a standalone `mieru` process and has no `127.0.0.1:1080` listener. The active private proxy is managed inside OpenClash/Mihomo. Therefore the old `127.0.0.1:1080` draft value is not a runtime fact and must not be reused.
 
-Do not assume Mieru is a native sing-box outbound. The intended adapter is:
+Do not assume Mieru is a native sing-box outbound. The preferred adapter is now:
 
-`singbox-multipath -> SOCKS5 child -> local mieru client -> existing authenticated Mieru/Mita private carrier`
+`singbox-multipath -> SOCKS5 child -> Mihomo dedicated loopback listener -> one pure Mieru proxy -> existing Mita private carrier`
+
+The dedicated listener must bypass normal rules, must not be a generic mixed listener, must not recurse into the ForwardX Dual ingress, and must not target a group containing DIRECT or public fallback.
 
 ## Verified target topology (sanitized)
 
@@ -69,15 +71,15 @@ Server side:
 
 Client / OpenWrt side:
 
-1. Run the existing Mieru client as a sidecar and expose a local SOCKS5 listener.
-2. Run pinned `singbox-multipath` as another sidecar.
-3. Configure child outbound 0 as SOCKS5 -> local Mieru client.
+1. Preserve the existing OpenClash/Mihomo process and its Mieru proxy.
+2. Run pinned `singbox-multipath` as a ForwardX-managed sidecar.
+3. Configure child outbound 0 as SOCKS5 -> dedicated Mihomo listener -> one pure Mieru proxy.
 4. Configure child outbound 1 as native Hysteria2 -> Dual public carrier.
 5. Configure `multipath` outbound with child order `[private, direct]`, preferred leg 0, and the safe server target represented by the remote loopback multipath listener through those authenticated carriers.
 6. Expose one local SOCKS listener from the multipath sidecar to OpenClash/Mihomo.
 7. OpenClash treats that local SOCKS endpoint as an ordinary proxy node. It must not be expected to parse the custom `multipath` outbound natively.
 
-## Current defaults in PR #60
+## Current verified-environment model in PR #60
 
 The current draft intentionally uses conservative defaults such as:
 
@@ -90,7 +92,16 @@ The current draft intentionally uses conservative defaults such as:
 - activation window: 1s
 - example expected bandwidth weights: private 160 / direct 700 Mbps
 
-These are draft/preview defaults, not production facts. Do not silently turn them into live configuration without gray validation.
+The server-internal `127.0.0.1:39000` candidate remains intentionally separate from the rejected client-side `127.0.0.1:1080` assumption. Client bridge and HY2 runtime details remain unresolved and block deployment.
+
+Verified Dual server topology:
+
+- `eth0 = 87.86.22.221/24`, public/Japan side, default gateway `87.86.22.1`;
+- `eth1 = 172.16.4.114/24`, private-line side;
+- existing `/usr/local/bin/mita` service is active on TCP `*:11464` and must be preserved;
+- no installed `sing-box`, `hysteria`, or standalone `mieru` binary was found.
+
+The pinned source contains native Hysteria2 inbound/outbound support. Its normal release build tags include `with_quic`, so one correctly built and checksum-pinned singbox-multipath artifact can host both multipath and Hysteria2. Artifact provenance, architecture-specific checksums, final HY2 listener fields, secret injection, and runtime lifecycle are still unresolved.
 
 ## Codex next task
 
@@ -153,9 +164,9 @@ Implement enough structure to represent the two concrete carrier shapes without 
 
 The next pass is successful when the Draft PR can take sanitized carrier definitions and deterministically produce redacted, full client/server sidecar config previews with tests, while still being physically incapable of deploying them.
 
-## Offline carrier-aware planner update
+## Superseded v2 planner note
 
-The next offline milestone now uses Dual draft version 2 (`dualMultipathDraftV2`). Loading a v1 draft remains read-only: it is upgraded in memory with fail-closed carrier defaults and is not written back until an administrator explicitly saves the v2 form.
+The previous milestone used Dual draft version 2 (`dualMultipathDraftV2`). It is retained only as a legacy read source.
 
 The v2 public draft stores only:
 
@@ -167,4 +178,17 @@ It does not accept or resolve secret values. The deterministic public preview em
 
 The client preview is now a complete offline sidecar shape: local SOCKS inbound for OpenClash, private SOCKS child first, Hysteria2 child second, multipath outbound third, and `route.final` pointing to the multipath tag. The server preview keeps the loopback-only multipath config separate from an explicitly uncompiled authenticated-carrier runtime descriptor.
 
-Deployment remains blocked. `readyToDeploy` is still false because secret resolution/injection, real gray target and install paths, pinned binary artifact checksums, the Hysteria2 server runtime, two-carrier reachability to the same loopback listener, final `sing-box check`, gray lifecycle, health checks, and rollback are unresolved. No Agent dispatch or runtime mutation was added.
+## Verified-environment v3 planner update
+
+The current offline model uses `dualMultipathDraftV3` and separates:
+
+- `openClashIngressAdapter`: ForwardX Dual sidecar's loopback SOCKS ingress for OpenClash;
+- `privateCarrierBridge`: preferred `mihomo-dedicated-listener`, with `external-local-socks5` available only when a real endpoint has been discovered;
+- `directCarrier`: native Hysteria2 endpoint and references, unresolved until final runtime facts exist;
+- `serverRuntime`: verified eth0/eth1 roles, preserved Mita boundary, and unresolved native HY2 runtime.
+
+Both v1 and v2 drafts are upgraded only in memory. Any v2 `127.0.0.1:1080` value is deliberately discarded and replaced with an unresolved preferred Mihomo bridge. No migration write occurs until an administrator explicitly saves v3.
+
+The normal ForwardX UI exposes one Dual aggregate line: Mieru/private status and bandwidth, HY2/direct status and bandwidth, small-flow preference, activation threshold, status, and the future subscription action. Ports, listener tags, loopback addresses, interfaces, and secret references are hidden under diagnostics or auto-managed.
+
+Deployment remains blocked and `readyToDeploy` remains false. No Agent dispatch, runtime mutation, OpenClash write, installation, systemd action, firewall change, route change, gray deployment, or production deployment was added.

@@ -1,6 +1,6 @@
 # ForwardX Dual / singbox-multipath 设计与 PoC 边界
 
-> 状态：P1-0A 架构结论完成；允许进入 P1-0B 灰度 PoC，禁止直接生产启用。
+> 状态：离线控制面建模中；禁止灰度/生产部署，`readyToDeploy=false`。
 
 ## 1. 上游基线
 
@@ -30,28 +30,23 @@ ForwardX 的 Dual 聚合实验以 `WuSiYu/singbox-multipath` 为唯一 PoC 上�
 
 不得把 `multipath` 塞进 `ProtocolType`。现有 Reality、Mieru、Hysteria2、Shadowsocks 等普通协议订阅和运行时保持独立。
 
-### 3.2 独立数据模型
+### 3.2 单一 ForwardX 产品模型
 
-P1-0B 计划新增独立模型：
+用户只管理一个 ForwardX Dual 聚合节点。Mieru/Mita、Hysteria2、Mihomo dedicated listener、SOCKS bridge、multipath listener 和 secret reference 都是底层组件，不是额外面板。
 
-- `aggregate_lines`
-  - 聚合线路本体
-  - 名称、运行主机、监听地址/端口、启用状态
-  - 上游版本/commit pin
-  - activation / queue / chunk / replay 等调度参数
-  - production gate 状态
-- `aggregate_legs`
-  - 每条 aggregate line 恰好两行
-  - `legIndex` 只能为 0/1
-  - 引用现有可验证路径，而不是复制节点凭据
-  - 标记 preferred / UDP fallback / 预期带宽权重
+当前离线草稿使用 v3，并拆分：
+
+- `openClashIngressAdapter`：OpenClash 连接 ForwardX sidecar 的本地入口；
+- `privateCarrierBridge`：优先使用 Mihomo dedicated loopback listener，并固定到单一纯 Mieru proxy；
+- `directCarrier`：pinned artifact 的 native Hysteria2；
+- `serverRuntime`：已核验的双网卡角色、保留的 Mita 边界和未解析的 HY2 runtime。
 
 数据库层必须保证同一 aggregate line 不出现重复 legIndex；业务层必须拒绝少于或多于两条 leg。
 
-### 3.3 独立运行时
+### 3.3 底层运行时边界
 
-- 每个 AggregateLine 一个独立 singbox-multipath 进程 / systemd service；
-- 不复用 `forwardx-mihomo`、`forwardx-mita`、Xray 或普通 GOST runtime；
+- ForwardX 是唯一管理面；底层可使用独立 singbox-multipath 进程，但不形成第二个用户面板；
+- 复用现有 OpenClash/Mihomo 内的纯 Mieru proxy，不重复部署 Mieru；现有 Mita 服务保持不变；
 - 配置先写临时文件、执行配置校验，再原子替换；
 - apply 失败必须保留上一份可工作的配置；
 - Agent desired-state 只在 feature gate 明确开启时下发；
@@ -73,7 +68,7 @@ Dual 必须输出专用的 sing-box/multipath 客户端配置，不得伪装成�
   "activation_window": "1s",
   "chunk_size": 65536,
   "queue_frames": 256,
-  "bandwidth_mbps": [160, 700],
+  "bandwidth_mbps": [200, 1000],
   "leg1_replay_timeout": "5s",
   "tcp_fast_open": true
 }
@@ -108,8 +103,8 @@ Dual 必须输出专用的 sing-box/multipath 客户端配置，不得伪装成�
 
 ## 7. 当前结论
 
-**GO：进入 P1-0B 单机灰度 PoC。**
+**GO：继续离线 schema、预览、UI 和测试。**
 
-**BLOCKED：生产默认启用。**
+**BLOCKED：任何 gray/prod runtime 变更。**
 
-下一实施步应先做独立 AggregateLine/Leg 的最小数据模型和配置编译器，再接 Agent runtime；不要先改普通协议订阅或现有 ProtocolType。
+下一步必须先解决纯 Mieru proxy 自动发现、端口占用核验、HY2 最终监听/TLS、带 `with_quic` 的 pinned artifact 与 checksum、原生 `sing-box check`、两条 carrier 到 loopback listener 的实机可达性、生命周期、健康检查和回滚；不要先改普通协议订阅或现有 ProtocolType。

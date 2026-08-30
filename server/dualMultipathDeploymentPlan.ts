@@ -4,7 +4,7 @@ import {
   type DualMultipathDraftInput,
 } from "./dualMultipathControlPlane";
 
-export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 3 as const;
+export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 4 as const;
 
 const FULL_CONFIG_PATH_PLACEHOLDER = "<FULL_CONFIG_PATH>";
 
@@ -21,13 +21,17 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
   const preview = compileDualMultipathPreview(draft);
   const serverInbound = preview.serverPreview.multipathConfig.inbounds[0];
 
+  const privateBridgeResolved = draft.privateCarrierBridge.status === "resolved";
+  const directCarrierResolved = draft.directCarrier.status === "resolved";
   const blockers = [
     "客户端 carrier 目前只包含 secret reference；尚未建立灰度 secret resolver 与进程级注入边界",
-    "现有 Mieru 客户端本地 SOCKS5 endpoint 尚未在目标 OpenWrt 上只读核验",
-    "Hysteria2 仅有客户端 outbound 预览；服务端监听、TLS 证书引用、认证用户和回环转发语义尚未设计与验证",
-    "尚未绑定真实 Dual 目标主机、系统架构与安装目录",
+    ...(privateBridgeResolved ? [] : ["private carrier bridge 尚未解析到单一纯 Mieru proxy 或真实 external SOCKS5 endpoint"]),
+    ...(directCarrierResolved ? [] : ["Hysteria2 端口、TLS server name 与最终 runtime 仍未解析"]),
+    "Mihomo dedicated listener 尚未在 OpenClash override 机制中生成并执行原生配置校验",
+    "Hysteria2 服务端监听、TLS secret 注入和回环转发语义尚未执行原生配置校验",
+    "尚未确认 OpenWrt aarch64 与 Dual x86_64 的固定 artifact 安装目录",
     "尚未确认两条已认证 carrier 都能到达同一个回环 multipath listener；multipath 协议本身不提供认证或加密",
-    `尚未建立固定上游 commit ${preview.upstream.commit} 的二进制产物、架构和 SHA256 校验策略`,
+    `尚未建立固定上游 commit ${preview.upstream.commit}、with_quic 构建标签与 SHA256 校验策略`,
     "尚未对 secret 解析后的最终 client/server 配置执行 sing-box check",
     "尚未设计 gray-only runtime lifecycle、健康检查与回滚步骤",
   ];
@@ -59,15 +63,23 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       privateLeg: {
         nativeSingBoxChildRequired: false as const,
         localSocksBridgeAllowed: true as const,
-        note: "现有专线代理若能在客户端提供本地 SOCKS，可作为 singbox-multipath 的 child outbound 载体，不要求改动远端现有专线服务。",
+        preferredBridge: "mihomo-dedicated-listener" as const,
+        note: "优先由 ForwardX 规划 loopback-only Mihomo dedicated SOCKS listener，并固定到单一纯 Mieru proxy；禁止通用 mixed listener、普通 rules、递归和 DIRECT/public fallback。",
       },
       directLeg: {
         authenticatedCarrierRequired: true as const,
-        note: "公网直连 leg1 仍需一个 sing-box 可直接使用的已认证传输（例如 Hysteria2），不能把裸 multipath listener 暴露在公网。",
+        nativeHysteria2InPinnedArtifact: true as const,
+        requiredBuildTag: "with_quic" as const,
+        separateHysteriaBinaryRequired: false as const,
+        bindInterface: draft.serverRuntime.directCarrierRuntime.bindInterface,
+        sourceAddress: draft.serverRuntime.directCarrierRuntime.sourceAddress,
+        runtimeStatus: draft.serverRuntime.directCarrierRuntime.status,
+        note: "公网 leg1 使用 pinned singbox-multipath artifact 的 native Hysteria2，并显式绑定已核验的公网侧；不能暴露裸 multipath listener。",
       },
     },
     fragments: {
       clientConfig: preview.clientConfig,
+      mihomoPrivateListener: preview.mihomoPrivateListener,
       serverPreview: preview.serverPreview,
     },
     intendedArtifacts: [
@@ -81,14 +93,14 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       {
         kind: "config" as const,
         name: "redacted client sing-box config preview",
-        source: "Dual v2 draft + carrier references",
+        source: "Dual v3 draft + carrier references",
         destination: null,
         status: "preview-only" as const,
       },
       {
         kind: "client-adapter" as const,
-        name: "OpenClash local SOCKS adapter",
-        source: "singbox-multipath sidecar",
+        name: "ForwardX-managed OpenClash and Mihomo adapters",
+        source: "singbox-multipath ingress + Mihomo dedicated listener preview",
         destination: null,
         status: "blocked" as const,
       },

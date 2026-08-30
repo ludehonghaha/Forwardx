@@ -7,8 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
@@ -18,18 +16,7 @@ import {
   type DualMultipathFormState,
 } from "@/lib/dualMultipathForm";
 import { trpc } from "@/lib/trpc";
-import {
-  Cable,
-  CheckCircle2,
-  Copy,
-  Eye,
-  Gauge,
-  Loader2,
-  LockKeyhole,
-  Network,
-  Save,
-  ShieldCheck,
-} from "lucide-react";
+import { Cable, CheckCircle2, Copy, Eye, Gauge, Loader2, LockKeyhole, Network, Save, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 function prettyJson(value: unknown) {
@@ -51,13 +38,22 @@ function PreviewBlock({ title, value }: { title: string; value: unknown }) {
           <Copy className="mr-1.5 h-3.5 w-3.5" />复制
         </Button>
       </div>
-      <Textarea
-        readOnly
-        value={text}
-        placeholder="点击“生成预览”后显示"
-        className="min-h-64 resize-y font-mono text-xs leading-5"
-        onFocus={(event) => event.currentTarget.select()}
-      />
+      <Textarea readOnly value={text} placeholder="点击“生成诊断预览”后显示" className="min-h-64 resize-y font-mono text-xs leading-5" />
+    </div>
+  );
+}
+
+function StatusRow({ label, protocol, status, detail }: { label: string; protocol: string; status: string; detail: string }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-muted/15 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <div className="flex items-center gap-2">
+          <p className="font-medium">{label}</p>
+          <Badge variant="outline">{protocol}</Badge>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+      </div>
+      <Badge variant="secondary">{status}</Badge>
     </div>
   );
 }
@@ -65,23 +61,19 @@ function PreviewBlock({ title, value }: { title: string; value: unknown }) {
 export default function DualMultipathPage() {
   const utils = trpc.useUtils();
   const [form, setForm] = useState<DualMultipathFormState>(() => defaultDualMultipathForm());
-  const currentQuery = trpc.dualMultipath.current.useQuery(undefined, {
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const currentQuery = trpc.dualMultipath.current.useQuery(undefined, { retry: false, refetchOnWindowFocus: false });
 
   useEffect(() => {
-    if (!currentQuery.data?.draft) return;
-    setForm(dualMultipathFormFromDraft(currentQuery.data.draft));
+    if (currentQuery.data?.draft) setForm(dualMultipathFormFromDraft(currentQuery.data.draft));
   }, [currentQuery.data?.draft]);
 
   const previewMutation = trpc.dualMultipath.preview.useMutation({
-    onSuccess: () => toast.success("Dual 配置预览已生成，没有下发到任何 Agent"),
-    onError: (error) => toast.error(error.message || "Dual 配置预览失败"),
+    onSuccess: () => toast.success("离线诊断预览已生成，没有下发到任何 Agent"),
+    onError: (error) => toast.error(error.message || "Dual 预览失败"),
   });
   const planMutation = trpc.dualMultipath.dryRunPlan.useMutation({
-    onSuccess: () => toast.success("Dry-run 部署计划已生成；没有执行任何命令"),
-    onError: (error) => toast.error(error.message || "Dry-run 部署计划生成失败"),
+    onSuccess: () => toast.success("Dry-run 已生成；没有执行任何命令"),
+    onError: (error) => toast.error(error.message || "Dry-run 生成失败"),
   });
   const saveMutation = trpc.dualMultipath.saveDraft.useMutation({
     onSuccess: async (result) => {
@@ -99,7 +91,6 @@ export default function DualMultipathPage() {
     previewMutation.reset();
     planMutation.reset();
   };
-
   const buildDraft = () => {
     try {
       return buildDualMultipathDraftFromForm(form);
@@ -108,37 +99,24 @@ export default function DualMultipathPage() {
       return null;
     }
   };
-
-  const preview = () => {
+  const submit = (kind: "preview" | "plan" | "save") => {
     const draft = buildDraft();
     if (!draft) return;
-    previewMutation.mutate(draft as any);
-  };
-
-  const dryRunPlan = () => {
-    const draft = buildDraft();
-    if (!draft) return;
-    planMutation.mutate(draft as any);
-  };
-
-  const save = () => {
-    const draft = buildDraft();
-    if (!draft) return;
-    saveMutation.mutate(draft as any);
+    if (kind === "preview") previewMutation.mutate(draft as any);
+    if (kind === "plan") planMutation.mutate(draft as any);
+    if (kind === "save") saveMutation.mutate(draft as any);
   };
 
   if (currentQuery.isLoading) {
-    return (
-      <DashboardLayout>
-        <DataSectionLoading label="正在加载 Dual 聚合草稿" minHeight="min-h-[320px]" />
-      </DashboardLayout>
-    );
+    return <DashboardLayout><DataSectionLoading label="正在加载 Dual 聚合草稿" minHeight="min-h-[320px]" /></DashboardLayout>;
   }
 
   const previewData = previewMutation.data;
   const planData = planMutation.data;
   const configured = currentQuery.data?.configured === true;
   const busy = previewMutation.isPending || planMutation.isPending || saveMutation.isPending;
+  const privateStatus = form.infrastructure.privateCarrierBridge?.status === "resolved" ? "已就绪" : "等待自动发现纯 Mieru 节点";
+  const directStatus = form.infrastructure.directCarrier?.status === "resolved" ? "已就绪" : "运行时未配置";
 
   return (
     <DashboardLayout>
@@ -146,335 +124,77 @@ export default function DualMultipathPage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Dual 聚合</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              专线优先，小流量先走低延迟线路；达到阈值后由 multipath 追加直连路径。
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">一个聚合节点：小流量优先专线，大流量自动追加直连。</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary" className="gap-1.5 px-3 py-1.5">
-              <Eye className="h-3.5 w-3.5" /> 预览模式
-            </Badge>
-            <Badge variant={configured ? "outline" : "secondary"} className="gap-1.5 px-3 py-1.5">
-              <Save className="h-3.5 w-3.5" /> {configured ? "已有草稿" : "尚未保存"}
-            </Badge>
+            <Badge variant="secondary" className="gap-1.5"><Eye className="h-3.5 w-3.5" />离线预览</Badge>
+            <Badge variant={configured ? "outline" : "secondary"}>{configured ? "已有草稿" : "尚未保存"}</Badge>
           </div>
         </div>
 
         <Alert>
           <ShieldCheck className="h-4 w-4" />
-          <AlertTitle>当前仍是安全灰度阶段</AlertTitle>
-          <AlertDescription>
-            本页只能保存草稿、生成配置预览和 Dry-run 部署计划；没有“启用/执行”按钮，不会下发 Agent、不会修改 Tunnel，也不会启动 sing-box multipath。
-          </AlertDescription>
+          <AlertTitle>部署门禁保持关闭</AlertTitle>
+          <AlertDescription>本页只有 ForwardX 的 Dual 草稿与脱敏预览；不会修改 OpenClash、Mita、systemd、防火墙、路由或远端运行时。</AlertDescription>
         </Alert>
 
         {currentQuery.isError ? (
-          <Alert variant="destructive">
-            <LockKeyhole className="h-4 w-4" />
-            <AlertTitle>读取 Dual 草稿失败</AlertTitle>
-            <AlertDescription>{currentQuery.error.message}</AlertDescription>
-          </Alert>
+          <Alert variant="destructive"><LockKeyhole className="h-4 w-4" /><AlertTitle>读取草稿失败</AlertTitle><AlertDescription>{currentQuery.error.message}</AlertDescription></Alert>
         ) : null}
 
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="h-4 w-4 text-primary" /> 基本连接
-            </CardTitle>
-            <CardDescription>这里是两条路径共同连接的 multipath 服务端，不是专线或 HY2 的账号密码。</CardDescription>
+            <CardTitle className="flex items-center gap-2"><Network className="h-4 w-4 text-primary" />Dual 线路</CardTitle>
+            <CardDescription>底层 bridge、listener、端口和 secret reference 由 ForwardX 管理，不作为日常设置。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>配置名称</Label>
-                <Input value={form.name} onChange={(event) => patchForm({ name: event.target.value })} placeholder="NoBrand Dual" />
-              </div>
-              <div className="space-y-2">
-                <Label>Multipath 服务端地址</Label>
-                <Input value={form.server} onChange={(event) => patchForm({ server: event.target.value })} placeholder="例如 127.0.0.1 或受信内网地址" />
-                <p className="text-xs text-muted-foreground">如果两条已认证代理都终止在同一台 Dual，优先使用 127.0.0.1；只有 WireGuard 等受信三层网络才填写对应内网地址。</p>
-              </div>
+            <div className="space-y-2">
+              <Label>名称</Label>
+              <Input value={form.name} onChange={(event) => patchForm({ name: event.target.value })} />
             </div>
-            <div className="grid gap-4 md:grid-cols-[180px_1fr]">
-              <div className="space-y-2">
-                <Label>服务端端口</Label>
-                <Input type="number" min={1} max={65535} value={form.serverPort} onChange={(event) => patchForm({ serverPort: event.target.value })} />
-              </div>
-              <div className="rounded-lg border border-border/50 bg-muted/20 p-3 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">拓扑固定为 2 路</p>
-                <p className="mt-1 text-xs leading-5">leg0 永远是专线并作为首选路径；leg1 永远是普通直连。当前版本故意不允许反过来，避免配置漂移。</p>
-              </div>
+            <StatusRow label="专线" protocol="Mieru" status={privateStatus} detail="首选路径；ForwardX 将通过 Mihomo dedicated listener 固定到单一纯 Mieru proxy。" />
+            <StatusRow label="直连" protocol="Hysteria2" status={directStatus} detail="达到阈值后追加；后续固定走 Dual 公网侧，不改变系统默认路由。" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2"><Label>专线带宽（Mbps）</Label><Input type="number" min={1} value={form.privateBandwidthMbps} onChange={(event) => patchForm({ privateBandwidthMbps: event.target.value })} /></div>
+              <div className="space-y-2"><Label>直连带宽（Mbps）</Label><Input type="number" min={1} value={form.directBandwidthMbps} onChange={(event) => patchForm({ directBandwidthMbps: event.target.value })} /></div>
             </div>
-          </CardContent>
-        </Card>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Cable className="h-4 w-4 text-primary" /> leg0 · 专线
-                <Badge variant="default">固定首选</Badge>
-              </CardTitle>
-              <CardDescription>网页、交互和新连接优先使用这条低延迟线路。</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Outbound tag</Label>
-                <Input value={form.privateOutboundTag} onChange={(event) => patchForm({ privateOutboundTag: event.target.value })} placeholder="dedicated" />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
-                <div className="space-y-2">
-                  <Label>本地 Mieru SOCKS5 地址</Label>
-                  <Input value={form.privateSocksHost} readOnly />
-                </div>
-                <div className="space-y-2">
-                  <Label>端口</Label>
-                  <Input type="number" min={1} max={65535} value={form.privateSocksPort} onChange={(event) => patchForm({ privateSocksPort: event.target.value })} />
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Username secret ref（可选）</Label>
-                  <Input value={form.privateUsernameSecretRef} onChange={(event) => patchForm({ privateUsernameSecretRef: event.target.value })} placeholder="dual.mieru.username" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Password secret ref（可选）</Label>
-                  <Input value={form.privatePasswordSecretRef} onChange={(event) => patchForm({ privatePasswordSecretRef: event.target.value })} placeholder="dual.mieru.password" />
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">这里只保存 `dual.*` 引用，不接收或显示真实 Mieru 凭据；两项要么都填，要么都留空。</p>
-              <div className="space-y-2">
-                <Label>预计带宽（Mbps）</Label>
-                <Input type="number" min={1} value={form.privateBandwidthMbps} onChange={(event) => patchForm({ privateBandwidthMbps: event.target.value })} placeholder="160" />
-                <p className="text-xs text-muted-foreground">两条线路带宽要么都填，要么都留空。</p>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 p-3">
-                <div>
-                  <p className="text-sm font-medium">支持 UDP</p>
-                  <p className="text-xs text-muted-foreground">关闭后不能把 UDP 固定到专线。</p>
-                </div>
-                <Switch checked={form.privateSupportsUdp} onCheckedChange={(privateSupportsUdp) => patchForm({ privateSupportsUdp })} />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Gauge className="h-4 w-4 text-primary" /> leg1 · 普通直连
-                <Badge variant="outline">大流量追加</Badge>
-              </CardTitle>
-              <CardDescription>达到启动阈值后参与大流量传输，用便宜带宽补吞吐。</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Outbound tag</Label>
-                <Input value={form.directOutboundTag} onChange={(event) => patchForm({ directOutboundTag: event.target.value })} placeholder="hy2-public" />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
-                <div className="space-y-2">
-                  <Label>Hysteria2 服务端</Label>
-                  <Input value={form.directHy2Server} onChange={(event) => patchForm({ directHy2Server: event.target.value })} placeholder="dual.example.invalid" />
-                </div>
-                <div className="space-y-2">
-                  <Label>端口</Label>
-                  <Input type="number" min={1} max={65535} value={form.directHy2ServerPort} onChange={(event) => patchForm({ directHy2ServerPort: event.target.value })} />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>TLS server name</Label>
-                <Input value={form.directHy2TlsServerName} onChange={(event) => patchForm({ directHy2TlsServerName: event.target.value })} placeholder="dual.example.invalid" />
-              </div>
-              <div className="space-y-2">
-                <Label>Auth secret ref</Label>
-                <Input value={form.directHy2AuthSecretRef} onChange={(event) => patchForm({ directHy2AuthSecretRef: event.target.value })} placeholder="dual.hy2.auth" />
-                <p className="text-xs text-muted-foreground">预览中的 password 只会显示为 `&lt;secret:dual.hy2.auth&gt;`，不会解析 secret value。</p>
-              </div>
-              <div className="space-y-2">
-                <Label>预计带宽（Mbps）</Label>
-                <Input type="number" min={1} value={form.directBandwidthMbps} onChange={(event) => patchForm({ directBandwidthMbps: event.target.value })} placeholder="700" />
-                <p className="text-xs text-muted-foreground">这里填估算值即可，后续实机灰度再校准。</p>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 p-3">
-                <div>
-                  <p className="text-sm font-medium">支持 UDP</p>
-                  <p className="text-xs text-muted-foreground">例如直连 HY2 路径通常需要 UDP。</p>
-                </div>
-                <Switch checked={form.directSupportsUdp} onCheckedChange={(directSupportsUdp) => patchForm({ directSupportsUdp })} />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="h-4 w-4 text-primary" /> OpenClash 本地 Sidecar
-            </CardTitle>
-            <CardDescription>OpenClash/Mihomo 只连接本地 SOCKS，不直接解析自定义 multipath outbound。</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 md:grid-cols-[1fr_180px]">
-              <div className="space-y-2">
-                <Label>监听地址</Label>
-                <Input value={form.openClashSocksListen} readOnly />
-                <p className="text-xs text-muted-foreground">固定回环监听，禁止对 LAN/WAN 暴露未认证的本地 SOCKS。</p>
-              </div>
-              <div className="space-y-2">
-                <Label>监听端口</Label>
-                <Input type="number" min={1} max={65535} value={form.openClashSocksPort} onChange={(event) => patchForm({ openClashSocksPort: event.target.value })} />
-              </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2"><Label>激活直连阈值（Mbps）</Label><Input type="number" min={1} value={form.activationThresholdMbps} onChange={(event) => patchForm({ activationThresholdMbps: event.target.value })} /></div>
+              <div className="space-y-2"><Label>统计窗口</Label><Input value={form.activationWindow} onChange={(event) => patchForm({ activationWindow: event.target.value })} /></div>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Gauge className="h-4 w-4 text-primary" /> 聚合策略
-            </CardTitle>
-            <CardDescription>先保持少量关键参数，其他上游参数继续使用已验证的保守默认值。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <Label>启动直连阈值（Mbps）</Label>
-                <Input type="number" min={1} value={form.activationThresholdMbps} onChange={(event) => patchForm({ activationThresholdMbps: event.target.value })} />
-                <p className="text-xs text-muted-foreground">默认 120 Mbps；低于阈值时优先只用专线。</p>
-              </div>
-              <div className="space-y-2">
-                <Label>统计窗口</Label>
-                <Input value={form.activationWindow} onChange={(event) => patchForm({ activationWindow: event.target.value })} placeholder="1s" />
-                <p className="text-xs text-muted-foreground">例如 500ms、1s、2s。</p>
-              </div>
-              <div className="space-y-2">
-                <Label>UDP 默认路径</Label>
-                <Select value={form.udpLegIndex} onValueChange={(udpLegIndex: "0" | "1") => patchForm({ udpLegIndex })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">专线 leg0（推荐）</SelectItem>
-                    <SelectItem value="1">直连 leg1</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 p-3">
-              <div>
-                <p className="text-sm font-medium">TCP Fast Open</p>
-                <p className="text-xs text-muted-foreground">当前 PoC 默认开启；固定上游的 multipath inbound/outbound 都支持这个字段。</p>
-              </div>
-              <Switch checked={form.tcpFastOpen} onCheckedChange={(tcpFastOpen) => patchForm({ tcpFastOpen })} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/40 bg-card/60 backdrop-blur-md">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Eye className="h-4 w-4 text-primary" /> 保存、预览与 Dry-run
-            </CardTitle>
-            <CardDescription>Dry-run 只列出部署前置条件和校验步骤，不执行任何命令。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-              <Button type="button" variant="outline" onClick={preview} disabled={busy}>
-                {previewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
-                生成预览
-              </Button>
-              <Button type="button" variant="outline" onClick={dryRunPlan} disabled={busy}>
-                {planMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
-                Dry-run 部署计划
-              </Button>
-              <Button type="button" onClick={save} disabled={busy}>
-                {saveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                保存草稿
-              </Button>
-            </div>
-
-            {previewData ? (
-              <Alert>
-                <CheckCircle2 className="h-4 w-4" />
-                <AlertTitle>编译预览通过</AlertTitle>
-                <AlertDescription>
-                  上游固定为 {previewData.upstream.repository} / {previewData.upstream.branch} / {previewData.upstream.protocolGeneration}；安全标记确认 Agent、Runtime、Tunnel 均未启用。
-                </AlertDescription>
-              </Alert>
-            ) : null}
-
-            {planData ? (
-              <div className="space-y-4 rounded-lg border border-border/50 bg-muted/10 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold">P1 Dry-run 部署计划</p>
-                    <p className="mt-1 text-xs text-muted-foreground">计划只读，不包含 Agent 推送、命令执行、systemd、防火墙或 Tunnel 修改。</p>
-                  </div>
-                  <Badge variant={planData.readyToDeploy ? "default" : "secondary"}>
-                    {planData.readyToDeploy ? "可部署" : "仍有阻塞项"}
-                  </Badge>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                    <p className="text-sm font-medium">计划监听</p>
-                    <p className="mt-1 font-mono text-xs text-muted-foreground">
-                      {planData.listener.listen}:{planData.listener.port} · TCP Fast Open {planData.listener.tcpFastOpen ? "ON" : "OFF"}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">默认回环监听；不允许裸 multipath 端口直接暴露公网。</p>
-                  </div>
-                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                    <p className="text-sm font-medium">固定上游</p>
-                    <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{planData.upstream.commit}</p>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium">OpenClash 接入</p>
-                      <Badge variant="outline">Sidecar</Badge>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">不能把自定义 multipath outbound 当成 Mihomo 普通节点直接导入。计划使用 {planData.clientCompatibility.requiredCore} sidecar 暴露本地 SOCKS，再由 OpenClash 把它当普通本地节点。</p>
-                  </div>
-                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
-                    <p className="text-sm font-medium">两条载体</p>
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">专线可以通过客户端本地 SOCKS 桥接现有代理；公网 leg1 必须使用已认证传输，不能直接连接裸 multipath listener。</p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>当前阻塞项</Label>
-                  <div className="space-y-2">
-                    {planData.blockers.map((blocker) => (
-                      <div key={blocker} className="flex gap-2 rounded-md border border-border/50 bg-background/50 p-3 text-xs leading-5">
-                        <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span>{blocker}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>未来允许执行前的原生校验</Label>
-                  {planData.proposedChecks.map((check) => (
-                    <div key={check.id} className="space-y-2 rounded-md border border-border/50 bg-background/50 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs font-medium">{check.label}</p>
-                        <Badge variant="outline">当前不可执行</Badge>
-                      </div>
-                      <code className="block break-all rounded bg-muted/40 p-2 text-xs">{check.command}</code>
-                      <p className="text-xs text-muted-foreground">{check.reason}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="grid gap-4 xl:grid-cols-2">
-              <PreviewBlock title="客户端完整 Sidecar 配置（脱敏）" value={previewData?.clientConfig} />
-              <PreviewBlock title="服务端 Multipath / Carrier 边界（脱敏）" value={previewData?.serverPreview} />
+              <Button type="button" onClick={() => submit("save")} disabled={busy}>{saveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}保存 Dual 草稿</Button>
+              <Button type="button" variant="outline" disabled title="运行时与订阅尚未就绪"><Cable className="mr-2 h-4 w-4" />生成订阅（尚未就绪）</Button>
             </div>
           </CardContent>
         </Card>
+
+        <details className="rounded-xl border border-border/50 bg-card/40">
+          <summary className="cursor-pointer px-5 py-4 text-sm font-medium">高级 / 诊断（离线、脱敏）</summary>
+          <div className="space-y-5 border-t border-border/50 p-5">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">OpenClash adapter</p><p className="mt-1 text-sm">本地 SOCKS sidecar · 自动规划</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Private bridge</p><p className="mt-1 text-sm">Mihomo dedicated listener · {privateStatus}</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Server listener</p><p className="mt-1 text-sm">loopback-only · 不允许公网暴露</p></div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button type="button" variant="outline" onClick={() => submit("preview")} disabled={busy}>{previewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}生成诊断预览</Button>
+              <Button type="button" variant="outline" onClick={() => submit("plan")} disabled={busy}>{planMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Gauge className="mr-2 h-4 w-4" />}生成 Dry-run</Button>
+            </div>
+            {previewData ? <Alert><CheckCircle2 className="h-4 w-4" /><AlertTitle>确定性脱敏预览已生成</AlertTitle><AlertDescription>native HY2 依赖 pinned artifact 的 with_quic 构建；所有 runtime mutation 仍关闭。</AlertDescription></Alert> : null}
+            {planData ? (
+              <div className="space-y-2 rounded-lg border border-border/50 p-4">
+                <div className="flex items-center justify-between"><p className="text-sm font-medium">部署阻塞项</p><Badge variant="secondary">readyToDeploy=false</Badge></div>
+                {planData.blockers.map((blocker) => <div key={blocker} className="flex gap-2 text-xs leading-5 text-muted-foreground"><LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0" />{blocker}</div>)}
+              </div>
+            ) : null}
+            <div className="grid gap-4 xl:grid-cols-3">
+              <PreviewBlock title="Mihomo dedicated listener" value={previewData?.mihomoPrivateListener} />
+              <PreviewBlock title="Client sidecar" value={previewData?.clientConfig} />
+              <PreviewBlock title="Server runtime boundary" value={previewData?.serverPreview} />
+            </div>
+          </div>
+        </details>
       </div>
     </DashboardLayout>
   );
