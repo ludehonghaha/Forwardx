@@ -12,12 +12,12 @@ type noBrandDiscoveryTask struct {
 }
 
 type noBrandDiscoveryTaskResult struct {
-	TaskID    string                     `json:"taskId"`
-	Success   bool                       `json:"success"`
-	Installed bool                       `json:"installed"`
-	Snapshot  *noBrandProviderSnapshot   `json:"snapshot,omitempty"`
-	Error     string                     `json:"error,omitempty"`
-	UpdatedAt string                     `json:"updatedAt"`
+	TaskID    string                   `json:"taskId"`
+	Success   bool                     `json:"success"`
+	Installed bool                     `json:"installed"`
+	Snapshot  *noBrandProviderSnapshot `json:"snapshot,omitempty"`
+	Error     string                   `json:"error,omitempty"`
+	UpdatedAt string                   `json:"updatedAt"`
 }
 
 type noBrandDiscoverFn func() (noBrandDiscoveryResult, error)
@@ -59,7 +59,9 @@ func runNoBrandDiscoveryTaskWith(task noBrandDiscoveryTask, discover noBrandDisc
 
 func handleNoBrandDiscoveryTask(cfg Config, task noBrandDiscoveryTask) {
 	result := runNoBrandDiscoveryTask(task)
-	if err := post(cfg, "/api/agent/nobrand-discovery-result", map[string]any{"result": result}, &map[string]any{}); err != nil {
+	// Reuse the already allowlisted encrypted plugin-result tunnel as a transport
+	// envelope. The panel bridge consumes this marker before the plugin route.
+	if err := post(cfg, "/api/agent/plugin-action-result", map[string]any{"nobrandDiscoveryResult": result}, &map[string]any{}); err != nil {
 		if isTransientAgentCommError(err) {
 			logAgentCommError("nobrand-discovery-result", err)
 			return
