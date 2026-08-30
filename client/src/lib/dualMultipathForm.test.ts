@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { buildDualMultipathDraftFromForm, defaultDualMultipathForm, dualMultipathFormFromDraft } from "./dualMultipathForm";
 
 test("defaults to a simple one-panel Dual model without 127.0.0.1:1080", () => {
@@ -13,6 +15,9 @@ test("defaults to a simple one-panel Dual model without 127.0.0.1:1080", () => {
   assert.doesNotMatch(JSON.stringify(draft.privateCarrierBridge), /1080/);
   assert.equal(draft.directCarrier.status, "unresolved");
   assert.equal(draft.serverRuntime.directCarrierRuntime.separateHysteriaBinaryRequired, false);
+  assert.equal(draft.openClashIngressAdapter.portStrategy, "auto");
+  assert.equal(draft.openClashIngressAdapter.port, null);
+  assert.doesNotMatch(JSON.stringify(draft), /20808|20809/);
 });
 
 test("maps ordinary UI fields to the fixed private-first topology", () => {
@@ -46,14 +51,18 @@ test("rejects invalid ordinary UI values before API submission", () => {
 test("hydrates a v3 draft without exposing or rewriting infrastructure", () => {
   const base = defaultDualMultipathForm();
   const draft = buildDualMultipathDraftFromForm(base);
+  assert.equal(draft.privateCarrierBridge.type, "mihomo-dedicated-listener");
+  if (draft.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
   const resolved = {
     ...draft,
     name: "Dual 已发现",
     line: { ...draft.line, chunkSize: 32768, queueFrames: 128 },
-    legs: [draft.legs[0], { ...draft.legs[1], supportsUdp: false }],
+    legs: [draft.legs[0], { ...draft.legs[1], supportsUdp: false }] as typeof draft.legs,
+    openClashIngressAdapter: { ...draft.openClashIngressAdapter, status: "resolved" as const, port: 23180 },
     privateCarrierBridge: {
       ...draft.privateCarrierBridge,
-      status: "resolved",
+      status: "resolved" as const,
+      listener: { ...draft.privateCarrierBridge.listener, port: 23181 },
       target: { ...draft.privateCarrierBridge.target, proxyRef: "Pure-Mieru" },
     },
   };
@@ -66,4 +75,15 @@ test("hydrates a v3 draft without exposing or rewriting infrastructure", () => {
   assert.equal(rebuilt.legs[1].supportsUdp, false);
   assert.deepEqual(rebuilt.openClashIngressAdapter, resolved.openClashIngressAdapter);
   assert.deepEqual(rebuilt.serverRuntime, resolved.serverRuntime);
+  assert.equal(rebuilt.openClashIngressAdapter.port, 23180);
+  assert.equal(rebuilt.privateCarrierBridge.type, "mihomo-dedicated-listener");
+  if (rebuilt.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+  assert.equal(rebuilt.privateCarrierBridge.listener.port, 23181);
+});
+
+test("uses canonical shared types without any in v3 hydration", () => {
+  const source = readFileSync(fileURLToPath(new URL("./dualMultipathForm.ts", import.meta.url)), "utf8");
+  assert.doesNotMatch(source, /\bany\b/);
+  assert.match(source, /DualMultipathDraftV3/);
+  assert.match(source, /DualMultipathInfrastructureState/);
 });

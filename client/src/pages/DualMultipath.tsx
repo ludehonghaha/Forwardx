@@ -102,9 +102,9 @@ export default function DualMultipathPage() {
   const submit = (kind: "preview" | "plan" | "save") => {
     const draft = buildDraft();
     if (!draft) return;
-    if (kind === "preview") previewMutation.mutate(draft as any);
-    if (kind === "plan") planMutation.mutate(draft as any);
-    if (kind === "save") saveMutation.mutate(draft as any);
+    if (kind === "preview") previewMutation.mutate(draft);
+    if (kind === "plan") planMutation.mutate(draft);
+    if (kind === "save") saveMutation.mutate(draft);
   };
 
   if (currentQuery.isLoading) {

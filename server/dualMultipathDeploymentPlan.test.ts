@@ -8,12 +8,12 @@ const validDraft = {
   version: 3 as const,
   state: "draft" as const,
   name: "NoBrand Dual",
+  ...infrastructure,
   line: { id: 1, server: "127.0.0.1", serverPort: 39000, listen: "127.0.0.1" as const, activationThresholdMbps: 120, activationWindow: "1s", tcpFastOpen: true },
   legs: [
     { role: "private" as const, legIndex: 0 as const, outboundTag: "forwardx-private-mieru", expectedBandwidthMbps: 200, supportsUdp: true },
     { role: "direct" as const, legIndex: 1 as const, outboundTag: "forwardx-direct-hy2", expectedBandwidthMbps: 1000, supportsUdp: true },
   ] as const,
-  ...infrastructure,
 };
 
 test("builds a deterministic fail-closed v4 dry-run plan", () => {
@@ -33,6 +33,7 @@ test("keeps unresolved private and HY2 runtimes as explicit blockers", () => {
   const plan = buildDualMultipathDeploymentPlan(validDraft);
   const text = plan.blockers.join("\n");
   assert.match(text, /secret resolver/);
+  assert.match(text, /端口占用检查与自动规划/);
   assert.match(text, /private carrier bridge/);
   assert.match(text, /Hysteria2 端口/);
   assert.match(text, /Mihomo dedicated listener/);
@@ -41,6 +42,14 @@ test("keeps unresolved private and HY2 runtimes as explicit blockers", () => {
   assert.match(text, /sing-box check/);
   assert.match(text, /回滚/);
   assert.equal(plan.intendedArtifacts.every((artifact) => artifact.destination === null), true);
+});
+
+test("never treats unresolved auto client ports as deploy-ready", () => {
+  const plan = buildDualMultipathDeploymentPlan(validDraft);
+  assert.equal(validDraft.openClashIngressAdapter.portStrategy, "auto");
+  assert.equal(validDraft.openClashIngressAdapter.port, null);
+  assert.equal(plan.readyToDeploy, false);
+  assert.match(plan.blockers.join("\n"), /端口占用检查与自动规划/);
 });
 
 test("models OpenClash ingress, dedicated Mihomo bridge and native HY2 in one ForwardX plan", () => {

@@ -11,21 +11,24 @@ import {
   saveDualMultipathDraft,
   type DualMultipathSettingsStore,
 } from "./dualMultipathControlPlane";
+import { createDefaultDualMultipathInfrastructure, type DualTargetDiscoverySnapshot } from "../shared/dualMultipath";
 
 const infrastructure = defaultDualMultipathInfrastructure();
 const draftInput = {
   version: 3 as const,
   state: "draft" as const,
   name: "NoBrand Dual",
+  ...infrastructure,
   line: { id: 1, server: "127.0.0.1", serverPort: 39000, listen: "127.0.0.1" as const, activationThresholdMbps: 120 },
   legs: [
     { role: "private" as const, legIndex: 0 as const, outboundTag: "forwardx-private-mieru", expectedBandwidthMbps: 200, supportsUdp: true },
     { role: "direct" as const, legIndex: 1 as const, outboundTag: "forwardx-direct-hy2", expectedBandwidthMbps: 1000, supportsUdp: true },
   ] as const,
-  ...infrastructure,
+  openClashIngressAdapter: { ...infrastructure.openClashIngressAdapter, status: "resolved" as const, port: 24080 },
   privateCarrierBridge: {
     ...infrastructure.privateCarrierBridge,
     status: "resolved" as const,
+    listener: { ...infrastructure.privateCarrierBridge.listener, port: 24081 },
     target: { ...infrastructure.privateCarrierBridge.target, proxyRef: "NoBrand-Private-Mieru" },
   },
   directCarrier: {
@@ -61,6 +64,10 @@ test("does not default or emit the rejected 127.0.0.1:1080 private endpoint", ()
   assert.doesNotMatch(serialized, /1080/);
   assert.equal(defaults.privateCarrierBridge.type, "mihomo-dedicated-listener");
   assert.equal(defaults.privateCarrierBridge.status, "unresolved");
+  assert.equal(defaults.privateCarrierBridge.listener.portStrategy, "auto");
+  assert.equal(defaults.privateCarrierBridge.listener.port, null);
+  assert.equal(defaults.openClashIngressAdapter.port, null);
+  assert.doesNotMatch(serialized, /20808|20809/);
 });
 
 test("keeps an undiscovered external SOCKS5 endpoint unresolved", () => {
@@ -104,7 +111,7 @@ test("rejects ingress recursion and private-listener port conflicts", () => {
     ...draftInput,
     privateCarrierBridge: {
       ...draftInput.privateCarrierBridge,
-      listener: { ...draftInput.privateCarrierBridge.listener, listenPort: draftInput.openClashIngressAdapter.listenPort },
+      listener: { ...draftInput.privateCarrierBridge.listener, port: draftInput.openClashIngressAdapter.port },
     },
   }), /不能使用同一端口/);
 });
@@ -122,6 +129,13 @@ test("rejects private targets with proxy-group, DIRECT or public fallback semant
 
 test("rejects a public server multipath listener", () => {
   assert.throws(() => parseDualMultipathDraft({ ...draftInput, line: { ...draftInput.line, listen: "0.0.0.0" } }), /回环监听/);
+});
+
+test("rejects a server runtime listener that drifts from the line loopback target", () => {
+  assert.throws(() => parseDualMultipathDraft({
+    ...draftInput,
+    serverRuntime: { ...draftInput.serverRuntime, multipathListener: { listen: "127.0.0.1", port: 39001 } },
+  }), /必须与 line 的 loopback target 一致/);
 });
 
 test("accepts only dual.* secret references without echoing rejected values", () => {
@@ -146,12 +160,71 @@ test("compiles deterministic redacted Mihomo, client and server previews", () =>
   assert.deepEqual(first.clientConfig.outbounds.map((item) => item.tag), ["forwardx-private-mieru", "forwardx-direct-hy2", "forwardx-multipath-1"]);
   assert.equal(first.serverPreview.multipathConfig.inbounds[0].listen, "127.0.0.1");
   assert.equal(first.serverPreview.authenticatedCarrierRuntime.direct.bind.interface, "eth0");
+  assert.equal(first.serverPreview.authenticatedCarrierRuntime.direct.bind.source_address, "87.86.22.221");
+  if (first.serverPreview.verifiedTopology.status !== "verified-read-only") throw new Error("expected verified topology");
+  assert.equal(first.serverPreview.verifiedTopology.existingPrivateCarrier.listener.port, 11464);
   assert.equal(first.serverPreview.authenticatedCarrierRuntime.direct.separateHysteriaBinaryRequired, false);
   const serialized = JSON.stringify(first);
   assert.match(serialized, /<secret:dual\.hy2\.auth>/);
   assert.match(serialized, /<secret:dual\.hy2\.tls\.private-key>/);
   assert.equal(first.upstream.nativeHysteria2, true);
   assert.equal(first.upstream.requiredBuildTag, "with_quic");
+});
+
+test("accepts a second synthetic Dual through discovery data without schema changes", () => {
+  const syntheticDiscovery: DualTargetDiscoverySnapshot = {
+    status: "verified-read-only",
+    targetId: "synthetic-dual-2",
+    platform: { kernel: "Linux", architecture: "aarch64" },
+    publicSide: {
+      interfaceName: "ens3",
+      sourceAddress: "203.0.113.20",
+      addresses: ["203.0.113.20/27"],
+      gateway: "203.0.113.1",
+    },
+    privateSide: {
+      interfaceName: "ens8",
+      sourceAddress: "10.44.0.12",
+      addresses: ["10.44.0.12/24"],
+    },
+    defaultRoute: { via: "203.0.113.1", dev: "ens3" },
+    existingPrivateCarrier: {
+      type: "mita",
+      binaryPath: "/opt/mita/bin/mita",
+      serviceStatus: "active",
+      listener: { network: "tcp", listen: "*", port: 22464 },
+      lifecycle: "preserve",
+    },
+    installedBinaries: { singBox: false, hysteria: false, standaloneMieru: false },
+  };
+  const syntheticInfrastructure = createDefaultDualMultipathInfrastructure(syntheticDiscovery);
+  const parsed = parseDualMultipathDraft({
+    ...draftInput,
+    ...syntheticInfrastructure,
+    line: draftInput.line,
+    legs: draftInput.legs,
+    directCarrier: { ...syntheticInfrastructure.directCarrier, server: "203.0.113.20" },
+  });
+  const preview = compileDualMultipathPreview(parsed);
+  if (preview.serverPreview.verifiedTopology.status !== "verified-read-only") throw new Error("expected verified topology");
+  assert.equal(preview.serverPreview.verifiedTopology.publicSide.interfaceName, "ens3");
+  assert.equal(preview.serverPreview.verifiedTopology.privateSide.sourceAddress, "10.44.0.12");
+  assert.equal(preview.serverPreview.verifiedTopology.existingPrivateCarrier.listener.port, 22464);
+  assert.equal(preview.serverPreview.authenticatedCarrierRuntime.direct.bind.interface, "ens3");
+  assert.equal(preview.serverPreview.authenticatedCarrierRuntime.direct.bind.source_address, "203.0.113.20");
+});
+
+test("keeps unresolved auto client ports explicit in deterministic preview", () => {
+  const unresolved = parseDualMultipathDraft({
+    ...draftInput,
+    ...defaultDualMultipathInfrastructure(),
+    line: draftInput.line,
+    legs: draftInput.legs,
+  });
+  const preview = compileDualMultipathPreview(unresolved);
+  assert.equal(preview.clientPortPlanning.resolved, false);
+  assert.match(JSON.stringify(preview.clientConfig), /unresolved:auto-dual-ingress-port/);
+  assert.match(JSON.stringify(preview.mihomoPrivateListener), /unresolved:auto-private-bridge-port/);
 });
 
 test("invalid drafts perform zero persistence writes", async () => {
@@ -166,6 +239,46 @@ test("saves only v3 and loads it back", async () => {
   assert.equal(memory.calls[0]?.key, DUAL_MULTIPATH_DRAFT_SETTING_KEY);
   const loaded = await loadDualMultipathDraft(memory.store);
   assert.deepEqual(loaded, saved);
+});
+
+test("upgrades the pre-cleanup v3 host literals into discovery and resets unverified client ports", async () => {
+  const memory = memoryStore();
+  memory.values.set(DUAL_MULTIPATH_DRAFT_SETTING_KEY, JSON.stringify({
+    version: 3,
+    state: "draft",
+    name: "NoBrand Dual legacy v3",
+    line: draftInput.line,
+    legs: draftInput.legs,
+    openClashIngressAdapter: {
+      type: "local-socks-sidecar", status: "planned", tag: "forwardx-dual-ingress-1", listen: "127.0.0.1", listenPort: 20808,
+    },
+    privateCarrierBridge: {
+      type: "mihomo-dedicated-listener", status: "unresolved",
+      listener: { kind: "socks", scope: "dedicated", listen: "127.0.0.1", listenPort: 20809 },
+      target: {
+        selection: "single-proxy", protocol: "mieru", routing: "fixed-proxy", fallback: "none", transportScope: "private-only",
+      },
+    },
+    directCarrier: infrastructure.directCarrier,
+    serverRuntime: {
+      topologyStatus: "verified-read-only",
+      publicSide: { interface: "eth0", sourceAddress: "87.86.22.221", gateway: "87.86.22.1" },
+      privateSide: { interface: "eth1", sourceAddress: "172.16.4.114", existingCarrier: "mita", existingListenerPort: 11464, lifecycle: "preserve" },
+      directCarrierRuntime: {
+        status: "unresolved", engine: "pinned-singbox-multipath", nativeHysteria2: "requires-with_quic-build-tag",
+        separateHysteriaBinaryRequired: false, bindInterface: "eth0", sourceAddress: "87.86.22.221",
+        tlsCertificateSecretRef: "dual.hy2.tls.certificate", tlsPrivateKeySecretRef: "dual.hy2.tls.private-key",
+      },
+    },
+  }));
+  const loaded = await loadDualMultipathDraft(memory.store);
+  assert.equal(loaded?.targetDiscovery.status, "verified-read-only");
+  assert.equal(loaded?.openClashIngressAdapter.port, null);
+  assert.equal(loaded?.privateCarrierBridge.type, "mihomo-dedicated-listener");
+  if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected migrated Mihomo bridge");
+  assert.equal(loaded.privateCarrierBridge.listener.port, null);
+  assert.doesNotMatch(JSON.stringify(loaded), /20808|20809/);
+  assert.equal(memory.calls.some((call) => call.method === "setSetting"), false);
 });
 
 test("upgrades v2 in memory without carrying 127.0.0.1:1080 forward", async () => {

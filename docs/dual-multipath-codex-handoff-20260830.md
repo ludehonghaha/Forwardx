@@ -182,12 +182,17 @@ The client preview is now a complete offline sidecar shape: local SOCKS inbound 
 
 The current offline model uses `dualMultipathDraftV3` and separates:
 
+- `targetDiscovery`: a target-specific, verified-read-only discovery snapshot; interface names, addresses, gateway, and the existing Mita listener are data rather than schema literals;
 - `openClashIngressAdapter`: ForwardX Dual sidecar's loopback SOCKS ingress for OpenClash;
 - `privateCarrierBridge`: preferred `mihomo-dedicated-listener`, with `external-local-socks5` available only when a real endpoint has been discovered;
 - `directCarrier`: native Hysteria2 endpoint and references, unresolved until final runtime facts exist;
-- `serverRuntime`: verified eth0/eth1 roles, preserved Mita boundary, and unresolved native HY2 runtime.
+- `serverRuntime`: target-independent loopback multipath and unresolved native HY2 runtime policy.
 
-Both v1 and v2 drafts are upgraded only in memory. Any v2 `127.0.0.1:1080` value is deliberately discarded and replaced with an unresolved preferred Mihomo bridge. No migration write occurs until an administrator explicitly saves v3.
+The generic Zod schema has no `eth0`/`eth1`, fixed address, gateway, or Mita-port literals. The verified NoBrand values live in `NO_BRAND_DUAL_DISCOVERY_SNAPSHOT`. A second Dual with different interfaces, addresses, gateway, and Mita port only needs another snapshot; it does not require a source/schema change.
+
+Both client loopback ports now use `portStrategy: "auto"` with `port: null` while unresolved. A later read-only availability check must materialize concrete ports. The ordinary form neither shows nor rewrites them. The server-internal multipath listener remains the separate loopback-only `127.0.0.1:39000` candidate.
+
+V1, v2, and the pre-cleanup v3 shape are upgraded only in memory. Any v2 `127.0.0.1:1080` value and the pre-cleanup unverified client-port candidates are deliberately discarded and replaced with unresolved auto planning. Pre-cleanup v3 host values are retained as a target discovery snapshot. No migration write occurs until an administrator explicitly saves the current v3 shape.
 
 The normal ForwardX UI exposes one Dual aggregate line: Mieru/private status and bandwidth, HY2/direct status and bandwidth, small-flow preference, activation threshold, status, and the future subscription action. Ports, listener tags, loopback addresses, interfaces, and secret references are hidden under diagnostics or auto-managed.
 

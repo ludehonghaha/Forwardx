@@ -36,10 +36,15 @@ ForwardX 的 Dual 聚合实验以 `WuSiYu/singbox-multipath` 为唯一 PoC 上�
 
 当前离线草稿使用 v3，并拆分：
 
+- `targetDiscovery`：某一台目标 Dual 的只读发现快照；interface、IP、gateway、现有 Mita listener 等都是目标数据，不是产品 schema 常量；
 - `openClashIngressAdapter`：OpenClash 连接 ForwardX sidecar 的本地入口；
 - `privateCarrierBridge`：优先使用 Mihomo dedicated loopback listener，并固定到单一纯 Mieru proxy；
 - `directCarrier`：pinned artifact 的 native Hysteria2；
-- `serverRuntime`：已核验的双网卡角色、保留的 Mita 边界和未解析的 HY2 runtime。
+- `serverRuntime`：与具体主机无关的 loopback multipath 边界和未解析 HY2 runtime 策略。
+
+generic schema 不包含 `eth0`、`eth1`、固定 IP、gateway 或 Mita 端口 literal。当前 NoBrand Dual 的已核验结果单独保存为 `NO_BRAND_DUAL_DISCOVERY_SNAPSHOT`；以后更换为 `ens3`、`10.x` 或不同 Mita 端口时，只注入新的 snapshot，不修改 TypeScript schema/source code。
+
+客户端入口与 Mihomo dedicated listener 都使用 `portStrategy: "auto"`。在 ForwardX 对目标执行只读端口占用检查前，端口必须保持 `port: null` 和 `status: "unresolved"`，不能把候选值当成 runtime fact。普通用户不填写或维护端口。Dual 服务端内部 multipath listener 仍保留 loopback-only 的 `127.0.0.1:39000` 安全候选；它与客户端自动端口是不同边界。
 
 数据库层必须保证同一 aggregate line 不出现重复 legIndex；业务层必须拒绝少于或多于两条 leg。
 

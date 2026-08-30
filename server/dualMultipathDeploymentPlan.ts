@@ -22,10 +22,14 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
   const serverInbound = preview.serverPreview.multipathConfig.inbounds[0];
 
   const privateBridgeResolved = draft.privateCarrierBridge.status === "resolved";
+  const ingressPortResolved = draft.openClashIngressAdapter.status === "resolved";
+  const targetDiscoveryResolved = draft.targetDiscovery.status === "verified-read-only";
   const directCarrierResolved = draft.directCarrier.status === "resolved";
   const blockers = [
     "客户端 carrier 目前只包含 secret reference；尚未建立灰度 secret resolver 与进程级注入边界",
+    ...(ingressPortResolved ? [] : ["Dual ingress loopback 端口尚未经过目标端口占用检查与自动规划"]),
     ...(privateBridgeResolved ? [] : ["private carrier bridge 尚未解析到单一纯 Mieru proxy 或真实 external SOCKS5 endpoint"]),
+    ...(targetDiscoveryResolved ? [] : ["Dual 目标尚无 verified-read-only discovery snapshot"]),
     ...(directCarrierResolved ? [] : ["Hysteria2 端口、TLS server name 与最终 runtime 仍未解析"]),
     "Mihomo dedicated listener 尚未在 OpenClash override 机制中生成并执行原生配置校验",
     "Hysteria2 服务端监听、TLS secret 注入和回环转发语义尚未执行原生配置校验",
@@ -71,8 +75,8 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
         nativeHysteria2InPinnedArtifact: true as const,
         requiredBuildTag: "with_quic" as const,
         separateHysteriaBinaryRequired: false as const,
-        bindInterface: draft.serverRuntime.directCarrierRuntime.bindInterface,
-        sourceAddress: draft.serverRuntime.directCarrierRuntime.sourceAddress,
+        bindInterface: draft.targetDiscovery.status === "verified-read-only" ? draft.targetDiscovery.publicSide.interfaceName : null,
+        sourceAddress: draft.targetDiscovery.status === "verified-read-only" ? draft.targetDiscovery.publicSide.sourceAddress : null,
         runtimeStatus: draft.serverRuntime.directCarrierRuntime.status,
         note: "公网 leg1 使用 pinned singbox-multipath artifact 的 native Hysteria2，并显式绑定已核验的公网侧；不能暴露裸 multipath listener。",
       },
