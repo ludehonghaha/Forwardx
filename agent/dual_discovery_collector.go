@@ -264,6 +264,11 @@ type dualDerivedPrivateSide struct {
 	SourceAddress string
 }
 
+// deriveDualPrivateSide deliberately does not encode a vendor-specific CIDR.
+// The default-route interface is the direct/public side. A Dual target is
+// considered unambiguous only when exactly one other interface has a usable
+// non-loopback IPv4 address. More complex topologies must fail closed until
+// discovery provides an explicit role hint in a future protocol revision.
 func deriveDualPrivateSide(interfaces []dualCollectorInterfaceSnapshot, defaultDev string) (dualDerivedPrivateSide, error) {
 	candidates := make([]dualDerivedPrivateSide, 0, 1)
 	for _, iface := range interfaces {
@@ -272,7 +277,7 @@ func deriveDualPrivateSide(interfaces []dualCollectorInterfaceSnapshot, defaultD
 		}
 		for _, rawAddress := range iface.Addresses {
 			ip := net.ParseIP(strings.TrimSpace(rawAddress))
-			if ip == nil || ip.To4() == nil || !ip.IsPrivate() || ip.IsLoopback() {
+			if ip == nil || ip.To4() == nil || ip.IsLoopback() {
 				continue
 			}
 			candidates = append(candidates, dualDerivedPrivateSide{Name: iface.Name, SourceAddress: ip.String()})
