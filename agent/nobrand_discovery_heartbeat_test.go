@@ -15,7 +15,7 @@ func TestHeartbeatResponseDispatchesNoBrandDiscoveryTasks(t *testing.T) {
 	}
 
 	var response heartbeatResp
-	if err := json.Unmarshal([]byte(`{"noBrandDiscoveryTasks":[{"taskId":"nb-task-1","createdAt":"2026-08-30T00:00:00Z"}]}`), &response); err != nil {
+	if err := json.Unmarshal([]byte("{\"noBrandDiscoveryTasks\":[{\"taskId\":\"nb-task-1\",\"createdAt\":\"2026-08-30T00:00:00Z\"}]}"), &response); err != nil {
 		t.Fatalf("unmarshal heartbeat: %v", err)
 	}
 	if len(captured) != 1 || captured[0].TaskID != "nb-task-1" {
@@ -33,7 +33,7 @@ func TestHeartbeatResponseWithoutNoBrandTasksDoesNotDispatch(t *testing.T) {
 	}
 
 	var response heartbeatResp
-	if err := json.Unmarshal([]byte(`{"nextInterval":30}`), &response); err != nil {
+	if err := json.Unmarshal([]byte("{\"nextInterval\":30}"), &response); err != nil {
 		t.Fatalf("unmarshal heartbeat: %v", err)
 	}
 	if called {
