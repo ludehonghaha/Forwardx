@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "operation": "dual-readonly-discovery",
+  "requestId": "fixture-request-1",
+  "targetId": "fixture-dual-agent",
+  "status": "ok",
+  "evidence": {
+    "version": 1,
+    "targetId": "fixture-dual-agent",
+    "evidenceId": "fixture-agent-evidence-1",
+    "provenance": "agent-read-only",
+    "observations": [
+      { "kind": "platform", "kernel": "Linux", "architecture": "x86_64" },
+      { "kind": "interface", "interfaceName": "ens3", "addresses": ["203.0.113.30/24"] },
+      { "kind": "interface", "interfaceName": "ens8", "addresses": ["10.55.0.12/24"] },
+      { "kind": "default-route", "dev": "ens3", "via": "203.0.113.1", "sourceAddress": "203.0.113.30" },
+      { "kind": "private-side", "interfaceName": "ens8", "sourceAddress": "10.55.0.12" },
+      {
+        "kind": "mita-runtime",
+        "binaryPath": "/usr/local/bin/mita",
+        "serviceStatus": "active",
+        "listener": { "network": "tcp", "listen": "*", "port": 22464 },
+        "lifecycle": "preserve"
+      },
+      { "kind": "installed-binaries", "singBox": false, "hysteria": false, "standaloneMieru": false },
+      { "kind": "port-probe", "address": "127.0.0.1", "protocol": "tcp", "port": 24001, "availability": "occupied" },
+      { "kind": "port-probe", "address": "127.0.0.1", "protocol": "tcp", "port": 24002, "availability": "available" }
+    ]
+  }
+}
