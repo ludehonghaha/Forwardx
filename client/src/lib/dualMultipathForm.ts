@@ -20,7 +20,11 @@ const durationPattern = /^\d+(?:\.\d+)?(?:ms|s|m|h)$/;
 export function defaultDualMultipathForm(): DualMultipathFormState {
   return {
     name: "NoBrand Dual",
-    server: "",
+    // For the NoBrand same-host carrier model both authenticated proxies
+    // terminate on the Dual box and dial the multipath listener locally.
+    // Loopback is also the fail-closed default because multipath itself has no
+    // authentication or encryption.
+    server: "127.0.0.1",
     serverPort: "39000",
     privateOutboundTag: "dedicated",
     privateBandwidthMbps: "160",
@@ -121,7 +125,7 @@ export function dualMultipathFormFromDraft(draft: any): DualMultipathFormState {
   const directLeg = Array.isArray(draft.legs) ? draft.legs[1] || {} : {};
   return {
     name: String(draft.name || base.name),
-    server: String(line.server || ""),
+    server: String(line.server || base.server),
     serverPort: String(line.serverPort || base.serverPort),
     privateOutboundTag: String(privateLeg.outboundTag || base.privateOutboundTag),
     privateBandwidthMbps: privateLeg.expectedBandwidthMbps === undefined ? "" : String(privateLeg.expectedBandwidthMbps),
