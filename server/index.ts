@@ -10,6 +10,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "./routers";
 import { createContext } from "./_core/context";
 import { agentRouter } from "./agentRoutes";
+import { nobrandAgentBridgeRouter } from "./nobrandAgentBridge";
 import { paymentCallbackRouter } from "./payment";
 import { migrationRouter } from "./migration";
 import { initDatabase } from "./db";
@@ -117,6 +118,9 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "1mb", extended: true }));
   app.use(cookieParser());
   installMobileCors(app);
+  // Decrypt and bridge the narrow NoBrand discovery messages before the main
+  // Agent router. The normal Agent router still owns every non-NoBrand request.
+  app.use(nobrandAgentBridgeRouter);
   app.use(agentRouter);
   app.use(migrationRouter);
   app.use(protocolFeedRouter);
