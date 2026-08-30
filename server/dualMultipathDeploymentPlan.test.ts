@@ -25,11 +25,14 @@ test("builds a deterministic fail-closed dry-run deployment plan", () => {
   const second = buildDualMultipathDeploymentPlan(validDraft);
 
   assert.deepEqual(first, second);
+  assert.equal(first.version, 2);
   assert.equal(first.mode, "dry-run");
   assert.equal(first.readyToDeploy, false);
+  assert.equal(first.listener.listen, "127.0.0.1");
   assert.equal(first.listener.port, 39000);
   assert.equal(first.listener.tcpFastOpen, true);
   assert.equal(first.listener.exposureVerified, false);
+  assert.equal(first.listener.safeDefault, "loopback");
   assert.equal(first.topology.private, "dedicated");
   assert.equal(first.topology.direct, "hy2-public");
   assert.equal(first.fragments.serverInbound.tcp_fast_open, true);
@@ -45,6 +48,20 @@ test("keeps unresolved child outbounds, target binding, and listener exposure as
   assert.match(text, /不提供认证或加密/);
   assert.match(text, /1c36787d956d750f2ee58d73710d8006a11ccf2c/);
   assert.equal(plan.intendedArtifacts.every((artifact) => artifact.destination === null), true);
+});
+
+test("describes OpenClash as a local SOCKS adapter instead of a native multipath client", () => {
+  const plan = buildDualMultipathDeploymentPlan(validDraft);
+
+  assert.deepEqual(plan.clientCompatibility, {
+    requiredCore: "singbox-multipath",
+    nativeMihomoMultipath: false,
+    openClashDirectImport: false,
+    recommendedOpenClashAdapter: "local-socks-sidecar",
+    explanation: "Dual multipath 是固定 sing-box 分支新增的自定义 outbound；OpenClash/Mihomo 侧应把 sidecar 暴露的本地 SOCKS 当作普通节点，而不是直接解析 multipath outbound。",
+  });
+  assert.equal(plan.carrierStrategy.privateLeg.localSocksBridgeAllowed, true);
+  assert.equal(plan.carrierStrategy.directLeg.authenticatedCarrierRequired, true);
 });
 
 test("only exposes a non-runnable upstream-native config validation command", () => {
