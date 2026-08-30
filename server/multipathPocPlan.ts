@@ -165,9 +165,9 @@ export function buildMultipathPocOutbound(lineInput: MultipathPocLine, legInput:
 }
 
 /**
- * Compile only the matching server inbound stanza. `tcp_fast_open` is not
- * emitted here because the pinned upstream MultipathInboundOptions does not
- * define that field.
+ * Compile only the matching server inbound stanza. The pinned upstream
+ * MultipathInboundOptions embeds ListenOptions, so tcp_fast_open is a valid
+ * inbound field and mirrors the same line-level setting as the client side.
  */
 export function buildMultipathPocInbound(lineInput: MultipathPocLine, legInput: MultipathPocLeg[]) {
   const line = normalizedLine(lineInput);
@@ -178,6 +178,7 @@ export function buildMultipathPocInbound(lineInput: MultipathPocLine, legInput: 
     tag: `forwardx-multipath-${line.id}`,
     listen: line.listen,
     listen_port: line.serverPort,
+    tcp_fast_open: line.tcpFastOpen,
     ...sharedSchedulingConfig(line, legs),
     max_reorder_frames: line.maxReorderFrames,
   };
