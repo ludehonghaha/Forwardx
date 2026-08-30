@@ -1,0 +1,65 @@
+import { TRPCError } from "@trpc/server";
+import { adminProcedure, router } from "../_core/trpc";
+import * as db from "../db";
+import {
+  compileDualMultipathPreview,
+  dualMultipathDraftSchema,
+  loadDualMultipathDraft,
+  saveDualMultipathDraft,
+  type DualMultipathSettingsStore,
+} from "../dualMultipathControlPlane";
+
+const settingsStore: DualMultipathSettingsStore = {
+  getSetting: (key) => db.getSetting(key),
+  setSetting: (key, value) => db.setSetting(key, value),
+};
+
+function badRequest(error: unknown): never {
+  throw new TRPCError({
+    code: "BAD_REQUEST",
+    message: error instanceof Error ? error.message : "Dual multipath 配置无效",
+  });
+}
+
+/**
+ * Dual multipath 目前只提供离线控制面：保存草稿、读取草稿和编译预览。
+ * 本 router 故意不导入 agentEvents、runtime lifecycle 或 tunnel mutation。
+ */
+export const dualMultipathRouter = router({
+  current: adminProcedure.query(async () => {
+    try {
+      const draft = await loadDualMultipathDraft(settingsStore);
+      return { configured: draft !== null, draft };
+    } catch (error) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: error instanceof Error ? error.message : "Dual multipath 草稿读取失败",
+      });
+    }
+  }),
+
+  saveDraft: adminProcedure
+    .input(dualMultipathDraftSchema)
+    .mutation(async ({ input }) => {
+      try {
+        const draft = await saveDualMultipathDraft(settingsStore, input);
+        return {
+          success: true as const,
+          draft,
+          deployment: "none" as const,
+        };
+      } catch (error) {
+        return badRequest(error);
+      }
+    }),
+
+  preview: adminProcedure
+    .input(dualMultipathDraftSchema)
+    .query(({ input }) => {
+      try {
+        return compileDualMultipathPreview(input);
+      } catch (error) {
+        return badRequest(error);
+      }
+    }),
+});
