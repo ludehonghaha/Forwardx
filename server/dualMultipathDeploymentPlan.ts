@@ -27,6 +27,7 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
     `缺少专线子 outbound（${privateTag}）的完整定义与凭据`,
     `缺少直连子 outbound（${directTag}）的完整定义与凭据`,
     "尚未绑定真实 Dual 目标主机、系统架构与安装目录",
+    "尚未确认 multipath listener 仅通过受信或已认证的子路径可达；multipath 协议本身不提供认证或加密",
     `尚未解析并校验固定上游 commit ${preview.upstream.commit} 对应的可部署二进制产物`,
   ];
 
@@ -40,6 +41,7 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       listen: String(preview.serverInbound.listen || "0.0.0.0"),
       port: Number(preview.serverInbound.listen_port),
       tcpFastOpen: preview.serverInbound.tcp_fast_open === true,
+      exposureVerified: false as const,
     },
     topology: preview.topology,
     fragments: {
@@ -79,6 +81,7 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       systemdWrite: false as const,
       firewallMutation: false as const,
       tunnelMutation: false as const,
+      unauthenticatedPublicListenerAllowed: false as const,
     },
   };
 }
