@@ -55,7 +55,7 @@ test("compiles the matching server inbound using inherited ListenOptions fields"
   assert.deepEqual(inbound, {
     type: "multipath",
     tag: "forwardx-multipath-1",
-    listen: "0.0.0.0",
+    listen: "127.0.0.1",
     listen_port: 39000,
     tcp_fast_open: true,
     activation_threshold_mbps: 120,
@@ -73,6 +73,11 @@ test("compiles the matching server inbound using inherited ListenOptions fields"
   assert.equal(buildMultipathPocInbound({ ...line, tcpFastOpen: false }, legs)?.tcp_fast_open, false);
   assert.equal(JSON.stringify(inbound).includes("password"), false);
   assert.equal(JSON.stringify(inbound).includes("outbounds"), false);
+});
+
+test("requires an explicit opt-in for a non-loopback listener", () => {
+  assert.equal(buildMultipathPocInbound({ ...line, listen: "10.66.67.1" }, legs)?.listen, "10.66.67.1");
+  assert.equal(buildMultipathPocInbound({ ...line, listen: "" }, legs)?.listen, "127.0.0.1");
 });
 
 test("allows explicit leg preference and UDP delegation", () => {
