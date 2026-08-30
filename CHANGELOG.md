@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.288] - 2026-08-30
+
+### 新增
+
+- 新增 NoBrand Provider 完整接入：ForwardX Agent 只读扫描 NoBrand-OneClick v3 固定状态目录，面板可查看 Mieru、Snell、Hysteria2 候选节点并显式选择导入。
+- NoBrand 节点以 `external` 端点导入，支持稳定去重并继续复用 ForwardX 现有用户分配与统一订阅；ForwardX 不接管、不重启、不删除 NoBrand 运行时。
+- 「协议接入」新增管理员 NoBrand Provider 扫描/选择/导入界面；普通 TLS VLESS Sudoku 等无法无损映射的节点继续 fail closed，不会错误转换为 Reality。
+
+### 修复与优化
+
+- Hysteria2 URI 与 Mihomo 订阅显式输出 `h3` ALPN，保持与服务端监听配置一致并提高客戵端互操作性。
+- NoBrand 扫描结果与凭据仅短暂保存在面板内存中，导入前重新校验 ownership、候选有效性和重复状态；扫描本身不写协议数据库。
+
+### 版本
+
+- 面板与 APK Release `2.3.288`，Agent `2.2.197`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.287] - 2026-08-30
 
 ### 修复与优化
