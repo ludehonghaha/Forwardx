@@ -4,7 +4,7 @@ import {
   type DualMultipathDraftInput,
 } from "./dualMultipathControlPlane";
 
-export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 1 as const;
+export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 2 as const;
 
 const FULL_CONFIG_PATH_PLACEHOLDER = "<FULL_CONFIG_PATH>";
 
@@ -38,12 +38,33 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
     readyToDeploy: false as const,
     upstream: preview.upstream,
     listener: {
-      listen: String(preview.serverInbound.listen || "0.0.0.0"),
+      listen: String(preview.serverInbound.listen || "127.0.0.1"),
       port: Number(preview.serverInbound.listen_port),
       tcpFastOpen: preview.serverInbound.tcp_fast_open === true,
       exposureVerified: false as const,
+      safeDefault: "loopback" as const,
     },
     topology: preview.topology,
+    clientCompatibility: {
+      requiredCore: "singbox-multipath" as const,
+      nativeMihomoMultipath: false as const,
+      openClashDirectImport: false as const,
+      recommendedOpenClashAdapter: "local-socks-sidecar" as const,
+      explanation: "Dual multipath 是固定 sing-box 分支新增的自定义 outbound；OpenClash/Mihomo 侧应把 sidecar 暴露的本地 SOCKS 当作普通节点，而不是直接解析 multipath outbound。",
+    },
+    carrierStrategy: {
+      preferredServerShape: "same-host-authenticated-carriers" as const,
+      multipathListener: "loopback-only" as const,
+      privateLeg: {
+        nativeSingBoxChildRequired: false as const,
+        localSocksBridgeAllowed: true as const,
+        note: "现有专线代理若能在客户端提供本地 SOCKS，可作为 singbox-multipath 的 child outbound 载体，不要求改动远端现有专线服务。",
+      },
+      directLeg: {
+        authenticatedCarrierRequired: true as const,
+        note: "公网直连 leg1 仍需一个 sing-box 可直接使用的已认证传输（例如 Hysteria2），不能把裸 multipath listener 暴露在公网。",
+      },
+    },
     fragments: {
       clientOutbound: preview.clientOutbound,
       serverInbound: preview.serverInbound,
@@ -60,6 +81,13 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
         kind: "config" as const,
         name: "full sing-box config",
         source: "Dual draft + two concrete child outbounds",
+        destination: null,
+        status: "blocked" as const,
+      },
+      {
+        kind: "client-adapter" as const,
+        name: "OpenClash local SOCKS adapter",
+        source: "singbox-multipath sidecar",
         destination: null,
         status: "blocked" as const,
       },
