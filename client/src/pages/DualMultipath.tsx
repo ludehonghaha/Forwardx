@@ -79,10 +79,15 @@ export default function DualMultipathPage() {
     onSuccess: () => toast.success("Dual 配置预览已生成，没有下发到任何 Agent"),
     onError: (error) => toast.error(error.message || "Dual 配置预览失败"),
   });
+  const planMutation = trpc.dualMultipath.dryRunPlan.useMutation({
+    onSuccess: () => toast.success("Dry-run 部署计划已生成；没有执行任何命令"),
+    onError: (error) => toast.error(error.message || "Dry-run 部署计划生成失败"),
+  });
   const saveMutation = trpc.dualMultipath.saveDraft.useMutation({
     onSuccess: async (result) => {
       setForm(dualMultipathFormFromDraft(result.draft));
       previewMutation.reset();
+      planMutation.reset();
       await utils.dualMultipath.current.invalidate();
       toast.success("Dual 草稿已保存；运行环境没有变化");
     },
@@ -92,6 +97,7 @@ export default function DualMultipathPage() {
   const patchForm = (patch: Partial<DualMultipathFormState>) => {
     setForm((current) => ({ ...current, ...patch }));
     previewMutation.reset();
+    planMutation.reset();
   };
 
   const buildDraft = () => {
@@ -109,6 +115,12 @@ export default function DualMultipathPage() {
     previewMutation.mutate(draft as any);
   };
 
+  const dryRunPlan = () => {
+    const draft = buildDraft();
+    if (!draft) return;
+    planMutation.mutate(draft as any);
+  };
+
   const save = () => {
     const draft = buildDraft();
     if (!draft) return;
@@ -124,7 +136,9 @@ export default function DualMultipathPage() {
   }
 
   const previewData = previewMutation.data;
+  const planData = planMutation.data;
   const configured = currentQuery.data?.configured === true;
+  const busy = previewMutation.isPending || planMutation.isPending || saveMutation.isPending;
 
   return (
     <DashboardLayout>
@@ -150,7 +164,7 @@ export default function DualMultipathPage() {
           <ShieldCheck className="h-4 w-4" />
           <AlertTitle>当前仍是安全灰度阶段</AlertTitle>
           <AlertDescription>
-            本页只能保存草稿和生成配置预览；没有“启用”按钮，不会下发 Agent、不会修改 Tunnel，也不会启动 sing-box multipath。
+            本页只能保存草稿、生成配置预览和 Dry-run 部署计划；没有“启用/执行”按钮，不会下发 Agent、不会修改 Tunnel，也不会启动 sing-box multipath。
           </AlertDescription>
         </Alert>
 
@@ -284,7 +298,7 @@ export default function DualMultipathPage() {
             <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 p-3">
               <div>
                 <p className="text-sm font-medium">TCP Fast Open</p>
-                <p className="text-xs text-muted-foreground">当前 PoC 默认开启；如果实机环境不兼容再关闭。</p>
+                <p className="text-xs text-muted-foreground">当前 PoC 默认开启；固定上游的 multipath inbound/outbound 都支持这个字段。</p>
               </div>
               <Switch checked={form.tcpFastOpen} onCheckedChange={(tcpFastOpen) => patchForm({ tcpFastOpen })} />
             </div>
@@ -294,17 +308,21 @@ export default function DualMultipathPage() {
         <Card className="border-border/40 bg-card/60 backdrop-blur-md">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <Eye className="h-4 w-4 text-primary" /> 保存与预览
+              <Eye className="h-4 w-4 text-primary" /> 保存、预览与 Dry-run
             </CardTitle>
-            <CardDescription>先生成预览确认结构；保存只写面板自己的草稿，不会部署。</CardDescription>
+            <CardDescription>Dry-run 只列出部署前置条件和校验步骤，不执行任何命令。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button type="button" variant="outline" onClick={preview} disabled={previewMutation.isPending || saveMutation.isPending}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <Button type="button" variant="outline" onClick={preview} disabled={busy}>
                 {previewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
                 生成预览
               </Button>
-              <Button type="button" onClick={save} disabled={saveMutation.isPending || previewMutation.isPending}>
+              <Button type="button" variant="outline" onClick={dryRunPlan} disabled={busy}>
+                {planMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+                Dry-run 部署计划
+              </Button>
+              <Button type="button" onClick={save} disabled={busy}>
                 {saveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                 保存草稿
               </Button>
@@ -318,6 +336,59 @@ export default function DualMultipathPage() {
                   上游固定为 {previewData.upstream.repository} / {previewData.upstream.branch} / {previewData.upstream.protocolGeneration}；安全标记确认 Agent、Runtime、Tunnel 均未启用。
                 </AlertDescription>
               </Alert>
+            ) : null}
+
+            {planData ? (
+              <div className="space-y-4 rounded-lg border border-border/50 bg-muted/10 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold">P1 Dry-run 部署计划</p>
+                    <p className="mt-1 text-xs text-muted-foreground">计划只读，不包含 Agent 推送、命令执行、systemd、防火墙或 Tunnel 修改。</p>
+                  </div>
+                  <Badge variant={planData.readyToDeploy ? "default" : "secondary"}>
+                    {planData.readyToDeploy ? "可部署" : "仍有阻塞项"}
+                  </Badge>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
+                    <p className="text-sm font-medium">计划监听</p>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      {planData.listener.listen}:{planData.listener.port} · TCP Fast Open {planData.listener.tcpFastOpen ? "ON" : "OFF"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/50 bg-background/50 p-3">
+                    <p className="text-sm font-medium">固定上游</p>
+                    <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{planData.upstream.commit}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>当前阻塞项</Label>
+                  <div className="space-y-2">
+                    {planData.blockers.map((blocker) => (
+                      <div key={blocker} className="flex gap-2 rounded-md border border-border/50 bg-background/50 p-3 text-xs leading-5">
+                        <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span>{blocker}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>未来允许执行前的原生校验</Label>
+                  {planData.proposedChecks.map((check) => (
+                    <div key={check.id} className="space-y-2 rounded-md border border-border/50 bg-background/50 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-medium">{check.label}</p>
+                        <Badge variant="outline">当前不可执行</Badge>
+                      </div>
+                      <code className="block break-all rounded bg-muted/40 p-2 text-xs">{check.command}</code>
+                      <p className="text-xs text-muted-foreground">{check.reason}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : null}
 
             <div className="grid gap-4 xl:grid-cols-2">
