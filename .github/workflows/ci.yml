@@ -26,13 +26,13 @@ jobs:
           version: 10.28.1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: pnpm
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.23.x"
           cache-dependency-path: |
@@ -51,7 +51,7 @@ jobs:
           node --import tsx --test server/agentCrypto.test.ts
           node --import tsx --test server/userTrafficHistory.test.ts
           pnpm test:protocol-access
-          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualRuntimePlanning.test.ts server/dualCarrierAdapters.test.ts server/dualDiscoveryEvidence.test.ts client/src/lib/dualMultipathForm.test.ts
+          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualRuntimePlanning.test.ts server/dualCarrierAdapters.test.ts server/dualDiscoveryEvidence.test.ts server/dualAgentDiscoveryProtocol.test.ts client/src/lib/dualMultipathForm.test.ts
           node --import tsx --test server/protocolMieruCredentials.test.ts server/protocolMieruRuntimePlan.test.ts server/agentProtocolTrafficAccounting.test.ts server/agentProtocolTrafficRoute.test.ts server/repositories/protocolUserTrafficRepository.test.ts
           node --import tsx --test server/protocolVlessCredentials.test.ts server/protocolVlessIsolation.test.ts
           pnpm test:server
