@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "operation": "dual-readonly-discovery",
+  "requestId": "fixture-request-1",
+  "targetId": "fixture-dual-agent",
+  "portProbes": [
+    {
+      "address": "127.0.0.1",
+      "protocol": "tcp",
+      "candidates": [24001, 24002]
+    }
+  ]
+}
