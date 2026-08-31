@@ -99,3 +99,35 @@ jobs:
             ${{ runner.temp }}/dual-android-gray/build-metadata.json
           if-no-files-found: error
           retention-days: 7
+
+  dual-windows-gray-artifact:
+    name: Dual Windows amd64 Gray artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Build pinned Windows amd64 sidecar
+        run: bash scripts/build-dual-windows-sidecar.sh "$RUNNER_TEMP/dual-windows-gray"
+
+      - name: Upload Windows amd64 sidecar
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-singbox-multipath-windows-amd64
+          path: |
+            ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe
+            ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe.sha256
+            ${{ runner.temp }}/dual-windows-gray/build-metadata.json
+          if-no-files-found: error
+          retention-days: 7
