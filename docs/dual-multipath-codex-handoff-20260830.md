@@ -98,7 +98,7 @@ Verified Dual server topology:
 
 - `eth0 = 87.86.22.221/24`, public/Japan side, default gateway `87.86.22.1`;
 - `eth1 = 172.16.4.114/24`, private-line side;
-- existing `/usr/local/bin/mita` service is active on TCP `*:11464` and must be preserved;
+- active Mita binary is `/usr/bin/mita`; unit `mita-oneclick@uc650fd438a46ab4e.service` is active on TCP `*:11464` and must be preserved;
 - no installed `sing-box`, `hysteria`, or standalone `mieru` binary was found.
 
 The pinned source contains native Hysteria2 inbound/outbound support. Its normal release build tags include `with_quic`, so one correctly built and checksum-pinned singbox-multipath artifact can host both multipath and Hysteria2. Artifact provenance, architecture-specific checksums, final HY2 listener fields, secret injection, and runtime lifecycle are still unresolved.

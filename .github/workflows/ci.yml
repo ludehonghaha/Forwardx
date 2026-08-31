@@ -185,7 +185,7 @@ jobs:
         run: |
           BIN="$RUNNER_TEMP/dual-linux-gray/sing-box-linux-amd64"
           "$BIN" version
-          "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/windows-gray.json"
+          "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/dual-test.json"
           "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/server-gray.json"
 
       - name: Upload Linux amd64 Gray artifact

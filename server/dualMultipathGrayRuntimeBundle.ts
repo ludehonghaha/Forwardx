@@ -210,6 +210,8 @@ export function buildDualMultipathGrayRuntimeBundle(
       privateLeg: {
         clientEngine: "external-mihomo-socks" as const,
         carrier: "existing-mita-mieru" as const,
+        existingServerBinaryPath: serverTarget.existingPrivateCarrier.binaryPath,
+        existingServerUnitName: serverTarget.existingPrivateCarrier.unitName ?? null,
         existingServerListenerPort: serverTarget.existingPrivateCarrier.listener.port,
         lifecycle: serverTarget.existingPrivateCarrier.lifecycle,
       },

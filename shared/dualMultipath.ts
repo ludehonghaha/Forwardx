@@ -139,6 +139,7 @@ export const dualServerTargetDiscoverySnapshotSchema = z.union([
     existingPrivateCarrier: z.object({
       type: z.literal("mita"),
       binaryPath: z.string().trim().min(1).max(255).nullable(),
+      unitName: z.string().trim().min(1).max(255).nullable().optional(),
       serviceStatus: z.enum(["active", "inactive", "failed", "unknown"]),
       listener: z.object({ network: z.literal("tcp"), listen: z.string().trim().min(1).max(255), port: dualPortSchema }).strict(),
       lifecycle: z.literal("preserve"),
@@ -570,7 +571,8 @@ export const NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT = {
   defaultRoute: { via: "87.86.22.1", dev: "eth0" },
   existingPrivateCarrier: {
     type: "mita",
-    binaryPath: "/usr/local/bin/mita",
+    binaryPath: "/usr/bin/mita",
+    unitName: "mita-oneclick@uc650fd438a46ab4e.service",
     serviceStatus: "active",
     listener: { network: "tcp", listen: "*", port: 11464 },
     lifecycle: "preserve",

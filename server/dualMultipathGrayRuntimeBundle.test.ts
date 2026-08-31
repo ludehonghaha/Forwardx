@@ -30,8 +30,8 @@ function grayDraft() {
 const runtimeInput = {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
-  pureMieruProxyRef: "Pure-Mieru",
-  hy2Port: 24443,
+  pureMieruProxyRef: null,
+  hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: "/tmp/forwardx-dual-gray.crt",
   tlsPrivateKeyPath: "/tmp/forwardx-dual-gray.key",
@@ -48,14 +48,17 @@ test("builds Windows private SOCKS + native HY2 + multipath without pretending s
   assert.equal(config.outbounds[0].server_port, 24181);
   assert.equal(config.outbounds[1].type, "hysteria2");
   assert.equal(config.outbounds[1].server, "87.86.22.221");
-  assert.equal(config.outbounds[1].server_port, 24443);
+  assert.equal(config.outbounds[1].server_port, 61464);
   assert.equal(config.outbounds[2].type, "multipath");
   assert.equal(config.route.final, config.outbounds[2].tag);
   assert.doesNotMatch(JSON.stringify(config.outbounds), /"type":"mieru"/);
 });
 
-test("keeps private leg pinned to one explicit Mieru-capable Mihomo listener", () => {
-  const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), runtimeInput);
+test("models a dedicated Mieru-capable Mihomo listener only when one concrete proxy is known", () => {
+  const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), {
+    ...runtimeInput,
+    pureMieruProxyRef: "Pure-Mieru",
+  });
   const fragment = bundle.fragments.windowsMihomoPrivateListener;
   assert.equal(fragment.listeners[0].listen, "127.0.0.1");
   assert.equal(fragment.listeners[0].port, 24181);
@@ -70,7 +73,7 @@ test("server Gray binds HY2 only to discovered public address while multipath re
   const [hy2, multipath] = bundle.fragments.serverConfig.inbounds;
   assert.equal(hy2.type, "hysteria2");
   assert.equal(hy2.listen, "87.86.22.221");
-  assert.equal(hy2.listen_port, 24443);
+  assert.equal(hy2.listen_port, 61464);
   assert.equal(multipath.type, "multipath");
   assert.equal(multipath.listen, "127.0.0.1");
   assert.equal(multipath.listen_port, 39000);
@@ -82,12 +85,21 @@ test("preserves existing Mita and never mutates the source draft", () => {
   const before = structuredClone(draft);
   const bundle = buildDualMultipathGrayRuntimeBundle(draft, runtimeInput);
   assert.deepEqual(draft, before);
+  assert.equal(bundle.topology.privateLeg.existingServerBinaryPath, "/usr/bin/mita");
+  assert.equal(bundle.topology.privateLeg.existingServerUnitName, "mita-oneclick@uc650fd438a46ab4e.service");
   assert.equal(bundle.topology.privateLeg.existingServerListenerPort, 11464);
   assert.equal(bundle.topology.privateLeg.lifecycle, "preserve");
   assert.equal(bundle.safety.existingMitaMutation, false);
   assert.equal(bundle.safety.systemdWrite, false);
   assert.equal(bundle.safety.firewallMutation, false);
   assert.equal(bundle.safety.routeMutation, false);
+});
+
+test("keeps port 24181 blocked when the actual Clash Mi pure Mieru proxy is unresolved", () => {
+  const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), runtimeInput);
+  assert.equal(bundle.fragments.windowsMihomoPrivateListener.listeners[0].port, 24181);
+  assert.match(bundle.fragments.windowsMihomoPrivateListener.listeners[0].proxy, /unresolved:pure-mieru/);
+  assert.ok(bundle.blockers.some((item) => item.includes("唯一纯 Mieru proxy")));
 });
 
 test("uses secret references only and keeps self-signed TLS explicitly Gray-only", () => {

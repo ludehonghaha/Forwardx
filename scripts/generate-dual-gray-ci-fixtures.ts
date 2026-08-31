@@ -34,8 +34,8 @@ const draft = dualMultipathDraftSchema.parse({
 const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
-  pureMieruProxyRef: "CI-Pure-Mieru",
-  hy2Port: 24443,
+  pureMieruProxyRef: null,
+  hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: certificatePath,
   tlsPrivateKeyPath: keyPath,
@@ -43,7 +43,7 @@ const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
 });
 
 writeFileSync(
-  resolve(outputDir, "windows-gray.json"),
+  resolve(outputDir, "dual-test.json"),
   `${JSON.stringify(bundle.fragments.windowsSidecarConfig, null, 2)}\n`,
   "utf8",
 );

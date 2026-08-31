@@ -416,7 +416,8 @@ function upgradePinnedV3Draft(legacy: z.output<typeof legacyPinnedV3DraftSchema>
     defaultRoute: { via: legacy.serverRuntime.publicSide.gateway, dev: legacy.serverRuntime.publicSide.interface },
     existingPrivateCarrier: {
       type: "mita",
-      binaryPath: "/usr/local/bin/mita",
+      binaryPath: null,
+      unitName: null,
       serviceStatus: "active",
       listener: { network: "tcp", listen: "*", port: legacy.serverRuntime.privateSide.existingListenerPort },
       lifecycle: "preserve",
