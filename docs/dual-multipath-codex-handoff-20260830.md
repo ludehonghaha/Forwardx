@@ -178,23 +178,24 @@ It does not accept or resolve secret values. The deterministic public preview em
 
 The client preview is now a complete offline sidecar shape: local SOCKS inbound for OpenClash, private SOCKS child first, Hysteria2 child second, multipath outbound third, and `route.final` pointing to the multipath tag. The server preview keeps the loopback-only multipath config separate from an explicitly uncompiled authenticated-carrier runtime descriptor.
 
-## Read-only auto-port v4 planner update
+## Client-bound read-only discovery v5 update
 
-The current offline model uses `dualMultipathDraftV4` and separates:
+The current offline model uses `dualMultipathDraftV5` and separates:
 
-- `targetDiscovery`: a target-specific, verified-read-only discovery snapshot; interface names, addresses, gateway, and the existing Mita listener are data rather than schema literals;
+- `serverTargetDiscovery`: server-only verified facts such as interfaces, addresses, gateway, and the existing Mita listener;
+- `clientTarget`: a separate canonical client binding, either a Panel-owned `hosts.id` or a namespaced external OpenWrt stable key;
 - `openClashIngressAdapter`: ForwardX Dual sidecar's loopback SOCKS ingress for OpenClash;
 - `privateCarrierBridge`: preferred `mihomo-dedicated-listener`, with `external-local-socks5` available only when a real endpoint has been discovered;
 - `directCarrier`: native Hysteria2 endpoint and references, unresolved until final runtime facts exist;
 - `serverRuntime`: target-independent loopback multipath and unresolved native HY2 runtime policy.
 
-The generic Zod schema has no `eth0`/`eth1`, fixed address, gateway, or Mita-port literals. The verified NoBrand values live in `NO_BRAND_DUAL_DISCOVERY_SNAPSHOT`. A second Dual with different interfaces, addresses, gateway, and Mita port only needs another snapshot; it does not require a source/schema change.
+The generic Zod schema has no `eth0`/`eth1`, fixed address, gateway, or Mita-port literals. The verified NoBrand values live in `NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT`. A second Dual server only needs another server snapshot. A server target object cannot be used as a client identity.
 
-Both client loopback listeners now have their own `portPlanning` union. Unresolved planning stores `strategy: "auto"` and `port: null`; planned evidence stores `status: "planned-read-only"`, a concrete port, and the source `snapshotId`. Pure Mieru proxy discovery is a separate target fact. Mihomo bridge readiness is derived only when both facts are satisfied.
+Both client loopback listeners retain independent `portPlanning`, while every planned port and verified proxy now stores evidence containing both `snapshotId` and the canonical `clientTargetRef`. A v5 schema rejects evidence from another client. Changing the bound client therefore invalidates old evidence rather than reusing a coincidentally free port across devices.
 
-`DualPortAvailabilitySnapshot` is input-only read-only evidence. The pure `planDualClientLoopbackPorts()` function performs a deterministic ascending scan of the single centrally defined `23180-23279` candidate range, preserves valid existing choices, rejects occupied ports, guarantees distinct ingress/private ports, and fails closed if fewer than two ports are available. It performs no collection, external call, socket probing, persistence, or system mutation. The ordinary form does not expose or rewrite these details. The server-internal multipath listener remains the separate loopback-only `127.0.0.1:39000` candidate.
+`DualClientDiscoverySnapshot` is the shared input-only contract for occupied TCP ports and minimal Mihomo candidate facts. It cannot contain passwords, tokens, keys, subscriptions, or raw config. Freshness is evaluated deterministically from explicit `referenceTime/maxAgeMs`; stale or future snapshots cannot create evidence. `planDualClientLoopbackPorts()` performs the deterministic ascending port scan. `resolveDualPureMieruProxy()` accepts exactly one concrete private-only Mieru candidate and reports zero as unresolved or more than one as ambiguous. Groups, builtins, mixed listeners, public/DIRECT fallback, and ingress recursion are rejected.
 
-The persisted setting key is now `dualMultipathDraftV4`. V1, v2, the portable v3 shape, and the earlier pinned-host v3 shape are upgraded only in memory. Any v2 `127.0.0.1:1080` value and every v3 client port without snapshot evidence are deliberately discarded and replaced with unresolved planning. Verified proxy discovery and target facts are retained when their old shape provided an unambiguous claim. No migration write occurs until an administrator explicitly saves v4.
+The persisted setting key is now `dualMultipathDraftV5`. V1, v2, both v3 shapes, and v4 are upgraded only in memory. Because v4 had no canonical client binding, its old client ports and proxy discovery are deliberately downgraded to unresolved. Server discovery, HY2 fields, and secret references are preserved. No migration write occurs until an administrator explicitly saves v5.
 
 The normal ForwardX UI exposes one Dual aggregate line: Mieru/private status and bandwidth, HY2/direct status and bandwidth, small-flow preference, activation threshold, status, and the future subscription action. Ports, listener tags, loopback addresses, interfaces, and secret references are hidden under diagnostics or auto-managed.
 

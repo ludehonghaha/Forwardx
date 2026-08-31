@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DUAL_MULTIPATH_CONTROL_PLANE_VERSION = 4 as const;
+export const DUAL_MULTIPATH_CONTROL_PLANE_VERSION = 5 as const;
 
 const UINT32_MAX = 0xffffffff;
 const MAX_REORDER_BYTES = 512 * 1024 * 1024;
@@ -124,7 +124,7 @@ const targetSideSchema = z.object({
   addresses: z.array(z.string().trim().min(1).max(255)).min(1),
 }).strict();
 
-export const dualTargetDiscoverySnapshotSchema = z.union([
+export const dualServerTargetDiscoverySnapshotSchema = z.union([
   z.object({
     status: z.literal("unresolved"),
     targetId: z.string().trim().min(1).max(128),
@@ -146,6 +146,9 @@ export const dualTargetDiscoverySnapshotSchema = z.union([
     installedBinaries: z.object({ singBox: z.boolean(), hysteria: z.boolean(), standaloneMieru: z.boolean() }).strict(),
   }).strict(),
 ]);
+
+// Legacy v3/v4 drafts used the generic targetDiscovery name for server facts.
+export const dualTargetDiscoverySnapshotSchema = dualServerTargetDiscoverySnapshotSchema;
 
 const serverRuntimeSchema = z.object({
   status: z.literal("unresolved"),
@@ -224,7 +227,7 @@ export const dualMultipathDraftV3Schema = z.object({
   }
 });
 
-export const dualAutoPortPlanningSchema = z.discriminatedUnion("status", [
+const dualAutoPortPlanningV4Schema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("unresolved"),
     strategy: z.literal("auto"),
@@ -238,7 +241,7 @@ export const dualAutoPortPlanningSchema = z.discriminatedUnion("status", [
   }).strict(),
 ]);
 
-const pureMieruProxyDiscoverySchema = z.discriminatedUnion("status", [
+const pureMieruProxyDiscoveryV4Schema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("unresolved"), proxyRef: z.null() }).strict(),
   z.object({
     status: z.literal("verified-read-only"),
@@ -246,7 +249,7 @@ const pureMieruProxyDiscoverySchema = z.discriminatedUnion("status", [
   }).strict(),
 ]);
 
-const externalSocksEndpointDiscoverySchema = z.discriminatedUnion("status", [
+const externalSocksEndpointDiscoveryV4Schema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("unresolved"), endpoint: z.null() }).strict(),
   z.object({
     status: z.literal("verified-read-only"),
@@ -258,51 +261,51 @@ const externalSocksEndpointDiscoverySchema = z.discriminatedUnion("status", [
   }).strict(),
 ]);
 
-const mihomoDedicatedListenerBridgeSchema = z.object({
+const mihomoDedicatedListenerBridgeV4Schema = z.object({
   type: z.literal("mihomo-dedicated-listener"),
   listener: z.object({
     kind: z.literal("socks"),
     scope: z.literal("dedicated"),
     listen: dualLoopbackSchema,
-    portPlanning: dualAutoPortPlanningSchema,
+    portPlanning: dualAutoPortPlanningV4Schema,
   }).strict(),
   target: z.object({
     selection: z.literal("single-proxy"),
     protocol: z.literal("mieru"),
-    discovery: pureMieruProxyDiscoverySchema,
+    discovery: pureMieruProxyDiscoveryV4Schema,
     routing: z.literal("fixed-proxy"),
     fallback: z.literal("none"),
     transportScope: z.literal("private-only"),
   }).strict(),
 }).strict();
 
-const externalLocalSocks5BridgeSchema = z.object({
+const externalLocalSocks5BridgeV4Schema = z.object({
   type: z.literal("external-local-socks5"),
-  endpointDiscovery: externalSocksEndpointDiscoverySchema,
+  endpointDiscovery: externalSocksEndpointDiscoveryV4Schema,
   credentials: socksCredentialsSchema.optional(),
 }).strict();
 
-const privateCarrierBridgeSchema = z.union([
-  mihomoDedicatedListenerBridgeSchema,
-  externalLocalSocks5BridgeSchema,
+const privateCarrierBridgeV4Schema = z.union([
+  mihomoDedicatedListenerBridgeV4Schema,
+  externalLocalSocks5BridgeV4Schema,
 ]);
 
-const openClashIngressAdapterSchema = z.object({
+const openClashIngressAdapterV4Schema = z.object({
   type: z.literal("local-socks-sidecar"),
   tag: z.string().trim().min(1).max(128),
   listen: dualLoopbackSchema,
-  portPlanning: dualAutoPortPlanningSchema,
+  portPlanning: dualAutoPortPlanningV4Schema,
 }).strict();
 
-export const dualMultipathDraftSchema = z.object({
-  version: z.literal(DUAL_MULTIPATH_CONTROL_PLANE_VERSION).default(DUAL_MULTIPATH_CONTROL_PLANE_VERSION),
+export const dualMultipathDraftV4Schema = z.object({
+  version: z.literal(4).default(4),
   state: z.literal("draft").default("draft"),
   name: z.string().trim().min(1, "请填写 Dual 配置名称").max(80),
   line: dualMultipathLineSchema,
   legs: z.tuple([dualPrivateLegSchema, dualDirectLegSchema]),
   targetDiscovery: dualTargetDiscoverySnapshotSchema,
-  openClashIngressAdapter: openClashIngressAdapterSchema,
-  privateCarrierBridge: privateCarrierBridgeSchema,
+  openClashIngressAdapter: openClashIngressAdapterV4Schema,
+  privateCarrierBridge: privateCarrierBridgeV4Schema,
   directCarrier: directCarrierSchema,
   serverRuntime: serverRuntimeSchema,
 }).strict().superRefine((draft, ctx) => {
@@ -342,25 +345,214 @@ export const dualMultipathDraftSchema = z.object({
   }
 });
 
+const dualExternalClientTargetKeySchema = z.string()
+  .trim()
+  .min(1)
+  .max(160)
+  .regex(
+    /^dual-client:[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$/i,
+    "external OpenWrt target key 必须使用 dual-client:<namespace>:<stable-key>，不能使用 IP",
+  );
+
+export const dualClientTargetRefSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("forwardx-host"),
+    hostId: z.number().int().positive(),
+  }).strict(),
+  z.object({
+    kind: z.literal("external-openwrt"),
+    targetKey: dualExternalClientTargetKeySchema,
+  }).strict(),
+]);
+
+export const dualClientTargetSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("unresolved") }).strict(),
+  z.object({
+    status: z.literal("bound"),
+    ref: dualClientTargetRefSchema,
+  }).strict(),
+]);
+
+export type DualClientTargetRef = z.output<typeof dualClientTargetRefSchema>;
+
+export function dualClientTargetRefsEqual(a: DualClientTargetRef, b: DualClientTargetRef) {
+  if (a.kind !== b.kind) return false;
+  return a.kind === "forwardx-host"
+    ? a.hostId === (b as Extract<DualClientTargetRef, { kind: "forwardx-host" }>).hostId
+    : a.targetKey === (b as Extract<DualClientTargetRef, { kind: "external-openwrt" }>).targetKey;
+}
+
+export const dualClientSnapshotEvidenceSchema = z.object({
+  snapshotId: z.string().trim().min(1).max(128),
+  clientTargetRef: dualClientTargetRefSchema,
+}).strict();
+
+export const dualAutoPortPlanningSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("unresolved"),
+    strategy: z.literal("auto"),
+    port: z.null(),
+  }).strict(),
+  z.object({
+    status: z.literal("planned-read-only"),
+    strategy: z.literal("auto"),
+    port: dualPortSchema,
+    evidence: dualClientSnapshotEvidenceSchema,
+  }).strict(),
+]);
+
+const pureMieruProxyDiscoverySchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("unresolved"), proxyRef: z.null() }).strict(),
+  z.object({
+    status: z.literal("verified-read-only"),
+    proxyRef: z.string().trim().min(1).max(255),
+    evidence: dualClientSnapshotEvidenceSchema,
+  }).strict(),
+]);
+
+const externalSocksEndpointDiscoverySchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("unresolved"), endpoint: z.null() }).strict(),
+  z.object({
+    status: z.literal("verified-read-only"),
+    endpoint: z.object({
+      listenerKind: z.literal("dedicated-socks"),
+      host: dualLoopbackSchema,
+      port: dualPortSchema,
+    }).strict(),
+    evidence: dualClientSnapshotEvidenceSchema,
+  }).strict(),
+]);
+
+const mihomoDedicatedListenerBridgeSchema = z.object({
+  type: z.literal("mihomo-dedicated-listener"),
+  listener: z.object({
+    kind: z.literal("socks"),
+    scope: z.literal("dedicated"),
+    listen: dualLoopbackSchema,
+    portPlanning: dualAutoPortPlanningSchema,
+  }).strict(),
+  target: z.object({
+    selection: z.literal("single-proxy"),
+    protocol: z.literal("mieru"),
+    discovery: pureMieruProxyDiscoverySchema,
+    routing: z.literal("fixed-proxy"),
+    fallback: z.literal("none"),
+    transportScope: z.literal("private-only"),
+  }).strict(),
+}).strict();
+
+const externalLocalSocks5BridgeSchema = z.object({
+  type: z.literal("external-local-socks5"),
+  endpointDiscovery: externalSocksEndpointDiscoverySchema,
+  credentials: socksCredentialsSchema.optional(),
+}).strict();
+
+const privateCarrierBridgeSchema = z.union([
+  mihomoDedicatedListenerBridgeSchema,
+  externalLocalSocks5BridgeSchema,
+]);
+
+const openClashIngressAdapterSchema = z.object({
+  type: z.literal("local-socks-sidecar"),
+  tag: z.string().trim().min(1).max(128),
+  listen: dualLoopbackSchema,
+  portPlanning: dualAutoPortPlanningSchema,
+}).strict();
+
+function evidenceMatchesBoundClient(
+  clientTarget: z.output<typeof dualClientTargetSchema>,
+  evidence: z.output<typeof dualClientSnapshotEvidenceSchema>,
+) {
+  return clientTarget.status === "bound" && dualClientTargetRefsEqual(clientTarget.ref, evidence.clientTargetRef);
+}
+
+export const dualMultipathDraftSchema = z.object({
+  version: z.literal(DUAL_MULTIPATH_CONTROL_PLANE_VERSION).default(DUAL_MULTIPATH_CONTROL_PLANE_VERSION),
+  state: z.literal("draft").default("draft"),
+  name: z.string().trim().min(1, "请填写 Dual 配置名称").max(80),
+  line: dualMultipathLineSchema,
+  legs: z.tuple([dualPrivateLegSchema, dualDirectLegSchema]),
+  serverTargetDiscovery: dualServerTargetDiscoverySnapshotSchema,
+  clientTarget: dualClientTargetSchema,
+  openClashIngressAdapter: openClashIngressAdapterSchema,
+  privateCarrierBridge: privateCarrierBridgeSchema,
+  directCarrier: directCarrierSchema,
+  serverRuntime: serverRuntimeSchema,
+}).strict().superRefine((draft, ctx) => {
+  const [privateLeg, directLeg] = draft.legs;
+  if (privateLeg.outboundTag === directLeg.outboundTag) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["legs", 1, "outboundTag"], message: "专线与直连必须引用不同的 outbound tag" });
+  }
+  const udpLegIndex = draft.line.udpLegIndex ?? 0;
+  if (draft.legs[udpLegIndex].supportsUdp === false) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["line", "udpLegIndex"], message: "指定的 UDP 路径不支持 UDP" });
+  }
+  const ingressPlanning = draft.openClashIngressAdapter.portPlanning;
+  const bridge = draft.privateCarrierBridge;
+  const evidenceChecks: Array<{ path: Array<string | number>; evidence: z.output<typeof dualClientSnapshotEvidenceSchema> }> = [];
+  if (ingressPlanning.status === "planned-read-only") {
+    evidenceChecks.push({ path: ["openClashIngressAdapter", "portPlanning", "evidence"], evidence: ingressPlanning.evidence });
+  }
+  if (bridge.type === "mihomo-dedicated-listener") {
+    const privatePlanning = bridge.listener.portPlanning;
+    if (privatePlanning.port !== null && ingressPlanning.port !== null && privatePlanning.port === ingressPlanning.port) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "listener", "portPlanning"], message: "private listener 与 Dual ingress 不能使用同一端口" });
+    }
+    if (privatePlanning.status === "planned-read-only") {
+      evidenceChecks.push({ path: ["privateCarrierBridge", "listener", "portPlanning", "evidence"], evidence: privatePlanning.evidence });
+    }
+    if (bridge.target.discovery.status === "verified-read-only") {
+      evidenceChecks.push({ path: ["privateCarrierBridge", "target", "discovery", "evidence"], evidence: bridge.target.discovery.evidence });
+      if (bridge.target.discovery.proxyRef === draft.openClashIngressAdapter.tag) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "target", "discovery", "proxyRef"], message: "private bridge 不允许递归回 ForwardX Dual ingress" });
+      }
+    }
+  } else if (bridge.endpointDiscovery.status === "verified-read-only") {
+    evidenceChecks.push({ path: ["privateCarrierBridge", "endpointDiscovery", "evidence"], evidence: bridge.endpointDiscovery.evidence });
+    if (ingressPlanning.port !== null && bridge.endpointDiscovery.endpoint.port === ingressPlanning.port) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "endpointDiscovery"], message: "private listener 与 Dual ingress 不能使用同一端口" });
+    }
+  }
+  for (const check of evidenceChecks) {
+    if (!evidenceMatchesBoundClient(draft.clientTarget, check.evidence)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: check.path, message: "client-side evidence 必须绑定当前 Dual client target" });
+    }
+  }
+  if (draft.directCarrier.status === "resolved" && (draft.directCarrier.serverPort === null || draft.directCarrier.tls.serverName === null)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["directCarrier", "status"], message: "已解析的 Hysteria2 carrier 必须包含端口和 TLS server name" });
+  }
+  if (
+    draft.serverRuntime.multipathListener.listen !== (draft.line.listen ?? "127.0.0.1")
+    || draft.serverRuntime.multipathListener.port !== draft.line.serverPort
+  ) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["serverRuntime", "multipathListener"], message: "server runtime multipath listener 必须与 line 的 loopback target 一致" });
+  }
+});
+
 export type DualMultipathDraftV3 = z.output<typeof dualMultipathDraftV3Schema>;
 export type DualMultipathDraftV3Input = z.input<typeof dualMultipathDraftV3Schema>;
-export type DualMultipathDraftV4 = z.output<typeof dualMultipathDraftSchema>;
-export type DualMultipathDraftV4Input = z.input<typeof dualMultipathDraftSchema>;
+export type DualMultipathDraftV4 = z.output<typeof dualMultipathDraftV4Schema>;
+export type DualMultipathDraftV4Input = z.input<typeof dualMultipathDraftV4Schema>;
+export type DualMultipathDraftV5 = z.output<typeof dualMultipathDraftSchema>;
+export type DualMultipathDraftV5Input = z.input<typeof dualMultipathDraftSchema>;
 export type DualAutoPortPlanning = z.output<typeof dualAutoPortPlanningSchema>;
+export type DualClientTarget = z.output<typeof dualClientTargetSchema>;
+export type DualClientSnapshotEvidence = z.output<typeof dualClientSnapshotEvidenceSchema>;
+export type DualServerTargetDiscoverySnapshot = z.output<typeof dualServerTargetDiscoverySnapshotSchema>;
 export type DualTargetDiscoverySnapshot = z.output<typeof dualTargetDiscoverySnapshotSchema>;
 export type DualMultipathInfrastructureState = Pick<
-  DualMultipathDraftV4,
-  "line" | "legs" | "targetDiscovery" | "openClashIngressAdapter" | "privateCarrierBridge" | "directCarrier" | "serverRuntime"
+  DualMultipathDraftV5,
+  "line" | "legs" | "serverTargetDiscovery" | "clientTarget" | "openClashIngressAdapter" | "privateCarrierBridge" | "directCarrier" | "serverRuntime"
 >;
 export type DualMihomoDedicatedListenerBridge = Extract<
-  DualMultipathDraftV4["privateCarrierBridge"],
+  DualMultipathDraftV5["privateCarrierBridge"],
   { type: "mihomo-dedicated-listener" }
 >;
 export type DefaultDualMultipathInfrastructureState = Omit<DualMultipathInfrastructureState, "privateCarrierBridge"> & {
   privateCarrierBridge: DualMihomoDedicatedListenerBridge;
 };
 
-export const NO_BRAND_DUAL_DISCOVERY_SNAPSHOT = {
+export const NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT = {
   status: "verified-read-only",
   targetId: "nobrand-dual-current",
   platform: { kernel: "Linux", architecture: "x86_64" },
@@ -384,17 +576,22 @@ export const NO_BRAND_DUAL_DISCOVERY_SNAPSHOT = {
     lifecycle: "preserve",
   },
   installedBinaries: { singBox: false, hysteria: false, standaloneMieru: false },
-} as const satisfies DualTargetDiscoverySnapshot;
+} as const satisfies DualServerTargetDiscoverySnapshot;
 
-export function createUnresolvedDualDiscoverySnapshot(targetId = "unselected-target"): DualTargetDiscoverySnapshot {
+// Compatibility alias for code that still imports the pre-v5 constant name.
+export const NO_BRAND_DUAL_DISCOVERY_SNAPSHOT = NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT;
+
+export function createUnresolvedDualServerDiscoverySnapshot(targetId = "unselected-server-target"): DualServerTargetDiscoverySnapshot {
   return { status: "unresolved", targetId };
 }
 
+export const createUnresolvedDualDiscoverySnapshot = createUnresolvedDualServerDiscoverySnapshot;
+
 export function createDefaultDualMultipathInfrastructure(
-  targetDiscovery: DualTargetDiscoverySnapshot = createUnresolvedDualDiscoverySnapshot(),
+  serverTargetDiscovery: DualServerTargetDiscoverySnapshot = createUnresolvedDualServerDiscoverySnapshot(),
 ): DefaultDualMultipathInfrastructureState {
-  const directServer = targetDiscovery.status === "verified-read-only"
-    ? targetDiscovery.publicSide.sourceAddress
+  const directServer = serverTargetDiscovery.status === "verified-read-only"
+    ? serverTargetDiscovery.publicSide.sourceAddress
     : "<unresolved:dual-public-address>";
   return {
     line: {
@@ -410,7 +607,8 @@ export function createDefaultDualMultipathInfrastructure(
       { role: "private", legIndex: 0, outboundTag: "forwardx-private-mieru", supportsUdp: true },
       { role: "direct", legIndex: 1, outboundTag: "forwardx-direct-hy2", supportsUdp: true },
     ],
-    targetDiscovery,
+    serverTargetDiscovery,
+    clientTarget: { status: "unresolved" },
     openClashIngressAdapter: {
       type: "local-socks-sidecar",
       tag: "forwardx-dual-ingress-1",

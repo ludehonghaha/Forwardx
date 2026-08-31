@@ -1,7 +1,7 @@
 import {
-  NO_BRAND_DUAL_DISCOVERY_SNAPSHOT,
+  NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT,
   createDefaultDualMultipathInfrastructure,
-  type DualMultipathDraftV4,
+  type DualMultipathDraftV5,
   type DualMultipathInfrastructureState,
 } from "@shared/dualMultipath";
 
@@ -26,7 +26,7 @@ export function defaultDualMultipathForm(): DualMultipathFormState {
     directBandwidthMbps: "1000",
     activationThresholdMbps: "120",
     activationWindow: "1s",
-    infrastructure: createDefaultDualMultipathInfrastructure(NO_BRAND_DUAL_DISCOVERY_SNAPSHOT),
+    infrastructure: createDefaultDualMultipathInfrastructure(NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT),
   };
 }
 
@@ -38,7 +38,7 @@ function requiredInteger(value: string, label: string, min = 1, max = Number.MAX
   return parsed;
 }
 
-export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): DualMultipathDraftV4 {
+export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): DualMultipathDraftV5 {
   const name = form.name.trim();
   if (!name) throw new Error("请填写 Dual 配置名称");
   const privateBandwidthMbps = requiredInteger(form.privateBandwidthMbps, "专线带宽", 1, UINT32_MAX);
@@ -49,7 +49,7 @@ export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): D
   const { line, legs, ...infrastructure } = form.infrastructure;
 
   return {
-    version: 4,
+    version: 5,
     state: "draft",
     name,
     line: { ...line, activationThresholdMbps, activationWindow },
@@ -62,7 +62,7 @@ export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): D
 }
 
 export function dualMultipathFormFromDraft(
-  draft: DualMultipathDraftV4 | null | undefined,
+  draft: DualMultipathDraftV5 | null | undefined,
 ): DualMultipathFormState {
   const base = defaultDualMultipathForm();
   if (!draft) return base;
@@ -75,7 +75,8 @@ export function dualMultipathFormFromDraft(
     infrastructure: {
       line: draft.line,
       legs: draft.legs,
-      targetDiscovery: draft.targetDiscovery,
+      serverTargetDiscovery: draft.serverTargetDiscovery,
+      clientTarget: draft.clientTarget,
       openClashIngressAdapter: draft.openClashIngressAdapter,
       privateCarrierBridge: draft.privateCarrierBridge,
       directCarrier: draft.directCarrier,

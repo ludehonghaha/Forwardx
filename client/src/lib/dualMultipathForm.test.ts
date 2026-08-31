@@ -7,7 +7,9 @@ import { buildDualMultipathDraftFromForm, defaultDualMultipathForm, dualMultipat
 test("defaults to a simple one-panel Dual model without 127.0.0.1:1080", () => {
   const form = defaultDualMultipathForm();
   const draft = buildDualMultipathDraftFromForm(form);
-  assert.equal(draft.version, 4);
+  assert.equal(draft.version, 5);
+  assert.equal(draft.serverTargetDiscovery.status, "verified-read-only");
+  assert.equal(draft.clientTarget.status, "unresolved");
   assert.equal(draft.line.server, "127.0.0.1");
   assert.equal(draft.line.serverPort, 39000);
   assert.equal(draft.privateCarrierBridge.type, "mihomo-dedicated-listener");
@@ -48,29 +50,32 @@ test("rejects invalid ordinary UI values before API submission", () => {
   assert.throws(() => buildDualMultipathDraftFromForm(badWindow), /统计窗口/);
 });
 
-test("hydrates a v4 draft without exposing or rewriting infrastructure", () => {
+test("hydrates a v5 draft without exposing or rewriting infrastructure", () => {
   const base = defaultDualMultipathForm();
   const draft = buildDualMultipathDraftFromForm(base);
   assert.equal(draft.privateCarrierBridge.type, "mihomo-dedicated-listener");
   if (draft.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+  const clientTargetRef = { kind: "external-openwrt" as const, targetKey: "dual-client:openwrt:form-test" };
+  const evidence = { snapshotId: "snapshot-form", clientTargetRef };
   const resolved = {
     ...draft,
+    clientTarget: { status: "bound" as const, ref: clientTargetRef },
     name: "Dual 已发现",
     line: { ...draft.line, chunkSize: 32768, queueFrames: 128 },
     legs: [draft.legs[0], { ...draft.legs[1], supportsUdp: false }] as typeof draft.legs,
     openClashIngressAdapter: {
       ...draft.openClashIngressAdapter,
-      portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 23180, snapshotId: "snapshot-form" },
+      portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 23180, evidence },
     },
     privateCarrierBridge: {
       ...draft.privateCarrierBridge,
       listener: {
         ...draft.privateCarrierBridge.listener,
-        portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 23181, snapshotId: "snapshot-form" },
+        portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 23181, evidence },
       },
       target: {
         ...draft.privateCarrierBridge.target,
-        discovery: { status: "verified-read-only" as const, proxyRef: "Pure-Mieru" },
+        discovery: { status: "verified-read-only" as const, proxyRef: "Pure-Mieru", evidence },
       },
     },
   };
@@ -83,15 +88,17 @@ test("hydrates a v4 draft without exposing or rewriting infrastructure", () => {
   assert.equal(rebuilt.legs[1].supportsUdp, false);
   assert.deepEqual(rebuilt.openClashIngressAdapter, resolved.openClashIngressAdapter);
   assert.deepEqual(rebuilt.serverRuntime, resolved.serverRuntime);
+  assert.deepEqual(rebuilt.serverTargetDiscovery, resolved.serverTargetDiscovery);
+  assert.deepEqual(rebuilt.clientTarget, resolved.clientTarget);
   assert.equal(rebuilt.openClashIngressAdapter.portPlanning.port, 23180);
   assert.equal(rebuilt.privateCarrierBridge.type, "mihomo-dedicated-listener");
   if (rebuilt.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
   assert.equal(rebuilt.privateCarrierBridge.listener.portPlanning.port, 23181);
 });
 
-test("uses canonical shared types without any in v4 hydration", () => {
+test("uses canonical shared types without any in v5 hydration", () => {
   const source = readFileSync(fileURLToPath(new URL("./dualMultipathForm.ts", import.meta.url)), "utf8");
   assert.doesNotMatch(source, /\bany\b/);
-  assert.match(source, /DualMultipathDraftV4/);
+  assert.match(source, /DualMultipathDraftV5/);
   assert.match(source, /DualMultipathInfrastructureState/);
 });

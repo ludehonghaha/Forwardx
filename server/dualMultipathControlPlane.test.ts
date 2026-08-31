@@ -5,6 +5,7 @@ import {
   LEGACY_DUAL_MULTIPATH_DRAFT_SETTING_KEY,
   LEGACY_DUAL_MULTIPATH_V2_DRAFT_SETTING_KEY,
   LEGACY_DUAL_MULTIPATH_V3_DRAFT_SETTING_KEY,
+  LEGACY_DUAL_MULTIPATH_V4_DRAFT_SETTING_KEY,
   compileDualMultipathPreview,
   defaultDualMultipathInfrastructure,
   loadDualMultipathDraft,
@@ -12,11 +13,13 @@ import {
   saveDualMultipathDraft,
   type DualMultipathSettingsStore,
 } from "./dualMultipathControlPlane";
-import { createDefaultDualMultipathInfrastructure, type DualTargetDiscoverySnapshot } from "../shared/dualMultipath";
+import { createDefaultDualMultipathInfrastructure, type DualServerTargetDiscoverySnapshot } from "../shared/dualMultipath";
 
 const infrastructure = defaultDualMultipathInfrastructure();
+const clientRef = { kind: "external-openwrt" as const, targetKey: "dual-client:openwrt:test-main" };
+const evidence = { snapshotId: "snapshot-draft", clientTargetRef: clientRef };
 const draftInput = {
-  version: 4 as const,
+  version: 5 as const,
   state: "draft" as const,
   name: "NoBrand Dual",
   ...infrastructure,
@@ -25,19 +28,20 @@ const draftInput = {
     { role: "private" as const, legIndex: 0 as const, outboundTag: "forwardx-private-mieru", expectedBandwidthMbps: 200, supportsUdp: true },
     { role: "direct" as const, legIndex: 1 as const, outboundTag: "forwardx-direct-hy2", expectedBandwidthMbps: 1000, supportsUdp: true },
   ] as const,
+  clientTarget: { status: "bound" as const, ref: clientRef },
   openClashIngressAdapter: {
     ...infrastructure.openClashIngressAdapter,
-    portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 24080, snapshotId: "snapshot-draft" },
+    portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 24080, evidence },
   },
   privateCarrierBridge: {
     ...infrastructure.privateCarrierBridge,
     listener: {
       ...infrastructure.privateCarrierBridge.listener,
-      portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 24081, snapshotId: "snapshot-draft" },
+      portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 24081, evidence },
     },
     target: {
       ...infrastructure.privateCarrierBridge.target,
-      discovery: { status: "verified-read-only" as const, proxyRef: "NoBrand-Private-Mieru" },
+      discovery: { status: "verified-read-only" as const, proxyRef: "NoBrand-Private-Mieru", evidence },
     },
   },
   directCarrier: {
@@ -58,13 +62,22 @@ function memoryStore() {
   return { store, calls, values };
 }
 
-test("accepts the v4 one-panel Dual model and keeps server multipath on loopback", () => {
+test("accepts the v5 one-panel Dual model with separate server and client targets", () => {
   const parsed = parseDualMultipathDraft(draftInput);
-  assert.equal(parsed.version, 4);
+  assert.equal(parsed.version, 5);
+  assert.equal(parsed.serverTargetDiscovery.targetId, "nobrand-dual-current");
+  assert.deepEqual(parsed.clientTarget, { status: "bound", ref: clientRef });
   assert.equal(parsed.openClashIngressAdapter.type, "local-socks-sidecar");
   assert.equal(parsed.privateCarrierBridge.type, "mihomo-dedicated-listener");
   assert.equal(parsed.line.listen, "127.0.0.1");
   assert.equal(parsed.line.serverPort, 39000);
+});
+
+test("does not accept a server discovery object as a client target reference", () => {
+  assert.throws(() => parseDualMultipathDraft({
+    ...draftInput,
+    clientTarget: { status: "bound", ref: draftInput.serverTargetDiscovery },
+  }), /配置无效/);
 });
 
 test("does not default or emit the rejected 127.0.0.1:1080 private endpoint", () => {
@@ -86,7 +99,10 @@ test("allows a planned Mihomo listener port while pure Mieru proxy discovery is 
       ...draftInput.privateCarrierBridge,
       listener: {
         ...draftInput.privateCarrierBridge.listener,
-        portPlanning: { status: "planned-read-only", strategy: "auto", port: 24081, snapshotId: "snapshot-port-only" },
+        portPlanning: {
+          status: "planned-read-only", strategy: "auto", port: 24081,
+          evidence: { snapshotId: "snapshot-port-only", clientTargetRef: clientRef },
+        },
       },
       target: {
         ...draftInput.privateCarrierBridge.target,
@@ -161,7 +177,7 @@ test("rejects ingress recursion and private-listener port conflicts", () => {
       ...draftInput.privateCarrierBridge,
       target: {
         ...draftInput.privateCarrierBridge.target,
-        discovery: { status: "verified-read-only", proxyRef: draftInput.openClashIngressAdapter.tag },
+        discovery: { status: "verified-read-only", proxyRef: draftInput.openClashIngressAdapter.tag, evidence },
       },
     },
   }), /递归回 ForwardX Dual ingress/);
@@ -234,8 +250,8 @@ test("compiles deterministic redacted Mihomo, client and server previews", () =>
   assert.equal(first.upstream.requiredBuildTag, "with_quic");
 });
 
-test("accepts a second synthetic Dual through discovery data without schema changes", () => {
-  const syntheticDiscovery: DualTargetDiscoverySnapshot = {
+test("accepts a second synthetic Dual server through discovery data without schema changes", () => {
+  const syntheticDiscovery: DualServerTargetDiscoverySnapshot = {
     status: "verified-read-only",
     targetId: "synthetic-dual-2",
     platform: { kernel: "Linux", architecture: "aarch64" },
@@ -300,12 +316,55 @@ test("invalid drafts perform zero persistence writes", async () => {
   assert.equal(memory.calls.length, 0);
 });
 
-test("saves only v4 and loads it back", async () => {
+test("saves only v5 and loads it back", async () => {
   const memory = memoryStore();
   const saved = await saveDualMultipathDraft(memory.store, draftInput);
   assert.equal(memory.calls[0]?.key, DUAL_MULTIPATH_DRAFT_SETTING_KEY);
   const loaded = await loadDualMultipathDraft(memory.store);
   assert.deepEqual(loaded, saved);
+});
+
+test("upgrades v4 in memory and discards unbound client planning evidence", async () => {
+  const memory = memoryStore();
+  memory.values.set(LEGACY_DUAL_MULTIPATH_V4_DRAFT_SETTING_KEY, JSON.stringify({
+    version: 4,
+    state: "draft",
+    name: draftInput.name,
+    line: draftInput.line,
+    legs: draftInput.legs,
+    targetDiscovery: draftInput.serverTargetDiscovery,
+    openClashIngressAdapter: {
+      type: "local-socks-sidecar",
+      tag: draftInput.openClashIngressAdapter.tag,
+      listen: "127.0.0.1",
+      portPlanning: { status: "planned-read-only", strategy: "auto", port: 23180, snapshotId: "legacy-v4-client" },
+    },
+    privateCarrierBridge: {
+      type: "mihomo-dedicated-listener",
+      listener: {
+        kind: "socks", scope: "dedicated", listen: "127.0.0.1",
+        portPlanning: { status: "planned-read-only", strategy: "auto", port: 23181, snapshotId: "legacy-v4-client" },
+      },
+      target: {
+        selection: "single-proxy", protocol: "mieru",
+        discovery: { status: "verified-read-only", proxyRef: "Legacy-Pure-Mieru" },
+        routing: "fixed-proxy", fallback: "none", transportScope: "private-only",
+      },
+    },
+    directCarrier: draftInput.directCarrier,
+    serverRuntime: draftInput.serverRuntime,
+  }));
+  const loaded = await loadDualMultipathDraft(memory.store);
+  assert.equal(loaded?.version, 5);
+  assert.equal(loaded?.clientTarget.status, "unresolved");
+  assert.equal(loaded?.openClashIngressAdapter.portPlanning.status, "unresolved");
+  if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+  assert.equal(loaded.privateCarrierBridge.listener.portPlanning.status, "unresolved");
+  assert.deepEqual(loaded.privateCarrierBridge.target.discovery, { status: "unresolved", proxyRef: null });
+  assert.deepEqual(loaded.serverTargetDiscovery, draftInput.serverTargetDiscovery);
+  assert.deepEqual(loaded.directCarrier, draftInput.directCarrier);
+  assert.equal(loaded.serverRuntime.directCarrierRuntime.tlsPrivateKeySecretRef, "dual.hy2.tls.private-key");
+  assert.equal(memory.calls.some((call) => call.method === "setSetting"), false);
 });
 
 test("upgrades the portable v3 shape in memory without inventing port evidence", async () => {
@@ -316,7 +375,7 @@ test("upgrades the portable v3 shape in memory without inventing port evidence",
     name: "NoBrand portable v3",
     line: draftInput.line,
     legs: draftInput.legs,
-    targetDiscovery: draftInput.targetDiscovery,
+    targetDiscovery: draftInput.serverTargetDiscovery,
     openClashIngressAdapter: {
       type: "local-socks-sidecar", status: "resolved", tag: draftInput.openClashIngressAdapter.tag,
       listen: "127.0.0.1", portStrategy: "auto", port: 23180,
@@ -333,14 +392,12 @@ test("upgrades the portable v3 shape in memory without inventing port evidence",
     serverRuntime: draftInput.serverRuntime,
   }));
   const loaded = await loadDualMultipathDraft(memory.store);
-  assert.equal(loaded?.version, 4);
+  assert.equal(loaded?.version, 5);
   assert.equal(loaded?.openClashIngressAdapter.portPlanning.status, "unresolved");
   if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
   assert.equal(loaded.privateCarrierBridge.listener.portPlanning.status, "unresolved");
-  assert.deepEqual(loaded.privateCarrierBridge.target.discovery, {
-    status: "verified-read-only",
-    proxyRef: "Pure-Mieru-v3",
-  });
+  assert.deepEqual(loaded.privateCarrierBridge.target.discovery, { status: "unresolved", proxyRef: null });
+  assert.equal(loaded.clientTarget.status, "unresolved");
   assert.equal(loaded.directCarrier.authSecretRef, draftInput.directCarrier.authSecretRef);
   assert.equal(memory.calls.some((call) => call.method === "setSetting"), false);
 });
@@ -376,8 +433,8 @@ test("upgrades the pre-cleanup v3 host literals into discovery and resets unveri
     },
   }));
   const loaded = await loadDualMultipathDraft(memory.store);
-  assert.equal(loaded?.targetDiscovery.status, "verified-read-only");
-  assert.equal(loaded?.version, 4);
+  assert.equal(loaded?.serverTargetDiscovery.status, "verified-read-only");
+  assert.equal(loaded?.version, 5);
   assert.equal(loaded?.openClashIngressAdapter.portPlanning.port, null);
   assert.equal(loaded?.privateCarrierBridge.type, "mihomo-dedicated-listener");
   if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected migrated Mihomo bridge");
@@ -401,7 +458,7 @@ test("upgrades v2 in memory without carrying 127.0.0.1:1080 forward", async () =
     clientSidecar: { type: "local-socks-sidecar", listen: "127.0.0.1", listenPort: 10808 },
   }));
   const loaded = await loadDualMultipathDraft(memory.store);
-  assert.equal(loaded?.version, 4);
+  assert.equal(loaded?.version, 5);
   assert.equal(loaded?.privateCarrierBridge.type, "mihomo-dedicated-listener");
   if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
   assert.equal(loaded.privateCarrierBridge.target.discovery.status, "unresolved");
@@ -415,7 +472,7 @@ test("upgrades v1 in memory to the same fail-closed unresolved model", async () 
     version: 1, state: "draft", name: draftInput.name, line: draftInput.line, legs: draftInput.legs,
   }));
   const loaded = await loadDualMultipathDraft(memory.store);
-  assert.equal(loaded?.version, 4);
+  assert.equal(loaded?.version, 5);
   assert.equal(loaded?.line.listen, "127.0.0.1");
   if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
   assert.equal(loaded.privateCarrierBridge.target.discovery.status, "unresolved");

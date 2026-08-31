@@ -34,21 +34,22 @@ ForwardX 的 Dual 聚合实验以 `WuSiYu/singbox-multipath` 为唯一 PoC 上�
 
 用户只管理一个 ForwardX Dual 聚合节点。Mieru/Mita、Hysteria2、Mihomo dedicated listener、SOCKS bridge、multipath listener 和 secret reference 都是底层组件，不是额外面板。
 
-当前离线草稿使用 v4，并拆分：
+当前离线草稿使用 v5，并拆分：
 
-- `targetDiscovery`：某一台目标 Dual 的只读发现快照；interface、IP、gateway、现有 Mita listener 等都是目标数据，不是产品 schema 常量；
+- `serverTargetDiscovery`：某一台 Dual 服务端的只读发现快照；interface、IP、gateway、现有 Mita listener 等都是服务端目标数据，不是产品 schema 常量；
+- `clientTarget`：独立的客户端绑定；正式 ForwardX Host 使用 Panel 所有的 `hosts.id`，未注册 OpenWrt 使用 `dual-client:<namespace>:<stable-key>`，不能用 IP 或 server target 代替；
 - `openClashIngressAdapter`：OpenClash 连接 ForwardX sidecar 的本地入口；
 - `privateCarrierBridge`：优先使用 Mihomo dedicated loopback listener，并固定到单一纯 Mieru proxy；
 - `directCarrier`：pinned artifact 的 native Hysteria2；
 - `serverRuntime`：与具体主机无关的 loopback multipath 边界和未解析 HY2 runtime 策略。
 
-generic schema 不包含 `eth0`、`eth1`、固定 IP、gateway 或 Mita 端口 literal。当前 NoBrand Dual 的已核验结果单独保存为 `NO_BRAND_DUAL_DISCOVERY_SNAPSHOT`；以后更换为 `ens3`、`10.x` 或不同 Mita 端口时，只注入新的 snapshot，不修改 TypeScript schema/source code。
+generic schema 不包含 `eth0`、`eth1`、固定 IP、gateway 或 Mita 端口 literal。当前 NoBrand Dual 的已核验结果单独保存为 `NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT`；以后更换为 `ens3`、`10.x` 或不同 Mita 端口时，只注入新的 server snapshot，不修改 TypeScript schema/source code。
 
-客户端入口与 Mihomo dedicated listener 各自持有独立的 `portPlanning` discriminated union。未规划时是 `{ status: "unresolved", strategy: "auto", port: null }`；只有携带 `snapshotId` 的 read-only availability evidence 才能成为 `planned-read-only`。Mihomo target 另有独立的 pure Mieru proxy discovery 状态，bridge readiness 由“proxy 已验证 + dedicated listener port 已规划”派生，不作为可编辑字段持久化。
+客户端入口与 Mihomo dedicated listener 各自持有独立的 `portPlanning` discriminated union。未规划时是 `{ status: "unresolved", strategy: "auto", port: null }`；只有同时携带 `snapshotId` 与 `clientTargetRef` 的 read-only evidence 才能成为 `planned-read-only`。Pure Mieru discovery 使用相同 evidence contract。schema 会拒绝任何与当前 `clientTarget` 不一致的 client-side evidence。
 
-`planDualClientLoopbackPorts()` 是纯确定性 planner：只消费调用方提供的 `DualPortAvailabilitySnapshot`，在集中定义的 `23180-23279` 候选范围内顺序选择两个不同且未占用的 TCP loopback port。它不采集端口、不打开 socket、不持久化、不调用 Agent，也不改变 target discovery、HY2 或 secret reference；端口不足时 fail closed。普通用户不填写或维护端口。Dual 服务端内部 multipath listener 仍保留 loopback-only 的 `127.0.0.1:39000` 安全候选；它与客户端自动端口是不同边界。
+`DualClientDiscoverySnapshot` 只包含 canonical client ref、显式时间、occupied TCP ports 与不含 secret 的 Mihomo candidate facts。`evaluateDualClientSnapshot()` 只使用调用方传入的 `referenceTime/maxAgeMs` 判定 freshness。`planDualClientLoopbackPorts()` 在集中定义的 `23180-23279` 范围内顺序选择两个不同且未占用的端口；`resolveDualPureMieruProxy()` 只接受恰好一个 private-only、无 fallback 的 concrete Mieru proxy，拒绝 group、DIRECT/REJECT、mixed listener、public fallback 与 ingress recursion。两者均为纯函数，不采集、不打开 socket、不持久化、不调用 Agent。
 
-Persisted key 已升级为 `dualMultipathDraftV4`。v1、v2、portable v3 与更早的 pinned-host v3 都只做内存升级，不自动写回；旧 v3 端口因为没有 availability snapshot evidence 会回到 unresolved。只有管理员显式保存时才写 v4。
+Persisted key 已升级为 `dualMultipathDraftV5`。v1、v2、portable/pinned-host v3 和 v4 都只做内存升级，不自动写回。v4 没有 canonical client identity，因此旧端口与 proxy evidence 必须 fail closed 回到 unresolved；只有管理员显式保存时才写 v5。
 
 数据库层必须保证同一 aggregate line 不出现重复 legIndex；业务层必须拒绝少于或多于两条 leg。
 

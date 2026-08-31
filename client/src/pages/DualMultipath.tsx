@@ -126,6 +126,18 @@ export default function DualMultipathPage() {
   const ingressPort = form.infrastructure.openClashIngressAdapter.portPlanning.port;
   const privatePort = privateBridge.type === "mihomo-dedicated-listener" ? privateBridge.listener.portPlanning.port : null;
   const privateProxy = privateBridge.type === "mihomo-dedicated-listener" ? privateBridge.target.discovery.proxyRef : null;
+  const serverTarget = form.infrastructure.serverTargetDiscovery;
+  const clientTarget = form.infrastructure.clientTarget;
+  const clientTargetLabel = clientTarget.status === "unresolved"
+    ? "未绑定"
+    : clientTarget.ref.kind === "forwardx-host"
+      ? `ForwardX Host #${clientTarget.ref.hostId}`
+      : clientTarget.ref.targetKey;
+  const clientSnapshotId = form.infrastructure.openClashIngressAdapter.portPlanning.status === "planned-read-only"
+    ? form.infrastructure.openClashIngressAdapter.portPlanning.evidence.snapshotId
+    : privateBridge.type === "mihomo-dedicated-listener" && privateBridge.target.discovery.status === "verified-read-only"
+      ? privateBridge.target.discovery.evidence.snapshotId
+      : null;
 
   return (
     <DashboardLayout>
@@ -182,6 +194,9 @@ export default function DualMultipathPage() {
           <summary className="cursor-pointer px-5 py-4 text-sm font-medium">高级 / 诊断（离线、脱敏）</summary>
           <div className="space-y-5 border-t border-border/50 p-5">
             <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">服务端</p><p className="mt-1 text-sm">{serverTarget.targetId} · {serverTarget.status === "verified-read-only" ? "已发现" : "未发现"}</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">客户端</p><p className="mt-1 break-all text-sm">{clientTargetLabel}</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Client snapshot</p><p className="mt-1 break-all text-sm">{clientSnapshotId ?? "未获取"}</p></div>
               <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Dual ingress port</p><p className="mt-1 text-sm">{ingressPort ?? "等待自动规划"}</p></div>
               <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Mieru bridge port</p><p className="mt-1 text-sm">{privatePort ?? "等待自动规划"}</p></div>
               <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Mieru proxy</p><p className="mt-1 text-sm">{privateProxy ?? "等待发现"}</p></div>

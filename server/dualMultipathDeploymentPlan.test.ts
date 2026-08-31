@@ -4,8 +4,10 @@ import { defaultDualMultipathInfrastructure } from "./dualMultipathControlPlane"
 import { buildDualMultipathDeploymentPlan } from "./dualMultipathDeploymentPlan";
 
 const infrastructure = defaultDualMultipathInfrastructure();
+const clientRef = { kind: "external-openwrt" as const, targetKey: "dual-client:openwrt:plan-test" };
+const evidence = { snapshotId: "snapshot-port-only", clientTargetRef: clientRef };
 const validDraft = {
-  version: 4 as const,
+  version: 5 as const,
   state: "draft" as const,
   name: "NoBrand Dual",
   ...infrastructure,
@@ -14,13 +16,14 @@ const validDraft = {
     { role: "private" as const, legIndex: 0 as const, outboundTag: "forwardx-private-mieru", expectedBandwidthMbps: 200, supportsUdp: true },
     { role: "direct" as const, legIndex: 1 as const, outboundTag: "forwardx-direct-hy2", expectedBandwidthMbps: 1000, supportsUdp: true },
   ] as const,
+  clientTarget: { status: "bound" as const, ref: clientRef },
 };
 
-test("builds a deterministic fail-closed v5 dry-run plan", () => {
+test("builds a deterministic fail-closed v6 dry-run plan", () => {
   const first = buildDualMultipathDeploymentPlan(validDraft);
   const second = buildDualMultipathDeploymentPlan(validDraft);
   assert.deepEqual(first, second);
-  assert.equal(first.version, 5);
+  assert.equal(first.version, 6);
   assert.equal(first.mode, "dry-run");
   assert.equal(first.readyToDeploy, false);
   assert.equal(first.listener.listen, "127.0.0.1");
@@ -61,7 +64,7 @@ test("reports proxy discovery and dedicated listener port blockers independently
       ...validDraft.privateCarrierBridge,
       listener: {
         ...validDraft.privateCarrierBridge.listener,
-        portPlanning: { status: "planned-read-only", strategy: "auto", port: 23181, snapshotId: "snapshot-port-only" },
+        portPlanning: { status: "planned-read-only", strategy: "auto", port: 23181, evidence },
       },
     },
   });
@@ -74,7 +77,7 @@ test("reports proxy discovery and dedicated listener port blockers independently
       ...validDraft.privateCarrierBridge,
       target: {
         ...validDraft.privateCarrierBridge.target,
-        discovery: { status: "verified-read-only", proxyRef: "Pure-Mieru" },
+        discovery: { status: "verified-read-only", proxyRef: "Pure-Mieru", evidence },
       },
     },
   });
@@ -82,6 +85,19 @@ test("reports proxy discovery and dedicated listener port blockers independently
   assert.doesNotMatch(proxyOnly.blockers.join("\n"), /单一纯 Mieru proxy/);
   assert.equal(portOnly.readyToDeploy, false);
   assert.equal(proxyOnly.readyToDeploy, false);
+});
+
+test("reports client target, missing, stale, mismatch and ambiguous snapshot blockers precisely", () => {
+  const unbound = buildDualMultipathDeploymentPlan({ ...validDraft, clientTarget: { status: "unresolved" } });
+  assert.match(unbound.blockers.join("\n"), /Client target 未绑定/);
+  const missing = buildDualMultipathDeploymentPlan(validDraft);
+  assert.match(missing.blockers.join("\n"), /Client discovery snapshot 缺失/);
+  const stale = buildDualMultipathDeploymentPlan(validDraft, { blockerCodes: ["client-snapshot-stale"] });
+  assert.match(stale.blockers.join("\n"), /snapshot 已过期/);
+  const mismatch = buildDualMultipathDeploymentPlan(validDraft, { blockerCodes: ["client-snapshot-mismatch"] });
+  assert.match(mismatch.blockers.join("\n"), /target 与当前绑定不一致/);
+  const ambiguous = buildDualMultipathDeploymentPlan(validDraft, { blockerCodes: ["pure-mieru-ambiguous"] });
+  assert.match(ambiguous.blockers.join("\n"), /存在多个候选/);
 });
 
 test("models OpenClash ingress, dedicated Mihomo bridge and native HY2 in one ForwardX plan", () => {

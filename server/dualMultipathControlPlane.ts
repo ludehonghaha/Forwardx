@@ -1,20 +1,22 @@
 import { z } from "zod";
 import {
   DUAL_MULTIPATH_CONTROL_PLANE_VERSION,
-  NO_BRAND_DUAL_DISCOVERY_SNAPSHOT,
+  NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT,
   createDefaultDualMultipathInfrastructure,
   dualDirectLegSchema,
   dualLoopbackSchema,
   dualMultipathDraftSchema,
   dualMultipathDraftV3Schema,
+  dualMultipathDraftV4Schema,
   dualMultipathLineSchema,
   dualPortSchema,
   dualPrivateLegSchema,
   dualSecretReferenceSchema,
   type DualMultipathDraftV3,
   type DualMultipathDraftV4,
-  type DualMultipathDraftV4Input,
-  type DualTargetDiscoverySnapshot,
+  type DualMultipathDraftV5,
+  type DualMultipathDraftV5Input,
+  type DualServerTargetDiscoverySnapshot,
 } from "../shared/dualMultipath";
 import {
   MULTIPATH_POC_UPSTREAM,
@@ -27,17 +29,18 @@ import {
 export const LEGACY_DUAL_MULTIPATH_DRAFT_SETTING_KEY = "dualMultipathDraftV1";
 export const LEGACY_DUAL_MULTIPATH_V2_DRAFT_SETTING_KEY = "dualMultipathDraftV2";
 export const LEGACY_DUAL_MULTIPATH_V3_DRAFT_SETTING_KEY = "dualMultipathDraftV3";
-export const DUAL_MULTIPATH_DRAFT_SETTING_KEY = "dualMultipathDraftV4";
+export const LEGACY_DUAL_MULTIPATH_V4_DRAFT_SETTING_KEY = "dualMultipathDraftV4";
+export const DUAL_MULTIPATH_DRAFT_SETTING_KEY = "dualMultipathDraftV5";
 
 export {
   DUAL_MULTIPATH_CONTROL_PLANE_VERSION,
-  NO_BRAND_DUAL_DISCOVERY_SNAPSHOT,
+  NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT,
   createDefaultDualMultipathInfrastructure,
   dualMultipathDraftSchema,
 };
-export type DualMultipathDraft = DualMultipathDraftV4;
-export type DualMultipathDraftInput = DualMultipathDraftV4Input;
-export type { DualMultipathInfrastructureState, DualTargetDiscoverySnapshot } from "../shared/dualMultipath";
+export type DualMultipathDraft = DualMultipathDraftV5;
+export type DualMultipathDraftInput = DualMultipathDraftV5Input;
+export type { DualMultipathInfrastructureState, DualServerTargetDiscoverySnapshot } from "../shared/dualMultipath";
 
 const UNRESOLVED_MIHOMO_PROXY = "<unresolved:pure-mieru-proxy-ref>";
 const UNRESOLVED_AUTO_PRIVATE_PORT = "<unresolved:auto-private-bridge-port>";
@@ -140,7 +143,7 @@ export type DualMultipathSettingsStore = {
 };
 
 export function defaultDualMultipathInfrastructure() {
-  return createDefaultDualMultipathInfrastructure(NO_BRAND_DUAL_DISCOVERY_SNAPSHOT);
+  return createDefaultDualMultipathInfrastructure(NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT);
 }
 
 function validationMessage(error: z.ZodError) {
@@ -188,7 +191,7 @@ function privateBridgeReadiness(bridge: DualMultipathDraft["privateCarrierBridge
   };
 }
 
-function topologyPreview(discovery: DualTargetDiscoverySnapshot) {
+function topologyPreview(discovery: DualServerTargetDiscoverySnapshot) {
   if (discovery.status === "unresolved") return { status: discovery.status, targetId: discovery.targetId };
   return {
     status: discovery.status,
@@ -213,7 +216,7 @@ export function compileDualMultipathPreview(input: unknown) {
   const privateCredentials = privateBridge.type === "external-local-socks5" ? privateBridge.credentials : undefined;
   const bridgeReadiness = privateBridgeReadiness(privateBridge);
   const directCarrier = draft.directCarrier;
-  const discovery = draft.targetDiscovery;
+  const discovery = draft.serverTargetDiscovery;
   const publicInterface = discovery.status === "verified-read-only" ? discovery.publicSide.interfaceName : UNRESOLVED_INTERFACE;
   const publicSourceAddress = discovery.status === "verified-read-only" ? discovery.publicSide.sourceAddress : UNRESOLVED_SOURCE_ADDRESS;
   const privateChildOutbound = {
@@ -297,7 +300,8 @@ export function compileDualMultipathPreview(input: unknown) {
     name: draft.name,
     upstream: { ...MULTIPATH_POC_UPSTREAM, nativeHysteria2: true as const, requiredBuildTag: "with_quic" as const },
     topology: { private: draft.legs[0].outboundTag, direct: draft.legs[1].outboundTag, preferred: draft.legs[0].outboundTag },
-    targetDiscovery: { status: discovery.status, targetId: discovery.targetId },
+    serverTargetDiscovery: { status: discovery.status, targetId: discovery.targetId },
+    clientTarget: draft.clientTarget,
     clientPortPlanning: {
       openClashIngress: draft.openClashIngressAdapter.portPlanning,
       mihomoPrivateListener: privateBridge.type === "mihomo-dedicated-listener"
@@ -352,10 +356,8 @@ function upgradeV2Draft(legacy: z.output<typeof legacyV2DraftSchema>) {
   });
 }
 
-function upgradedMihomoProxyDiscovery(status: "unresolved" | "resolved", proxyRef?: string) {
-  return status === "resolved" && proxyRef
-    ? { status: "verified-read-only" as const, proxyRef }
-    : { status: "unresolved" as const, proxyRef: null };
+function unresolvedLegacyMihomoProxyDiscovery() {
+  return { status: "unresolved" as const, proxyRef: null };
 }
 
 function upgradePortableV3Draft(legacy: DualMultipathDraftV3) {
@@ -369,14 +371,12 @@ function upgradePortableV3Draft(legacy: DualMultipathDraftV3) {
       },
       target: {
         ...infrastructure.privateCarrierBridge.target,
-        discovery: upgradedMihomoProxyDiscovery(legacy.privateCarrierBridge.status, legacy.privateCarrierBridge.target.proxyRef),
+        discovery: unresolvedLegacyMihomoProxyDiscovery(),
       },
     }
     : {
       type: "external-local-socks5" as const,
-      endpointDiscovery: legacy.privateCarrierBridge.status === "resolved" && legacy.privateCarrierBridge.endpoint
-        ? { status: "verified-read-only" as const, endpoint: legacy.privateCarrierBridge.endpoint }
-        : { status: "unresolved" as const, endpoint: null },
+      endpointDiscovery: { status: "unresolved" as const, endpoint: null },
       credentials: legacy.privateCarrierBridge.credentials,
     };
   return parseDualMultipathDraft({
@@ -398,7 +398,7 @@ function upgradePortableV3Draft(legacy: DualMultipathDraftV3) {
 }
 
 function upgradePinnedV3Draft(legacy: z.output<typeof legacyPinnedV3DraftSchema>) {
-  const discovery: DualTargetDiscoverySnapshot = {
+  const discovery: DualServerTargetDiscoverySnapshot = {
     status: "verified-read-only",
     targetId: "legacy-v3-target",
     platform: { kernel: "Linux", architecture: "x86_64" },
@@ -433,14 +433,12 @@ function upgradePinnedV3Draft(legacy: z.output<typeof legacyPinnedV3DraftSchema>
       },
       target: {
         ...infrastructure.privateCarrierBridge.target,
-        discovery: upgradedMihomoProxyDiscovery(legacy.privateCarrierBridge.status, legacy.privateCarrierBridge.target.proxyRef),
+        discovery: unresolvedLegacyMihomoProxyDiscovery(),
       },
     }
     : {
       type: "external-local-socks5" as const,
-      endpointDiscovery: legacy.privateCarrierBridge.status === "resolved" && legacy.privateCarrierBridge.endpoint
-        ? { status: "verified-read-only" as const, endpoint: legacy.privateCarrierBridge.endpoint }
-        : { status: "unresolved" as const, endpoint: null },
+      endpointDiscovery: { status: "unresolved" as const, endpoint: null },
       credentials: legacy.privateCarrierBridge.credentials,
     };
   return parseDualMultipathDraft({
@@ -468,6 +466,39 @@ function upgradePinnedV3Draft(legacy: z.output<typeof legacyPinnedV3DraftSchema>
   });
 }
 
+function upgradeV4Draft(legacy: DualMultipathDraftV4) {
+  const infrastructure = createDefaultDualMultipathInfrastructure(legacy.targetDiscovery);
+  const privateCarrierBridge = legacy.privateCarrierBridge.type === "mihomo-dedicated-listener"
+    ? {
+      ...infrastructure.privateCarrierBridge,
+      listener: {
+        ...infrastructure.privateCarrierBridge.listener,
+        listen: legacy.privateCarrierBridge.listener.listen,
+      },
+    }
+    : {
+      type: "external-local-socks5" as const,
+      endpointDiscovery: { status: "unresolved" as const, endpoint: null },
+      credentials: legacy.privateCarrierBridge.credentials,
+    };
+  return parseDualMultipathDraft({
+    version: DUAL_MULTIPATH_CONTROL_PLANE_VERSION,
+    state: legacy.state,
+    name: legacy.name,
+    ...infrastructure,
+    line: legacy.line,
+    legs: legacy.legs,
+    openClashIngressAdapter: {
+      ...infrastructure.openClashIngressAdapter,
+      tag: legacy.openClashIngressAdapter.tag,
+      listen: legacy.openClashIngressAdapter.listen,
+    },
+    privateCarrierBridge,
+    directCarrier: legacy.directCarrier,
+    serverRuntime: legacy.serverRuntime,
+  });
+}
+
 function decodeStoredDraft(raw: string, version: number) {
   try {
     return JSON.parse(raw) as unknown;
@@ -479,10 +510,17 @@ function decodeStoredDraft(raw: string, version: number) {
 export async function loadDualMultipathDraft(store: DualMultipathSettingsStore) {
   const raw = await store.getSetting(DUAL_MULTIPATH_DRAFT_SETTING_KEY);
   if (raw) {
-    const decoded = decodeStoredDraft(raw, 4);
+    const decoded = decodeStoredDraft(raw, 5);
     const current = dualMultipathDraftSchema.safeParse(decoded);
     if (current.success) return current.data;
-    throw new Error(`Dual multipath v4 草稿无效：${validationMessage(current.error)}`);
+    throw new Error(`Dual multipath v5 草稿无效：${validationMessage(current.error)}`);
+  }
+
+  const v4Raw = await store.getSetting(LEGACY_DUAL_MULTIPATH_V4_DRAFT_SETTING_KEY);
+  if (v4Raw) {
+    const parsed = dualMultipathDraftV4Schema.safeParse(decodeStoredDraft(v4Raw, 4));
+    if (!parsed.success) throw new Error(`Dual multipath v4 草稿无效：${validationMessage(parsed.error)}`);
+    return upgradeV4Draft(parsed.data);
   }
 
   const v3Raw = await store.getSetting(LEGACY_DUAL_MULTIPATH_V3_DRAFT_SETTING_KEY);
