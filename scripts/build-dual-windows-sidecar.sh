@@ -62,6 +62,60 @@ cat > "$OUTPUT_DIR/build-metadata.json" <<EOF
 }
 EOF
 
+cat > "$OUTPUT_DIR/run-dual-test.cmd" <<'EOF'
+@echo off
+setlocal
+cd /d "%~dp0"
+
+if not exist "dual-test.json" (
+  echo [ForwardX Dual] dual-test.json not found.
+  echo Put the real Gray test config next to this file first.
+  echo Nothing was started.
+  pause
+  exit /b 2
+)
+
+if not exist "sing-box-windows-amd64.exe" (
+  echo [ForwardX Dual] sing-box-windows-amd64.exe not found.
+  pause
+  exit /b 3
+)
+
+echo [ForwardX Dual] Checking dual-test.json...
+"%~dp0sing-box-windows-amd64.exe" check -c "%~dp0dual-test.json"
+if errorlevel 1 (
+  echo.
+  echo [ForwardX Dual] Config check failed. Runtime was NOT started.
+  pause
+  exit /b 4
+)
+
+echo.
+echo [ForwardX Dual] Config check passed. Starting Gray test...
+echo Press Ctrl+C to stop.
+echo.
+"%~dp0sing-box-windows-amd64.exe" run -c "%~dp0dual-test.json"
+set EXIT_CODE=%ERRORLEVEL%
+
+echo.
+echo [ForwardX Dual] Process exited with code %EXIT_CODE%.
+pause
+exit /b %EXIT_CODE%
+EOF
+
+cat > "$OUTPUT_DIR/README-WINDOWS-GRAY.txt" <<'EOF'
+ForwardX Dual Windows Gray test package
+
+1. Do not run the Gray proxy until a real dual-test.json has been generated.
+2. Put dual-test.json in this same folder.
+3. Double-click run-dual-test.cmd.
+4. The launcher checks the config first. If check fails, runtime is not started.
+5. Press Ctrl+C in the terminal window to stop the Gray test.
+
+The Windows singbox-multipath binary does not implement Mieru directly.
+The private leg requires a separate local Mihomo/Clash SOCKS listener pinned to one pure Mieru proxy.
+EOF
+
 printf '\n===== Windows artifact =====\n'
 ls -lh "$OUTPUT_DIR/sing-box-windows-amd64.exe"
 cat "$OUTPUT_DIR/sing-box-windows-amd64.exe.sha256"

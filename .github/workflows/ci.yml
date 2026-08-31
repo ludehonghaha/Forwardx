@@ -129,6 +129,8 @@ jobs:
             ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe
             ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe.sha256
             ${{ runner.temp }}/dual-windows-gray/build-metadata.json
+            ${{ runner.temp }}/dual-windows-gray/run-dual-test.cmd
+            ${{ runner.temp }}/dual-windows-gray/README-WINDOWS-GRAY.txt
           if-no-files-found: error
           retention-days: 7
 
