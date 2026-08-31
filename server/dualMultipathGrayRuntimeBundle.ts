@@ -10,13 +10,18 @@ import {
   buildMultipathPocOutbound,
   type MultipathPocLeg,
 } from "./multipathPocPlan";
+import {
+  DUAL_MIERU_UPSTREAM,
+  buildDualMieruClientConfigTemplate,
+} from "./dualMultipathMieruSidecar";
 
-export const DUAL_GRAY_RUNTIME_BUNDLE_VERSION = 1 as const;
+export const DUAL_GRAY_RUNTIME_BUNDLE_VERSION = 2 as const;
 export const DUAL_WINDOWS_GRAY_ARTIFACT = {
   platform: "windows" as const,
   architecture: "amd64" as const,
   upstream: MULTIPATH_POC_UPSTREAM,
   requiredBuildTag: "with_quic" as const,
+  mieru: DUAL_MIERU_UPSTREAM,
 } as const;
 export const DUAL_LINUX_GRAY_ARTIFACT = {
   platform: "linux" as const,
@@ -25,12 +30,9 @@ export const DUAL_LINUX_GRAY_ARTIFACT = {
   requiredBuildTag: "with_quic" as const,
 } as const;
 
-const unresolvedPureMieruProxy = "<unresolved:pure-mieru-proxy-ref>";
-
 export const dualGrayRuntimeInputSchema = z.object({
   windowsSidecarIngressPort: dualPortSchema,
   windowsPrivateSocksPort: dualPortSchema,
-  pureMieruProxyRef: z.string().trim().min(1).max(255).nullable().default(null),
   hy2Port: dualPortSchema,
   tlsServerName: z.string().trim().min(1).max(255),
   tlsCertificatePath: z.string().trim().min(1).max(1024),
@@ -64,10 +66,9 @@ function secretPlaceholder(reference: string) {
 /**
  * Build a non-persistent Windows + Dual-server Gray runtime template.
  *
- * The pinned singbox-multipath fork does not implement Mieru. The private leg is
- * therefore deliberately a SOCKS child outbound which must point at a separate
- * Mihomo/Clash listener already pinned to one pure Mieru proxy. HY2 and
- * multipath run inside the pinned sing-box process.
+ * The pinned singbox-multipath fork does not implement Mieru. ForwardX owns an
+ * official Mieru foreground sidecar which exposes the dedicated loopback SOCKS
+ * child outbound. Clash Mi is neither inspected nor modified.
  *
  * This function never consumes client discovery evidence and never makes the
  * persisted v5 clientTarget trusted. It is only an ephemeral Gray harness.
@@ -94,8 +95,8 @@ export function buildDualMultipathGrayRuntimeBundle(
   if (input.hy2Port === draft.serverRuntime.multipathListener.port) {
     throw new Error("Dual Gray HY2 端口不能与 multipath loopback listener 共用");
   }
-  if (input.pureMieruProxyRef === draft.openClashIngressAdapter.tag) {
-    throw new Error("Dual Gray private bridge 不允许递归回 ForwardX Dual ingress");
+  if (draft.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") {
+    throw new Error("Dual Gray private bridge 必须使用 ForwardX-managed official Mieru sidecar");
   }
 
   const legs = compilerLegs(draft);
@@ -107,6 +108,7 @@ export function buildDualMultipathGrayRuntimeBundle(
 
   const publicAddress = serverTarget.publicSide.sourceAddress;
   const hy2Password = secretPlaceholder(draft.directCarrier.authSecretRef);
+  const windowsMieruClientConfig = buildDualMieruClientConfigTemplate(draft, input.windowsPrivateSocksPort);
 
   const windowsSidecarConfig = {
     log: { level: "info" as const },
@@ -163,27 +165,9 @@ export function buildDualMultipathGrayRuntimeBundle(
     route: { final: "direct" as const },
   };
 
-  const windowsMihomoPrivateListener = {
-    listeners: [{
-      name: `forwardx-windows-gray-private-${draft.line.id}`,
-      type: "socks" as const,
-      listen: "127.0.0.1" as const,
-      port: input.windowsPrivateSocksPort,
-      proxy: input.pureMieruProxyRef ?? unresolvedPureMieruProxy,
-    }],
-    requirement: {
-      engine: "mihomo-or-compatible" as const,
-      proxyProtocol: "mieru" as const,
-      singleConcreteProxyOnly: true as const,
-      normalRulesBypassed: true as const,
-      genericMixedListenerAllowed: false as const,
-      directFallbackAllowed: false as const,
-    },
-  };
-
   const blockers = [
     "Windows 两个本地 Gray 端口尚未在真实机器确认空闲",
-    ...(input.pureMieruProxyRef ? [] : ["Windows Mihomo/Clash 中唯一纯 Mieru proxy 尚未绑定"]),
+    "真实 Mieru client username/password 尚未通过 Gray secret resolver 注入",
     "Dual 服务端 Gray HY2 UDP 端口尚未在真实机器确认空闲",
     "Gray 自签 TLS 仅用于隔离测试，不能作为生产 TLS 策略",
     "真实 HY2 auth secret 尚未通过 Gray secret resolver 注入",
@@ -208,7 +192,9 @@ export function buildDualMultipathGrayRuntimeBundle(
     },
     topology: {
       privateLeg: {
-        clientEngine: "external-mihomo-socks" as const,
+        clientEngine: "forwardx-managed-official-mieru" as const,
+        upstream: DUAL_MIERU_UPSTREAM,
+        localSocks: { listen: "127.0.0.1" as const, port: input.windowsPrivateSocksPort },
         carrier: "existing-mita-mieru" as const,
         existingServerBinaryPath: serverTarget.existingPrivateCarrier.binaryPath,
         existingServerUnitName: serverTarget.existingPrivateCarrier.unitName ?? null,
@@ -228,7 +214,7 @@ export function buildDualMultipathGrayRuntimeBundle(
     },
     fragments: {
       windowsSidecarConfig,
-      windowsMihomoPrivateListener,
+      windowsMieruClientConfig,
       serverConfig,
     },
     blockers,
@@ -248,6 +234,9 @@ export function buildDualMultipathGrayRuntimeBundle(
       routeMutation: false as const,
       existingMitaMutation: false as const,
       productionDbWrite: false as const,
+      clashMiRead: false as const,
+      clashMiMutation: false as const,
+      globalMieruConfigWrite: false as const,
     },
   };
 }

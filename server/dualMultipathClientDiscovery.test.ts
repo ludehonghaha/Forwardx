@@ -11,11 +11,29 @@ import { materializeDualClientFacts, resolveDualPureMieruProxy } from "./dualMul
 
 const clientRef = { kind: "external-openwrt" as const, targetKey: "dual-client:openwrt:discovery-test" };
 const infrastructure = defaultDualMultipathInfrastructure();
+const legacyMihomoBridge = {
+  type: "mihomo-dedicated-listener" as const,
+  listener: {
+    kind: "socks" as const,
+    scope: "dedicated" as const,
+    listen: "127.0.0.1" as const,
+    portPlanning: { status: "unresolved" as const, strategy: "auto" as const, port: null },
+  },
+  target: {
+    selection: "single-proxy" as const,
+    protocol: "mieru" as const,
+    discovery: { status: "unresolved" as const, proxyRef: null },
+    routing: "fixed-proxy" as const,
+    fallback: "none" as const,
+    transportScope: "private-only" as const,
+  },
+};
 const draft = {
   version: 5 as const,
   state: "draft" as const,
   name: "NoBrand Dual",
   ...infrastructure,
+  privateCarrierBridge: legacyMihomoBridge,
   clientTarget: { status: "bound" as const, ref: clientRef },
   line: { ...infrastructure.line, activationThresholdMbps: 120, activationWindow: "1s" },
   legs: [
@@ -23,6 +41,14 @@ const draft = {
     { ...infrastructure.legs[1], expectedBandwidthMbps: 1000 },
   ] as const,
 };
+
+test("ForwardX-managed Mieru sidecar needs no Mihomo candidate discovery", () => {
+  const managedDraft = { ...draft, privateCarrierBridge: infrastructure.privateCarrierBridge };
+  const result = materializeDualClientFacts(managedDraft, { ...snapshot, mihomo: { candidates: [] } }, freshness);
+  assert.equal(result.status, "materialized-read-only");
+  assert.equal(result.diagnostics.pureMieruStatus, "not-required");
+  assert.deepEqual(result.diagnostics.blockerCodes, []);
+});
 const pureMieru = {
   kind: "concrete-proxy" as const,
   ref: "Pure-Mieru-A",

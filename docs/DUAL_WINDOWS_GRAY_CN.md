@@ -1,99 +1,77 @@
 # ForwardX Dual：Windows + Server Gray 验证
 
-> 这一层只用于真实聚合前的隔离 Gray 验证。它不写 v5 clientTarget、不部署、不修改现有 Mita。
+> 仅用于离线与隔离 Gray 验证；不部署、不修改现有 Mita，`readyForRuntime=false`。
 
-## Windows 测试结构
-
-Windows 版 `singbox-multipath` 不包含 Mieru 协议实现，因此专线腿不能直接写成 `type: mieru`。
+## Windows 拓扑
 
 ```text
-Windows 应用 / 浏览器
-        ↓
-127.0.0.1:<Dual Gray SOCKS>
-        ↓
-pinned singbox-multipath.exe
-        ├─ leg0 → 127.0.0.1:<Mihomo dedicated SOCKS> → 唯一纯 Mieru
-        └─ leg1 → native Hysteria2 → Dual 公网 IP
-        ↓
-      multipath
-        ↓
-Dual server 127.0.0.1:39000
+127.0.0.1:24180
+  -> pinned singbox-multipath
+       leg0 -> SOCKS5 127.0.0.1:24181
+                    -> ForwardX-managed official enfein/mieru client
+                    -> 172.16.4.114:11464/TCP (existing Mita, preserve)
+       leg1 -> native Hysteria2 -> 87.86.22.221:61464/udp
 ```
 
-Mihomo/Clash 只负责把 leg0 固定到现有 Mieru；HY2 与 multipath 都由 pinned `singbox-multipath` 运行。
+`24181` 不再读取、修改或依赖 Clash Mi。现有通用 `7890` 不参与该拓扑。
 
-## 服务端 Gray
+## Official Mieru pin
 
-服务端不改现有 Mita：
+- repository: `enfein/mieru`
+- version/tag: `3.36.0` / `v3.36.0`
+- commit: `155ebbd60f86e472586a60d7ffe58ec8f8682cb1`
+- Windows amd64 release ZIP SHA256: `f0136fa3bbfb1489a0a41c1ef5c3aa58ecf5b4793dc51d5a813cf7f5803017d1`
+- extracted `mieru.exe` SHA256: `ed9dbf733321c3010f4e3431b46f65b7d1560f6b633f79a76f33219986d9e927`
+- license: GPL-3.0
 
-- 现有 Mita listener 保持原端口并 `preserve`；
-- 新增 Gray HY2，只绑定 discovery 得到的公网地址；
-- multipath inbound 继续只监听 `127.0.0.1:39000`；
-- HY2/Mieru 两条 carrier 最终都把 multipath transport 送到该 loopback listener。
+Windows artifact 同时包含原始许可证与 pinned commit 的对应源码归档。后续 Linux amd64 使用官方 tarball；OpenWrt 根据实际架构选择官方 Linux arm64、armv7 或 riscv64 tarball，仍需在目标机只读发现架构后决定，不能猜测。
 
-Gray HY2 使用独立新端口，不能复用 Mita 端口或 multipath 端口。
+## Mieru 配置边界
 
-当前本机 materialization 固定使用以下隔离候选：
+ForwardX 独立生成每次运行专用 JSON：
 
-- Windows Dual ingress：`127.0.0.1:24180`；
-- Windows private SOCKS bridge：`127.0.0.1:24181`；
-- Dual Gray HY2：`87.86.22.221:61464/udp`；
-- server multipath：`127.0.0.1:39000`，只允许 loopback。
+- `socks5Port=24181`
+- `socks5ListenLAN=false`
+- `rpcPort=0`
+- private server 来自 verified server discovery
+- port 来自现有 Mita listener discovery（当前 `11464/TCP`）
+- username/password 只接受 `dual.mieru.username`、`dual.mieru.password` secret reference
 
-当前服务端 discovery 已刷新为：Mita binary `/usr/bin/mita`、unit
-`mita-oneclick@uc650fd438a46ab4e.service`、TCP `*:11464`，生命周期仍为
-`preserve`。
+launcher 只把 `MIERU_CONFIG_JSON_FILE=<gray config>` 注入它创建的 Mieru 子进程并执行 `mieru run`，不调用 `mieru apply config`，因此不写用户全局 Mieru 配置。
 
-## 24181 dedicated Mieru 状态
-
-Mihomo 核心的 `listeners` 支持在 SOCKS listener 上用 `proxy` 直接固定到具名
-proxy；这说明架构在核心配置层可表达。当前仍缺 Clash Mi 实际生效配置和唯一纯
-Mieru proxy 名称，因此 `24181` 继续保持 blocker。现有 `7890` 是通用代理入口，
-不能作为该 dedicated listener 的替代品。
-
-本机 secret-bearing materialization 必须输出到仓库外目录：
+仓库外 materialization：
 
 ```bash
 node --import tsx scripts/materialize-dual-gray-local.ts \
-  <outside-repo-output-dir> <certificate-path> <private-key-path> <auth-secret-file>
+  <outside-repo-output-dir> <certificate-path> <private-key-path> \
+  <hy2-auth-file> <mieru-username-file> <mieru-password-file>
 ```
 
-脚本生成 `dual-test.json` 与 `server-gray.json`，不会打印 auth；两份文件都包含
-真实 Gray secret，禁止复制进仓库或上传到 GitHub。
+生成 `mieru-gray.json`、`dual-test.json`、`server-gray.json`；它们是 `0600` 的 secret-bearing 临时文件，禁止 commit 或上传。
 
-## TLS
+## Launcher 与 artifact
 
-为了先验证“聚合机制本身”，离线 Gray harness 支持明确的 `self-signed-gray` 模式：
+`forwardx-dual-windows-amd64` 包含：
 
-- CI 生成一次性自签证书；
-- Gray client 明确 `insecure: true`；
-- 该模式只允许 Gray 测试，`productionTlsApproved=false`；
-- 正式 runtime 仍必须走真实 TLS secret resolver / certificate evidence。
+- official `mieru-windows-amd64.exe`
+- pinned `sing-box-windows-amd64.exe`
+- PowerShell 双进程 launcher 与 `.cmd` 入口
+- README、metadata、SHA256 清单
+- Mieru GPL-3.0 许可证和对应源码归档
 
-## CI 真实配置检查
+不包含 Mieru credential、HY2 auth、TLS private key 或实际配置。
 
-CI 会：
+launcher 先检查 `24180/24181` 空闲，再启动 Mieru并等待 `24181` ready，之后启动 multipath 并等待 `24180` ready。任一子进程失败、Ctrl+C 或 launcher 退出时，只按它保存的两个 PID 清理 Gray 子进程。它不会停止 Clash Mi、修改系统代理、网卡、服务、防火墙或路由。
 
-1. 固定上游 commit `1c36787d956d750f2ee58d73710d8006a11ccf2c` 构建 Linux amd64 binary；
-2. 生成一次性自签证书；
-3. 使用与生产代码同一个 TypeScript bundle builder 生成 Windows/server Gray fixture；
-4. 使用 pinned binary 对两份 JSON 执行 `sing-box check`；
-5. 上传 Linux binary、SHA256 和 build metadata。
+## Server Gray
 
-CI fixture 只含 `<secret:dual.hy2.auth>` 引用，不含真实密码、订阅、证书私钥内容或设备配置。
+- existing Mita `/usr/bin/mita`、unit `mita-oneclick@uc650fd438a46ab4e.service`、TCP `*:11464` 保持 `preserve`；
+- HY2 candidate 仅绑定 `87.86.22.221:61464/udp`；
+- multipath 仅监听 `127.0.0.1:39000`。
 
-## 真机运行前仍缺
+## 仍然阻塞
 
-- Windows 本地端口空闲确认；
-- Windows 上实际 Mieru-capable Mihomo/Clash 以及唯一纯 Mieru proxy 名称；
-- Dual 服务端 Gray HY2 UDP 端口空闲确认；
-- 真实 Gray HY2 auth secret；
-- Gray TLS 文件部署；
-- 真实 materialized client/server `sing-box check`；
-- 服务启动、健康检查和回滚。
-
-在这些完成前始终：
-
-```text
-readyForRuntime = false
-```
+- 真实 Mieru client 明文 username/password 尚未注入；不能从只保存 checksum 的 Mita 恢复；
+- Windows 真机端口、官方 Mieru 启动、双进程清理尚未实机验收；
+- server Gray 尚未获准部署，HY2/TLS/auth、网络可达性、健康检查和回滚尚未验收；
+- `readyForRuntime=false`，PR 保持 Draft。

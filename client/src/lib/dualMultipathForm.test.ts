@@ -12,8 +12,8 @@ test("defaults to a simple one-panel Dual model without 127.0.0.1:1080", () => {
   assert.equal(draft.clientTarget.status, "unresolved");
   assert.equal(draft.line.server, "127.0.0.1");
   assert.equal(draft.line.serverPort, 39000);
-  assert.equal(draft.privateCarrierBridge.type, "mihomo-dedicated-listener");
-  assert.equal(draft.privateCarrierBridge.target.discovery.status, "unresolved");
+  assert.equal(draft.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
+  assert.equal(draft.privateCarrierBridge.runtime.clashMiDependency, false);
   assert.doesNotMatch(JSON.stringify(draft.privateCarrierBridge), /1080/);
   assert.equal(draft.directCarrier.status, "unresolved");
   assert.equal(draft.serverRuntime.directCarrierRuntime.separateHysteriaBinaryRequired, false);
@@ -53,8 +53,7 @@ test("rejects invalid ordinary UI values before API submission", () => {
 test("hydrates a v5 draft without exposing or rewriting infrastructure", () => {
   const base = defaultDualMultipathForm();
   const draft = buildDualMultipathDraftFromForm(base);
-  assert.equal(draft.privateCarrierBridge.type, "mihomo-dedicated-listener");
-  if (draft.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+  assert.equal(draft.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
   const clientTargetRef = { kind: "external-openwrt" as const, targetKey: "dual-client:openwrt:form-test" };
   const evidence = { snapshotId: "snapshot-form", clientTargetRef };
   const resolved = {
@@ -73,10 +72,6 @@ test("hydrates a v5 draft without exposing or rewriting infrastructure", () => {
         ...draft.privateCarrierBridge.listener,
         portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 23181, evidence },
       },
-      target: {
-        ...draft.privateCarrierBridge.target,
-        discovery: { status: "verified-read-only" as const, proxyRef: "Pure-Mieru", evidence },
-      },
     },
   };
   const hydrated = dualMultipathFormFromDraft(resolved);
@@ -91,8 +86,8 @@ test("hydrates a v5 draft without exposing or rewriting infrastructure", () => {
   assert.deepEqual(rebuilt.serverTargetDiscovery, resolved.serverTargetDiscovery);
   assert.deepEqual(rebuilt.clientTarget, resolved.clientTarget);
   assert.equal(rebuilt.openClashIngressAdapter.portPlanning.port, 23180);
-  assert.equal(rebuilt.privateCarrierBridge.type, "mihomo-dedicated-listener");
-  if (rebuilt.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+  assert.equal(rebuilt.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
+  if (rebuilt.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") throw new Error("expected managed Mieru sidecar");
   assert.equal(rebuilt.privateCarrierBridge.listener.portPlanning.port, 23181);
 });
 

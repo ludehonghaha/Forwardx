@@ -37,7 +37,9 @@ export function buildDualMultipathDeploymentPlan(
 
   const ingressPortPlanned = draft.openClashIngressAdapter.portPlanning.status === "planned-read-only";
   const mihomoBridge = draft.privateCarrierBridge.type === "mihomo-dedicated-listener" ? draft.privateCarrierBridge : null;
-  const privateListenerPortPlanned = mihomoBridge?.listener.portPlanning.status === "planned-read-only";
+  const managedMieruBridge = draft.privateCarrierBridge.type === "forwardx-managed-mieru-sidecar" ? draft.privateCarrierBridge : null;
+  const localPrivateBridge = mihomoBridge ?? managedMieruBridge;
+  const privateListenerPortPlanned = localPrivateBridge?.listener.portPlanning.status === "planned-read-only";
   const pureMieruProxyDiscovered = mihomoBridge?.target.discovery.status === "verified-read-only";
   const externalEndpointDiscovered = draft.privateCarrierBridge.type === "external-local-socks5"
     && draft.privateCarrierBridge.endpointDiscovery.status === "verified-read-only";
@@ -57,12 +59,13 @@ export function buildDualMultipathDeploymentPlan(
     "客户端 carrier 目前只包含 secret reference；尚未建立灰度 secret resolver 与进程级注入边界",
     ...Array.from(clientBlockerCodes, (code) => clientBlockerText[code]),
     ...(ingressPortPlanned ? [] : ["Dual ingress loopback 端口尚未依据 read-only availability snapshot 完成自动规划"]),
-    ...(mihomoBridge && !privateListenerPortPlanned ? ["Mihomo dedicated listener loopback 端口尚未依据 read-only availability snapshot 完成自动规划"] : []),
+    ...(localPrivateBridge && !privateListenerPortPlanned ? ["private carrier SOCKS loopback 端口尚未依据 read-only availability snapshot 完成自动规划"] : []),
     ...(mihomoBridge && !pureMieruProxyDiscovered && !hasPureMieruPreflightBlocker ? ["单一纯 Mieru proxy 尚未完成 verified read-only discovery"] : []),
     ...(draft.privateCarrierBridge.type === "external-local-socks5" && !externalEndpointDiscovered ? ["external local SOCKS5 endpoint 尚未完成 verified read-only discovery"] : []),
     ...(serverTargetDiscoveryResolved ? [] : ["Dual server target 尚无 verified-read-only discovery snapshot"]),
     ...(directCarrierResolved ? [] : ["Hysteria2 端口、TLS server name 与最终 runtime 仍未解析"]),
-    "Mihomo dedicated listener 尚未在 OpenClash override 机制中生成并执行原生配置校验",
+    ...(managedMieruBridge ? ["真实 Mieru client username/password 尚未通过 Gray secret resolver 注入"] : []),
+    ...(mihomoBridge ? ["旧 Mihomo dedicated listener 草稿必须迁移到 ForwardX-managed official Mieru sidecar"] : []),
     "Hysteria2 服务端监听、TLS secret 注入和回环转发语义尚未执行原生配置校验",
     "尚未确认 OpenWrt aarch64 与 Dual x86_64 的固定 artifact 安装目录",
     "尚未确认两条已认证 carrier 都能到达同一个回环 multipath listener；multipath 协议本身不提供认证或加密",
@@ -98,8 +101,8 @@ export function buildDualMultipathDeploymentPlan(
       privateLeg: {
         nativeSingBoxChildRequired: false as const,
         localSocksBridgeAllowed: true as const,
-        preferredBridge: "mihomo-dedicated-listener" as const,
-        note: "优先由 ForwardX 规划 loopback-only Mihomo dedicated SOCKS listener，并固定到单一纯 Mieru proxy；禁止通用 mixed listener、普通 rules、递归和 DIRECT/public fallback。",
+        preferredBridge: "forwardx-managed-mieru-sidecar" as const,
+        note: "ForwardX 管理官方 Mieru foreground sidecar，并用独立 loopback-only SOCKS listener 承载专线；不读取或修改 Clash Mi。",
       },
       directLeg: {
         authenticatedCarrierRequired: true as const,
@@ -115,9 +118,17 @@ export function buildDualMultipathDeploymentPlan(
     fragments: {
       clientConfig: preview.clientConfig,
       mihomoPrivateListener: preview.mihomoPrivateListener,
+      mieruPrivateSidecar: preview.mieruPrivateSidecar,
       serverPreview: preview.serverPreview,
     },
     intendedArtifacts: [
+      {
+        kind: "binary" as const,
+        name: "official mieru client",
+        source: "enfein/mieru@v3.36.0",
+        destination: null,
+        status: "unresolved" as const,
+      },
       {
         kind: "binary" as const,
         name: "sing-box",
@@ -134,8 +145,8 @@ export function buildDualMultipathDeploymentPlan(
       },
       {
         kind: "client-adapter" as const,
-        name: "ForwardX-managed OpenClash and Mihomo adapters",
-        source: "singbox-multipath ingress + Mihomo dedicated listener preview",
+        name: "ForwardX-managed Dual ingress and Mieru sidecar",
+        source: "singbox-multipath ingress + official Mieru client preview",
         destination: null,
         status: "blocked" as const,
       },

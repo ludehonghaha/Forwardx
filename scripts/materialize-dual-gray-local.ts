@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import { dualMultipathDraftSchema } from "../shared/dualMultipath";
 import { defaultDualMultipathInfrastructure } from "../server/dualMultipathControlPlane";
 import { buildDualMultipathGrayRuntimeBundle } from "../server/dualMultipathGrayRuntimeBundle";
+import { materializeDualMieruClientConfig } from "../server/dualMultipathMieruSidecar";
 
-const [outputArg, certificateArg, keyArg, authFileArg] = process.argv.slice(2);
-if (!outputArg || !certificateArg || !keyArg || !authFileArg) {
+const [outputArg, certificateArg, keyArg, authFileArg, mieruUsernameFileArg, mieruPasswordFileArg] = process.argv.slice(2);
+if (!outputArg || !certificateArg || !keyArg || !authFileArg || !mieruUsernameFileArg || !mieruPasswordFileArg) {
   throw new Error(
-    "usage: materialize-dual-gray-local.ts <outside-repo-output-dir> <certificate-path> <key-path> <auth-secret-file>",
+    "usage: materialize-dual-gray-local.ts <outside-repo-output-dir> <certificate-path> <key-path> <hy2-auth-file> <mieru-username-file> <mieru-password-file>",
   );
 }
 
@@ -17,6 +18,8 @@ const outputDir = resolve(outputArg);
 const certificatePath = resolve(certificateArg);
 const keyPath = resolve(keyArg);
 const authFilePath = resolve(authFileArg);
+const mieruUsernameFilePath = resolve(mieruUsernameFileArg);
+const mieruPasswordFilePath = resolve(mieruPasswordFileArg);
 
 function assertOutsideRepository(path: string, label: string) {
   const pathFromRepository = relative(repositoryRoot, path);
@@ -28,8 +31,12 @@ function assertOutsideRepository(path: string, label: string) {
 assertOutsideRepository(outputDir, "output directory");
 assertOutsideRepository(keyPath, "TLS private key");
 assertOutsideRepository(authFilePath, "HY2 auth secret file");
+assertOutsideRepository(mieruUsernameFilePath, "Mieru username secret file");
+assertOutsideRepository(mieruPasswordFilePath, "Mieru password secret file");
 
 const hy2AuthSecret = readFileSync(authFilePath, "utf8").trim();
+const mieruUsername = readFileSync(mieruUsernameFilePath, "utf8").trim();
+const mieruPassword = readFileSync(mieruPasswordFilePath, "utf8").trim();
 if (hy2AuthSecret.length < 16 || hy2AuthSecret.length > 512) {
   throw new Error("Gray HY2 auth 长度必须在 16 到 512 字符之间");
 }
@@ -54,7 +61,6 @@ const draft = dualMultipathDraftSchema.parse({
 const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
-  pureMieruProxyRef: null,
   hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: certificatePath,
@@ -64,6 +70,10 @@ const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
 
 const windowsConfig = structuredClone(bundle.fragments.windowsSidecarConfig);
 const serverConfig = structuredClone(bundle.fragments.serverConfig);
+const mieruConfig = materializeDualMieruClientConfig(draft, 24181, {
+  username: mieruUsername,
+  password: mieruPassword,
+});
 windowsConfig.outbounds[1].password = hy2AuthSecret;
 serverConfig.inbounds[0].users[0].password = hy2AuthSecret;
 
@@ -78,6 +88,7 @@ function writePrivateJson(filename: string, value: unknown) {
 
 writePrivateJson("dual-test.json", windowsConfig);
 writePrivateJson("server-gray.json", serverConfig);
+writePrivateJson("mieru-gray.json", mieruConfig);
 writePrivateJson("materialization-metadata.json", {
   purpose: "local Gray sing-box check only",
   readyForRuntime: false,
@@ -95,9 +106,10 @@ writePrivateJson("materialization-metadata.json", {
   windows: {
     ingressPort: 24180,
     privateSocksPort: 24181,
-    dedicatedMieruResolved: false,
+    dedicatedMieruOwner: "forwardx-official-sidecar",
+    clashMiDependency: false,
   },
 });
 
 console.log(`Materialized secret-bearing Gray configs outside the repository: ${outputDir}`);
-console.log("HY2 auth was not printed; readyForRuntime remains false; dedicated Mieru remains unresolved.");
+console.log("HY2 and Mieru secrets were not printed; readyForRuntime remains false.");

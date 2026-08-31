@@ -175,6 +175,23 @@ export function materializeDualClientFacts(
   }
 
   const portResult = planDualClientLoopbackPorts(draft, snapshot, freshnessInput);
+  if (portResult.draft.privateCarrierBridge.type === "forwardx-managed-mieru-sidecar") {
+    return {
+      status: "materialized-read-only" as const,
+      draft: portResult.draft,
+      diagnostics: {
+        snapshotId: snapshot.snapshotId,
+        clientTargetRef: snapshot.clientTargetRef,
+        snapshotStatus: "current" as const,
+        freshness,
+        portPlanningStatus: "planned-read-only" as const,
+        pureMieruStatus: "not-required" as const,
+        selectedPorts: portResult.diagnostics.selected,
+        blockerCodes: [] as DualClientPreflightBlockerCode[],
+      },
+      safety: portResult.safety,
+    };
+  }
   const proxyResult = resolveDualPureMieruProxy(portResult.draft, snapshot, freshnessInput);
   const blockerCodes = proxyResult.diagnostics.blockerCodes;
   return {

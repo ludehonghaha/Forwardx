@@ -32,20 +32,20 @@ ForwardX 的 Dual 聚合实验以 `WuSiYu/singbox-multipath` 为唯一 PoC 上�
 
 ### 3.2 单一 ForwardX 产品模型
 
-用户只管理一个 ForwardX Dual 聚合节点。Mieru/Mita、Hysteria2、Mihomo dedicated listener、SOCKS bridge、multipath listener 和 secret reference 都是底层组件，不是额外面板。
+用户只管理一个 ForwardX Dual 聚合节点。Mieru/Mita、Hysteria2、SOCKS bridge、multipath listener 和 secret reference 都是底层组件，不是额外面板。
 
 当前离线草稿使用 v5，并拆分：
 
 - `serverTargetDiscovery`：某一台 Dual 服务端的只读发现快照；interface、IP、gateway、现有 Mita listener 等都是服务端目标数据，不是产品 schema 常量；
 - `clientTarget`：独立的客户端绑定；正式 ForwardX Host 使用 Panel 所有的 `hosts.id`，未注册 OpenWrt 使用 `dual-client:<namespace>:<stable-key>`，不能用 IP 或 server target 代替；
 - `openClashIngressAdapter`：OpenClash 连接 ForwardX sidecar 的本地入口；
-- `privateCarrierBridge`：优先使用 Mihomo dedicated loopback listener，并固定到单一纯 Mieru proxy；
+- `privateCarrierBridge`：默认使用 ForwardX-managed official Mieru foreground sidecar；旧 Mihomo bridge 只保留兼容读取；
 - `directCarrier`：pinned artifact 的 native Hysteria2；
 - `serverRuntime`：与具体主机无关的 loopback multipath 边界和未解析 HY2 runtime 策略。
 
 generic schema 不包含 `eth0`、`eth1`、固定 IP、gateway 或 Mita 端口 literal。当前 NoBrand Dual 的已核验结果单独保存为 `NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT`；以后更换为 `ens3`、`10.x` 或不同 Mita 端口时，只注入新的 server snapshot，不修改 TypeScript schema/source code。
 
-客户端入口与 Mihomo dedicated listener 各自持有独立的 `portPlanning` discriminated union。未规划时是 `{ status: "unresolved", strategy: "auto", port: null }`；只有同时携带 `snapshotId` 与 `clientTargetRef` 的 read-only evidence 才能成为 `planned-read-only`。Pure Mieru discovery 使用相同 evidence contract。schema 会拒绝任何与当前 `clientTarget` 不一致的 client-side evidence。
+客户端入口与 Mieru sidecar SOCKS 各自持有独立的 `portPlanning` discriminated union。未规划时是 `{ status: "unresolved", strategy: "auto", port: null }`；只有同时携带 `snapshotId` 与 `clientTargetRef` 的 read-only evidence 才能成为 `planned-read-only`。schema 会拒绝任何与当前 `clientTarget` 不一致的 client-side evidence。
 
 `DualClientDiscoverySnapshot` 只包含 canonical client ref、显式时间、occupied TCP ports 与不含 secret 的 Mihomo candidate facts。`evaluateDualClientSnapshot()` 只使用调用方传入的 `referenceTime/maxAgeMs` 判定 freshness。`planDualClientLoopbackPorts()` 在集中定义的 `23180-23279` 范围内顺序选择两个不同且未占用的端口；`resolveDualPureMieruProxy()` 只接受恰好一个 private-only、无 fallback 的 concrete Mieru proxy，拒绝 group、DIRECT/REJECT、mixed listener、public fallback 与 ingress recursion。两者均为纯函数，不采集、不打开 socket、不持久化、不调用 Agent。
 
@@ -56,7 +56,7 @@ Persisted key 已升级为 `dualMultipathDraftV5`。v1、v2、portable/pinned-ho
 ### 3.3 底层运行时边界
 
 - ForwardX 是唯一管理面；底层可使用独立 singbox-multipath 进程，但不形成第二个用户面板；
-- 复用现有 OpenClash/Mihomo 内的纯 Mieru proxy，不重复部署 Mieru；现有 Mita 服务保持不变；
+- Windows Gray 由 ForwardX 管理官方 `enfein/mieru` client sidecar，不读取或修改 Clash Mi；现有 Mita 服务保持不变；
 - 配置先写临时文件、执行配置校验，再原子替换；
 - apply 失败必须保留上一份可工作的配置；
 - Agent desired-state 只在 feature gate 明确开启时下发；
@@ -117,4 +117,4 @@ Dual 必须输出专用的 sing-box/multipath 客户端配置，不得伪装成�
 
 **BLOCKED：任何 gray/prod runtime 变更。**
 
-下一步必须先解决纯 Mieru proxy 自动发现、端口占用核验、HY2 最终监听/TLS、带 `with_quic` 的 pinned artifact 与 checksum、原生 `sing-box check`、两条 carrier 到 loopback listener 的实机可达性、生命周期、健康检查和回滚；不要先改普通协议订阅或现有 ProtocolType。
+下一步必须先解决真实 Mieru client credential 注入、端口占用核验、HY2 最终监听/TLS、两条 carrier 到 loopback listener 的实机可达性、生命周期、健康检查和回滚；不要先改普通协议订阅或现有 ProtocolType。

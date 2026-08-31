@@ -18,6 +18,23 @@ import { createDefaultDualMultipathInfrastructure, type DualServerTargetDiscover
 const infrastructure = defaultDualMultipathInfrastructure();
 const clientRef = { kind: "external-openwrt" as const, targetKey: "dual-client:openwrt:test-main" };
 const evidence = { snapshotId: "snapshot-draft", clientTargetRef: clientRef };
+const legacyMihomoBridge = {
+  type: "mihomo-dedicated-listener" as const,
+  listener: {
+    kind: "socks" as const,
+    scope: "dedicated" as const,
+    listen: "127.0.0.1" as const,
+    portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 24081, evidence },
+  },
+  target: {
+    selection: "single-proxy" as const,
+    protocol: "mieru" as const,
+    discovery: { status: "verified-read-only" as const, proxyRef: "NoBrand-Private-Mieru", evidence },
+    routing: "fixed-proxy" as const,
+    fallback: "none" as const,
+    transportScope: "private-only" as const,
+  },
+};
 const draftInput = {
   version: 5 as const,
   state: "draft" as const,
@@ -34,15 +51,7 @@ const draftInput = {
     portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 24080, evidence },
   },
   privateCarrierBridge: {
-    ...infrastructure.privateCarrierBridge,
-    listener: {
-      ...infrastructure.privateCarrierBridge.listener,
-      portPlanning: { status: "planned-read-only" as const, strategy: "auto" as const, port: 24081, evidence },
-    },
-    target: {
-      ...infrastructure.privateCarrierBridge.target,
-      discovery: { status: "verified-read-only" as const, proxyRef: "NoBrand-Private-Mieru", evidence },
-    },
+    ...legacyMihomoBridge,
   },
   directCarrier: {
     ...infrastructure.directCarrier,
@@ -84,8 +93,9 @@ test("does not default or emit the rejected 127.0.0.1:1080 private endpoint", ()
   const defaults = defaultDualMultipathInfrastructure();
   const serialized = JSON.stringify(defaults);
   assert.doesNotMatch(serialized, /1080/);
-  assert.equal(defaults.privateCarrierBridge.type, "mihomo-dedicated-listener");
-  assert.equal(defaults.privateCarrierBridge.target.discovery.status, "unresolved");
+  assert.equal(defaults.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
+  assert.equal(defaults.privateCarrierBridge.runtime.clashMiDependency, false);
+  assert.equal(defaults.privateCarrierBridge.carrier.usernameSecretRef, "dual.mieru.username");
   assert.equal(defaults.privateCarrierBridge.listener.portPlanning.strategy, "auto");
   assert.equal(defaults.privateCarrierBridge.listener.portPlanning.port, null);
   assert.equal(defaults.openClashIngressAdapter.portPlanning.port, null);
@@ -302,12 +312,11 @@ test("keeps unresolved auto client ports explicit in deterministic preview", () 
   });
   const preview = compileDualMultipathPreview(unresolved);
   assert.equal(preview.clientPortPlanning.openClashIngress.status, "unresolved");
-  assert.equal(preview.clientPortPlanning.mihomoPrivateListener?.status, "unresolved");
-  assert.ok(preview.privateProxyDiscovery);
-  assert.equal(preview.privateProxyDiscovery.status, "unresolved");
+  assert.equal(preview.clientPortPlanning.privateCarrierSocks?.status, "unresolved");
+  assert.equal(preview.privateProxyDiscovery, null);
   assert.equal(preview.privateCarrierBridge.ready, false);
   assert.match(JSON.stringify(preview.clientConfig), /unresolved:auto-dual-ingress-port/);
-  assert.match(JSON.stringify(preview.mihomoPrivateListener), /unresolved:auto-private-bridge-port/);
+  assert.match(JSON.stringify(preview.mieruPrivateSidecar), /unresolved:auto-private-bridge-port/);
 });
 
 test("invalid drafts perform zero persistence writes", async () => {
@@ -358,9 +367,9 @@ test("upgrades v4 in memory and discards unbound client planning evidence", asyn
   assert.equal(loaded?.version, 5);
   assert.equal(loaded?.clientTarget.status, "unresolved");
   assert.equal(loaded?.openClashIngressAdapter.portPlanning.status, "unresolved");
-  if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+  if (loaded?.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") throw new Error("expected managed Mieru sidecar");
   assert.equal(loaded.privateCarrierBridge.listener.portPlanning.status, "unresolved");
-  assert.deepEqual(loaded.privateCarrierBridge.target.discovery, { status: "unresolved", proxyRef: null });
+  assert.equal(loaded.privateCarrierBridge.runtime.clashMiDependency, false);
   assert.deepEqual(loaded.serverTargetDiscovery, draftInput.serverTargetDiscovery);
   assert.deepEqual(loaded.directCarrier, draftInput.directCarrier);
   assert.equal(loaded.serverRuntime.directCarrierRuntime.tlsPrivateKeySecretRef, "dual.hy2.tls.private-key");
@@ -394,9 +403,9 @@ test("upgrades the portable v3 shape in memory without inventing port evidence",
   const loaded = await loadDualMultipathDraft(memory.store);
   assert.equal(loaded?.version, 5);
   assert.equal(loaded?.openClashIngressAdapter.portPlanning.status, "unresolved");
-  if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+  if (loaded?.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") throw new Error("expected managed Mieru sidecar");
   assert.equal(loaded.privateCarrierBridge.listener.portPlanning.status, "unresolved");
-  assert.deepEqual(loaded.privateCarrierBridge.target.discovery, { status: "unresolved", proxyRef: null });
+  assert.equal(loaded.privateCarrierBridge.runtime.clashMiDependency, false);
   assert.equal(loaded.clientTarget.status, "unresolved");
   assert.equal(loaded.directCarrier.authSecretRef, draftInput.directCarrier.authSecretRef);
   assert.equal(memory.calls.some((call) => call.method === "setSetting"), false);
@@ -436,8 +445,8 @@ test("upgrades the pre-cleanup v3 host literals into discovery and resets unveri
   assert.equal(loaded?.serverTargetDiscovery.status, "verified-read-only");
   assert.equal(loaded?.version, 5);
   assert.equal(loaded?.openClashIngressAdapter.portPlanning.port, null);
-  assert.equal(loaded?.privateCarrierBridge.type, "mihomo-dedicated-listener");
-  if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected migrated Mihomo bridge");
+  assert.equal(loaded?.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
+  if (loaded?.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") throw new Error("expected migrated managed Mieru sidecar");
   assert.equal(loaded.privateCarrierBridge.listener.portPlanning.port, null);
   assert.doesNotMatch(JSON.stringify(loaded), /20808|20809/);
   assert.equal(memory.calls.some((call) => call.method === "setSetting"), false);
@@ -459,9 +468,9 @@ test("upgrades v2 in memory without carrying 127.0.0.1:1080 forward", async () =
   }));
   const loaded = await loadDualMultipathDraft(memory.store);
   assert.equal(loaded?.version, 5);
-  assert.equal(loaded?.privateCarrierBridge.type, "mihomo-dedicated-listener");
-  if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
-  assert.equal(loaded.privateCarrierBridge.target.discovery.status, "unresolved");
+  assert.equal(loaded?.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
+  if (loaded?.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") throw new Error("expected managed Mieru sidecar");
+  assert.equal(loaded.privateCarrierBridge.runtime.clashMiDependency, false);
   assert.doesNotMatch(JSON.stringify(loaded?.privateCarrierBridge), /1080/);
   assert.equal(memory.calls.some((call) => call.method === "setSetting"), false);
 });
@@ -474,7 +483,7 @@ test("upgrades v1 in memory to the same fail-closed unresolved model", async () 
   const loaded = await loadDualMultipathDraft(memory.store);
   assert.equal(loaded?.version, 5);
   assert.equal(loaded?.line.listen, "127.0.0.1");
-  if (loaded?.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
-  assert.equal(loaded.privateCarrierBridge.target.discovery.status, "unresolved");
+  if (loaded?.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") throw new Error("expected managed Mieru sidecar");
+  assert.equal(loaded.privateCarrierBridge.runtime.clashMiDependency, false);
   assert.equal(memory.calls.some((call) => call.method === "setSetting"), false);
 });

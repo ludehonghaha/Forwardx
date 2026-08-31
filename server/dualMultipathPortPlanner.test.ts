@@ -36,10 +36,10 @@ test("selects two different deterministic ports and never selects occupied ports
   const first = planDualClientLoopbackPorts(draft, snapshot, freshness);
   const second = planDualClientLoopbackPorts(draft, snapshot, freshness);
   assert.deepEqual(first, second);
-  assert.deepEqual(first.diagnostics.selected, { dualIngressPort: 23181, mihomoDedicatedListenerPort: 23183 });
-  assert.notEqual(first.diagnostics.selected.dualIngressPort, first.diagnostics.selected.mihomoDedicatedListenerPort);
+  assert.deepEqual(first.diagnostics.selected, { dualIngressPort: 23181, privateCarrierSocksPort: 23183 });
+  assert.notEqual(first.diagnostics.selected.dualIngressPort, first.diagnostics.selected.privateCarrierSocksPort);
   assert.equal(snapshot.occupiedTcpPorts.includes(first.diagnostics.selected.dualIngressPort), false);
-  assert.equal(snapshot.occupiedTcpPorts.includes(first.diagnostics.selected.mihomoDedicatedListenerPort), false);
+  assert.equal(snapshot.occupiedTcpPorts.includes(first.diagnostics.selected.privateCarrierSocksPort), false);
 });
 
 test("keeps valid planned ports stable for the same client when facts are still safe", () => {
@@ -91,8 +91,7 @@ test("does not modify server discovery, proxy discovery, HY2 or secret reference
   assert.deepEqual(draft, draftBefore);
   assert.deepEqual(snapshot, snapshotBefore);
   assert.deepEqual(result.draft.serverTargetDiscovery, draft.serverTargetDiscovery);
-  if (result.draft.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
-  assert.deepEqual(result.draft.privateCarrierBridge.target.discovery, draft.privateCarrierBridge.target.discovery);
+  assert.equal(result.draft.privateCarrierBridge.type, draft.privateCarrierBridge.type);
   assert.deepEqual(result.draft.directCarrier, draft.directCarrier);
   assert.deepEqual(result.draft.serverRuntime, draft.serverRuntime);
   assert.equal(result.draft.directCarrier.authSecretRef, "dual.hy2.auth");

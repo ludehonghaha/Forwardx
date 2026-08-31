@@ -51,7 +51,7 @@ jobs:
           node --import tsx --test server/agentCrypto.test.ts
           node --import tsx --test server/userTrafficHistory.test.ts
           pnpm test:protocol-access
-          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualMultipathPortPlanner.test.ts server/dualMultipathClientDiscovery.test.ts server/dualMultipathMobileGrayBundle.test.ts server/dualMultipathGrayRuntimeBundle.test.ts client/src/lib/dualMultipathForm.test.ts
+          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualMultipathPortPlanner.test.ts server/dualMultipathClientDiscovery.test.ts server/dualMultipathMobileGrayBundle.test.ts server/dualMultipathGrayRuntimeBundle.test.ts server/dualMultipathMieruSidecar.test.ts server/dualMultipathWindowsLauncher.test.ts client/src/lib/dualMultipathForm.test.ts
           node --import tsx --test server/protocolMieruCredentials.test.ts server/protocolMieruRuntimePlan.test.ts server/agentProtocolTrafficAccounting.test.ts server/agentProtocolTrafficRoute.test.ts server/repositories/protocolUserTrafficRepository.test.ts
           node --import tsx --test server/protocolVlessCredentials.test.ts server/protocolVlessIsolation.test.ts
           pnpm test:server
@@ -121,14 +121,36 @@ jobs:
       - name: Build pinned Windows amd64 sidecar
         run: bash scripts/build-dual-windows-sidecar.sh "$RUNNER_TEMP/dual-windows-gray"
 
+      - name: Parse Windows Gray launcher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:RUNNER_TEMP/dual-windows-gray/run-forwardx-dual-gray.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
       - name: Upload Windows amd64 sidecar
         uses: actions/upload-artifact@v4
         with:
-          name: forwardx-dual-singbox-multipath-windows-amd64
+          name: forwardx-dual-windows-amd64
           path: |
             ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe
             ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe.sha256
+            ${{ runner.temp }}/dual-windows-gray/mieru-windows-amd64.exe
+            ${{ runner.temp }}/dual-windows-gray/mieru-windows-amd64.exe.sha256
+            ${{ runner.temp }}/dual-windows-gray/mieru-3.36.0-source.tar.gz
+            ${{ runner.temp }}/dual-windows-gray/mieru-3.36.0-source.tar.gz.sha256
+            ${{ runner.temp }}/dual-windows-gray/MIERU-LICENSE-GPL-3.0.txt
             ${{ runner.temp }}/dual-windows-gray/build-metadata.json
+            ${{ runner.temp }}/dual-windows-gray/SHA256SUMS.txt
+            ${{ runner.temp }}/dual-windows-gray/run-forwardx-dual-gray.ps1
             ${{ runner.temp }}/dual-windows-gray/run-dual-test.cmd
             ${{ runner.temp }}/dual-windows-gray/README-WINDOWS-GRAY.txt
           if-no-files-found: error
@@ -187,6 +209,37 @@ jobs:
           "$BIN" version
           "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/dual-test.json"
           "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/server-gray.json"
+
+      - name: Validate official Mieru config and dedicated SOCKS startup
+        run: |
+          MIERU_ARCHIVE="$RUNNER_TEMP/mieru_3.36.0_linux_amd64.tar.gz"
+          MIERU_DIR="$RUNNER_TEMP/mieru-linux-amd64"
+          curl -fsSL -o "$MIERU_ARCHIVE" \
+            https://github.com/enfein/mieru/releases/download/v3.36.0/mieru_3.36.0_linux_amd64.tar.gz
+          echo "b3f8b32a8b5728c01f31e33ff7a71b3b33f3fd8e1341684fcb98d5ecebb7db7a  $MIERU_ARCHIVE" | sha256sum -c -
+          mkdir -p "$MIERU_DIR"
+          tar -xzf "$MIERU_ARCHIVE" -C "$MIERU_DIR"
+          echo "acbf1b6ea9d48a6f88af9397fa9f1897cdb0f5f6ec456608b55307d7f1dcbdfc  $MIERU_DIR/mieru" | sha256sum -c -
+          "$MIERU_DIR/mieru" version
+          MIERU_CONFIG_JSON_FILE="$RUNNER_TEMP/dual-gray-fixtures/mieru-test.json" \
+            "$MIERU_DIR/mieru" run >"$RUNNER_TEMP/mieru-gray.log" 2>&1 &
+          MIERU_PID=$!
+          cleanup() { kill "$MIERU_PID" 2>/dev/null || true; wait "$MIERU_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for attempt in $(seq 1 100); do
+            if ! kill -0 "$MIERU_PID" 2>/dev/null; then
+              echo "Official Mieru exited before 127.0.0.1:24181 became ready" >&2
+              exit 1
+            fi
+            if (exec 3<>/dev/tcp/127.0.0.1/24181) 2>/dev/null; then
+              exec 3>&-
+              exec 3<&-
+              exit 0
+            fi
+            sleep 0.1
+          done
+          echo "Timed out waiting for official Mieru SOCKS 127.0.0.1:24181" >&2
+          exit 1
 
       - name: Upload Linux amd64 Gray artifact
         uses: actions/upload-artifact@v4

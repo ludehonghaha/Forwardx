@@ -43,11 +43,11 @@ The existing Mieru ecosystem uses:
 
 Mieru clients can expose a local SOCKS5 proxy, but the verified iStoreOS runtime does not run a standalone `mieru` process and has no `127.0.0.1:1080` listener. The active private proxy is managed inside OpenClash/Mihomo. Therefore the old `127.0.0.1:1080` draft value is not a runtime fact and must not be reused.
 
-Do not assume Mieru is a native sing-box outbound. The preferred adapter is now:
+Do not assume Mieru is a native sing-box outbound. The Windows Gray adapter is now:
 
-`singbox-multipath -> SOCKS5 child -> Mihomo dedicated loopback listener -> one pure Mieru proxy -> existing Mita private carrier`
+`singbox-multipath -> SOCKS5 child -> ForwardX-managed official enfein/mieru client -> existing Mita private carrier`
 
-The dedicated listener must bypass normal rules, must not be a generic mixed listener, must not recurse into the ForwardX Dual ingress, and must not target a group containing DIRECT or public fallback.
+The Mieru client uses a per-run JSON through `MIERU_CONFIG_JSON_FILE` and foreground `mieru run`; it must not read or write Clash Mi or the user's global Mieru config.
 
 ## Verified target topology (sanitized)
 
@@ -71,9 +71,9 @@ Server side:
 
 Client / OpenWrt side:
 
-1. Preserve the existing OpenClash/Mihomo process and its Mieru proxy.
-2. Run pinned `singbox-multipath` as a ForwardX-managed sidecar.
-3. Configure child outbound 0 as SOCKS5 -> dedicated Mihomo listener -> one pure Mieru proxy.
+1. Leave the existing Clash Mi process untouched.
+2. Run pinned `singbox-multipath` and official pinned `enfein/mieru` as ForwardX-managed children.
+3. Configure child outbound 0 as SOCKS5 -> dedicated official Mieru sidecar on loopback.
 4. Configure child outbound 1 as native Hysteria2 -> Dual public carrier.
 5. Configure `multipath` outbound with child order `[private, direct]`, preferred leg 0, and the safe server target represented by the remote loopback multipath listener through those authenticated carriers.
 6. Expose one local SOCKS listener from the multipath sidecar to OpenClash/Mihomo.
@@ -102,6 +102,15 @@ Verified Dual server topology:
 - no installed `sing-box`, `hysteria`, or standalone `mieru` binary was found.
 
 The pinned source contains native Hysteria2 inbound/outbound support. Its normal release build tags include `with_quic`, so one correctly built and checksum-pinned singbox-multipath artifact can host both multipath and Hysteria2. Artifact provenance, architecture-specific checksums, final HY2 listener fields, secret injection, and runtime lifecycle are still unresolved.
+
+## Windows official Mieru sidecar update
+
+- official upstream: `enfein/mieru` `v3.36.0`
+- commit: `155ebbd60f86e472586a60d7ffe58ec8f8682cb1`
+- Windows amd64 ZIP SHA256: `f0136fa3bbfb1489a0a41c1ef5c3aa58ecf5b4793dc51d5a813cf7f5803017d1`
+- `24181` is owned by the ForwardX-managed Mieru child and no longer depends on Clash Mi.
+- real client username/password remain unresolved live secrets; they cannot be recovered from a Mita password checksum.
+- `readyToDeploy=false`; no server deployment was performed.
 
 ## Codex next task
 
@@ -185,15 +194,15 @@ The current offline model uses `dualMultipathDraftV5` and separates:
 - `serverTargetDiscovery`: server-only verified facts such as interfaces, addresses, gateway, and the existing Mita listener;
 - `clientTarget`: a separate canonical client binding, either a Panel-owned `hosts.id` or a namespaced external OpenWrt stable key;
 - `openClashIngressAdapter`: ForwardX Dual sidecar's loopback SOCKS ingress for OpenClash;
-- `privateCarrierBridge`: preferred `mihomo-dedicated-listener`, with `external-local-socks5` available only when a real endpoint has been discovered;
+- `privateCarrierBridge`: preferred `forwardx-managed-mieru-sidecar`; legacy `mihomo-dedicated-listener` remains parseable only for compatibility, and `external-local-socks5` remains discovery-gated;
 - `directCarrier`: native Hysteria2 endpoint and references, unresolved until final runtime facts exist;
 - `serverRuntime`: target-independent loopback multipath and unresolved native HY2 runtime policy.
 
 The generic Zod schema has no `eth0`/`eth1`, fixed address, gateway, or Mita-port literals. The verified NoBrand values live in `NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT`. A second Dual server only needs another server snapshot. A server target object cannot be used as a client identity.
 
-Both client loopback listeners retain independent `portPlanning`, while every planned port and verified proxy now stores evidence containing both `snapshotId` and the canonical `clientTargetRef`. A v5 schema rejects evidence from another client. Changing the bound client therefore invalidates old evidence rather than reusing a coincidentally free port across devices.
+Both client loopback listeners retain independent `portPlanning`, while every planned port stores evidence containing both `snapshotId` and the canonical `clientTargetRef`. A v5 schema rejects evidence from another client. Changing the bound client therefore invalidates old evidence rather than reusing a coincidentally free port across devices.
 
-`DualClientDiscoverySnapshot` is the shared input-only contract for occupied TCP ports and minimal Mihomo candidate facts. It cannot contain passwords, tokens, keys, subscriptions, or raw config. Freshness is evaluated deterministically from explicit `referenceTime/maxAgeMs`; stale or future snapshots cannot create evidence. `planDualClientLoopbackPorts()` performs the deterministic ascending port scan. `resolveDualPureMieruProxy()` accepts exactly one concrete private-only Mieru candidate and reports zero as unresolved or more than one as ambiguous. Groups, builtins, mixed listeners, public/DIRECT fallback, and ingress recursion are rejected.
+`DualClientDiscoverySnapshot` remains the shared input-only contract for occupied TCP ports. Its minimal Mihomo candidate facts are retained only for legacy draft validation and cannot contain passwords, tokens, keys, subscriptions, or raw config. Freshness is evaluated deterministically from explicit `referenceTime/maxAgeMs`; stale or future snapshots cannot create evidence. The ForwardX-managed Mieru bridge needs only port planning and never consumes Clash Mi candidates.
 
 The persisted setting key is now `dualMultipathDraftV5`. V1, v2, both v3 shapes, and v4 are upgraded only in memory. Because v4 had no canonical client binding, its old client ports and proxy discovery are deliberately downgraded to unresolved. Server discovery, HY2 fields, and secret references are preserved. No migration write occurs until an administrator explicitly saves v5.
 

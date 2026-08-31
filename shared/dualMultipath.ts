@@ -448,7 +448,33 @@ const externalLocalSocks5BridgeSchema = z.object({
   credentials: socksCredentialsSchema.optional(),
 }).strict();
 
+const forwardxManagedMieruSidecarBridgeSchema = z.object({
+  type: z.literal("forwardx-managed-mieru-sidecar"),
+  listener: z.object({
+    kind: z.literal("socks"),
+    scope: z.literal("dedicated"),
+    listen: dualLoopbackSchema,
+    portPlanning: dualAutoPortPlanningSchema,
+  }).strict(),
+  carrier: z.object({
+    protocol: z.literal("mieru"),
+    transport: z.literal("TCP"),
+    serverSource: z.literal("discovered-private-side"),
+    portSource: z.literal("existing-mita-listener"),
+    usernameSecretRef: dualSecretReferenceSchema,
+    passwordSecretRef: dualSecretReferenceSchema,
+  }).strict(),
+  runtime: z.object({
+    owner: z.literal("forwardx"),
+    mode: z.literal("foreground-child"),
+    configScope: z.literal("per-run-json"),
+    globalConfigWrite: z.literal(false),
+    clashMiDependency: z.literal(false),
+  }).strict(),
+}).strict();
+
 const privateCarrierBridgeSchema = z.union([
+  forwardxManagedMieruSidecarBridgeSchema,
   mihomoDedicatedListenerBridgeSchema,
   externalLocalSocks5BridgeSchema,
 ]);
@@ -494,7 +520,7 @@ export const dualMultipathDraftSchema = z.object({
   if (ingressPlanning.status === "planned-read-only") {
     evidenceChecks.push({ path: ["openClashIngressAdapter", "portPlanning", "evidence"], evidence: ingressPlanning.evidence });
   }
-  if (bridge.type === "mihomo-dedicated-listener") {
+  if (bridge.type === "mihomo-dedicated-listener" || bridge.type === "forwardx-managed-mieru-sidecar") {
     const privatePlanning = bridge.listener.portPlanning;
     if (privatePlanning.port !== null && ingressPlanning.port !== null && privatePlanning.port === ingressPlanning.port) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "listener", "portPlanning"], message: "private listener 与 Dual ingress 不能使用同一端口" });
@@ -502,7 +528,7 @@ export const dualMultipathDraftSchema = z.object({
     if (privatePlanning.status === "planned-read-only") {
       evidenceChecks.push({ path: ["privateCarrierBridge", "listener", "portPlanning", "evidence"], evidence: privatePlanning.evidence });
     }
-    if (bridge.target.discovery.status === "verified-read-only") {
+    if (bridge.type === "mihomo-dedicated-listener" && bridge.target.discovery.status === "verified-read-only") {
       evidenceChecks.push({ path: ["privateCarrierBridge", "target", "discovery", "evidence"], evidence: bridge.target.discovery.evidence });
       if (bridge.target.discovery.proxyRef === draft.openClashIngressAdapter.tag) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "target", "discovery", "proxyRef"], message: "private bridge 不允许递归回 ForwardX Dual ingress" });
@@ -549,8 +575,12 @@ export type DualMihomoDedicatedListenerBridge = Extract<
   DualMultipathDraftV5["privateCarrierBridge"],
   { type: "mihomo-dedicated-listener" }
 >;
+export type DualForwardxManagedMieruSidecarBridge = Extract<
+  DualMultipathDraftV5["privateCarrierBridge"],
+  { type: "forwardx-managed-mieru-sidecar" }
+>;
 export type DefaultDualMultipathInfrastructureState = Omit<DualMultipathInfrastructureState, "privateCarrierBridge"> & {
-  privateCarrierBridge: DualMihomoDedicatedListenerBridge;
+  privateCarrierBridge: DualForwardxManagedMieruSidecarBridge;
 };
 
 export const NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT = {
@@ -618,20 +648,27 @@ export function createDefaultDualMultipathInfrastructure(
       portPlanning: { status: "unresolved", strategy: "auto", port: null },
     },
     privateCarrierBridge: {
-      type: "mihomo-dedicated-listener",
+      type: "forwardx-managed-mieru-sidecar",
       listener: {
         kind: "socks",
         scope: "dedicated",
         listen: "127.0.0.1",
         portPlanning: { status: "unresolved", strategy: "auto", port: null },
       },
-      target: {
-        selection: "single-proxy",
+      carrier: {
         protocol: "mieru",
-        discovery: { status: "unresolved", proxyRef: null },
-        routing: "fixed-proxy",
-        fallback: "none",
-        transportScope: "private-only",
+        transport: "TCP",
+        serverSource: "discovered-private-side",
+        portSource: "existing-mita-listener",
+        usernameSecretRef: "dual.mieru.username",
+        passwordSecretRef: "dual.mieru.password",
+      },
+      runtime: {
+        owner: "forwardx",
+        mode: "foreground-child",
+        configScope: "per-run-json",
+        globalConfigWrite: false,
+        clashMiDependency: false,
       },
     },
     directCarrier: {

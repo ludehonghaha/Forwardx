@@ -30,7 +30,6 @@ function grayDraft() {
 const runtimeInput = {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
-  pureMieruProxyRef: null,
   hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: "/tmp/forwardx-dual-gray.crt",
@@ -54,18 +53,20 @@ test("builds Windows private SOCKS + native HY2 + multipath without pretending s
   assert.doesNotMatch(JSON.stringify(config.outbounds), /"type":"mieru"/);
 });
 
-test("models a dedicated Mieru-capable Mihomo listener only when one concrete proxy is known", () => {
-  const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), {
-    ...runtimeInput,
-    pureMieruProxyRef: "Pure-Mieru",
-  });
-  const fragment = bundle.fragments.windowsMihomoPrivateListener;
-  assert.equal(fragment.listeners[0].listen, "127.0.0.1");
-  assert.equal(fragment.listeners[0].port, 24181);
-  assert.equal(fragment.listeners[0].proxy, "Pure-Mieru");
-  assert.equal(fragment.requirement.proxyProtocol, "mieru");
-  assert.equal(fragment.requirement.singleConcreteProxyOnly, true);
-  assert.equal(fragment.requirement.directFallbackAllowed, false);
+test("models an official ForwardX-managed Mieru client with a dedicated loopback SOCKS listener", () => {
+  const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), runtimeInput);
+  const config = bundle.fragments.windowsMieruClientConfig;
+  assert.equal(config.socks5Port, 24181);
+  assert.equal(config.socks5ListenLAN, false);
+  assert.equal(config.rpcPort, 0);
+  assert.equal(config.profiles[0].servers[0].ipAddress, "172.16.4.114");
+  assert.equal(config.profiles[0].servers[0].portBindings[0].port, 11464);
+  assert.equal(config.profiles[0].servers[0].portBindings[0].protocol, "TCP");
+  assert.match(config.profiles[0].user.name, /<secret:dual\.mieru\.username>/);
+  assert.match(config.profiles[0].user.password, /<secret:dual\.mieru\.password>/);
+  assert.equal(bundle.topology.privateLeg.clientEngine, "forwardx-managed-official-mieru");
+  assert.equal(bundle.safety.clashMiRead, false);
+  assert.equal(bundle.safety.clashMiMutation, false);
 });
 
 test("server Gray binds HY2 only to discovered public address while multipath remains loopback-only", () => {
@@ -95,11 +96,10 @@ test("preserves existing Mita and never mutates the source draft", () => {
   assert.equal(bundle.safety.routeMutation, false);
 });
 
-test("keeps port 24181 blocked when the actual Clash Mi pure Mieru proxy is unresolved", () => {
+test("keeps real Mieru client credentials as the live blocker", () => {
   const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), runtimeInput);
-  assert.equal(bundle.fragments.windowsMihomoPrivateListener.listeners[0].port, 24181);
-  assert.match(bundle.fragments.windowsMihomoPrivateListener.listeners[0].proxy, /unresolved:pure-mieru/);
-  assert.ok(bundle.blockers.some((item) => item.includes("唯一纯 Mieru proxy")));
+  assert.equal(bundle.fragments.windowsMieruClientConfig.socks5Port, 24181);
+  assert.ok(bundle.blockers.some((item) => item.includes("真实 Mieru client username/password")));
 });
 
 test("uses secret references only and keeps self-signed TLS explicitly Gray-only", () => {
@@ -115,7 +115,7 @@ test("uses secret references only and keeps self-signed TLS explicitly Gray-only
   assert.equal(bundle.readyForRuntime, false);
 });
 
-test("rejects local port collision, Mita port reuse, multipath port reuse and Dual recursion", () => {
+test("rejects local port collision, Mita port reuse and multipath port reuse", () => {
   assert.throws(() => buildDualMultipathGrayRuntimeBundle(grayDraft(), {
     ...runtimeInput,
     windowsPrivateSocksPort: runtimeInput.windowsSidecarIngressPort,
@@ -131,10 +131,6 @@ test("rejects local port collision, Mita port reuse, multipath port reuse and Du
     hy2Port: 39000,
   }), /multipath loopback/);
 
-  assert.throws(() => buildDualMultipathGrayRuntimeBundle(grayDraft(), {
-    ...runtimeInput,
-    pureMieruProxyRef: grayDraft().openClashIngressAdapter.tag,
-  }), /不允许递归/);
 });
 
 test("pins Windows and Linux Gray artifacts to the same upstream protocol generation", () => {

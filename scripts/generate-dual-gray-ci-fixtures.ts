@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { dualMultipathDraftSchema } from "../shared/dualMultipath";
 import { defaultDualMultipathInfrastructure } from "../server/dualMultipathControlPlane";
 import { buildDualMultipathGrayRuntimeBundle } from "../server/dualMultipathGrayRuntimeBundle";
+import { materializeDualMieruClientConfig } from "../server/dualMultipathMieruSidecar";
 
 const [outputArg, certificateArg, keyArg] = process.argv.slice(2);
 if (!outputArg || !certificateArg || !keyArg) {
@@ -34,14 +35,22 @@ const draft = dualMultipathDraftSchema.parse({
 const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
-  pureMieruProxyRef: null,
   hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: certificatePath,
   tlsPrivateKeyPath: keyPath,
   tlsMode: "self-signed-gray",
 });
+const mieruConfig = materializeDualMieruClientConfig(draft, 24181, {
+  username: "forwardx-gray-test-user",
+  password: "forwardx-gray-test-password",
+});
 
+writeFileSync(
+  resolve(outputDir, "mieru-test.json"),
+  `${JSON.stringify(mieruConfig, null, 2)}\n`,
+  "utf8",
+);
 writeFileSync(
   resolve(outputDir, "dual-test.json"),
   `${JSON.stringify(bundle.fragments.windowsSidecarConfig, null, 2)}\n`,
@@ -60,6 +69,7 @@ writeFileSync(
     upstreamCommit: bundle.artifacts.server.upstream.commit,
     tlsMode: bundle.safety.tlsMode,
     containsRealSecrets: false,
+    mieruCredentials: "synthetic-ci-only",
   }, null, 2)}\n`,
   "utf8",
 );

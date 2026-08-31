@@ -28,7 +28,7 @@ test("builds a deterministic fail-closed v6 dry-run plan", () => {
   assert.equal(first.readyToDeploy, false);
   assert.equal(first.listener.listen, "127.0.0.1");
   assert.equal(first.listener.port, 39000);
-  assert.equal(first.fragments.mihomoPrivateListener?.listeners[0].listen, "127.0.0.1");
+  assert.equal(first.fragments.mieruPrivateSidecar?.listener.listen, "127.0.0.1");
   assert.equal(first.fragments.clientConfig.outbounds.length, 3);
 });
 
@@ -37,10 +37,10 @@ test("keeps unresolved private and HY2 runtimes as explicit blockers", () => {
   const text = plan.blockers.join("\n");
   assert.match(text, /secret resolver/);
   assert.match(text, /Dual ingress.*availability snapshot/);
-  assert.match(text, /Mihomo dedicated listener.*availability snapshot/);
-  assert.match(text, /单一纯 Mieru proxy/);
+  assert.match(text, /private carrier SOCKS.*availability snapshot/);
+  assert.match(text, /真实 Mieru client username\/password/);
   assert.match(text, /Hysteria2 端口/);
-  assert.match(text, /Mihomo dedicated listener/);
+  assert.match(text, /Mieru/);
   assert.match(text, /with_quic/);
   assert.match(text, /不提供认证或加密/);
   assert.match(text, /sing-box check/);
@@ -56,8 +56,7 @@ test("never treats unresolved auto client ports as deploy-ready", () => {
   assert.match(plan.blockers.join("\n"), /availability snapshot/);
 });
 
-test("reports proxy discovery and dedicated listener port blockers independently", () => {
-  if (validDraft.privateCarrierBridge.type !== "mihomo-dedicated-listener") throw new Error("expected Mihomo bridge");
+test("reports ForwardX-managed Mieru listener port independently", () => {
   const portOnly = buildDualMultipathDeploymentPlan({
     ...validDraft,
     privateCarrierBridge: {
@@ -68,23 +67,9 @@ test("reports proxy discovery and dedicated listener port blockers independently
       },
     },
   });
-  assert.doesNotMatch(portOnly.blockers.join("\n"), /Mihomo dedicated listener loopback 端口/);
-  assert.match(portOnly.blockers.join("\n"), /单一纯 Mieru proxy/);
-
-  const proxyOnly = buildDualMultipathDeploymentPlan({
-    ...validDraft,
-    privateCarrierBridge: {
-      ...validDraft.privateCarrierBridge,
-      target: {
-        ...validDraft.privateCarrierBridge.target,
-        discovery: { status: "verified-read-only", proxyRef: "Pure-Mieru", evidence },
-      },
-    },
-  });
-  assert.match(proxyOnly.blockers.join("\n"), /Mihomo dedicated listener loopback 端口/);
-  assert.doesNotMatch(proxyOnly.blockers.join("\n"), /单一纯 Mieru proxy/);
+  assert.doesNotMatch(portOnly.blockers.join("\n"), /private carrier SOCKS loopback 端口/);
+  assert.match(portOnly.blockers.join("\n"), /真实 Mieru client username\/password/);
   assert.equal(portOnly.readyToDeploy, false);
-  assert.equal(proxyOnly.readyToDeploy, false);
 });
 
 test("reports client target, missing, stale, mismatch and ambiguous snapshot blockers precisely", () => {
@@ -100,10 +85,11 @@ test("reports client target, missing, stale, mismatch and ambiguous snapshot blo
   assert.match(ambiguous.blockers.join("\n"), /存在多个候选/);
 });
 
-test("models OpenClash ingress, dedicated Mihomo bridge and native HY2 in one ForwardX plan", () => {
+test("models ForwardX-managed official Mieru sidecar and native HY2 in one plan", () => {
   const plan = buildDualMultipathDeploymentPlan(validDraft);
   assert.equal(plan.clientCompatibility.recommendedOpenClashAdapter, "local-socks-sidecar");
-  assert.equal(plan.carrierStrategy.privateLeg.preferredBridge, "mihomo-dedicated-listener");
+  assert.equal(plan.carrierStrategy.privateLeg.preferredBridge, "forwardx-managed-mieru-sidecar");
+  assert.equal(plan.fragments.mieruPrivateSidecar?.clashMiDependency, false);
   assert.equal(plan.carrierStrategy.directLeg.nativeHysteria2InPinnedArtifact, true);
   assert.equal(plan.carrierStrategy.directLeg.requiredBuildTag, "with_quic");
   assert.equal(plan.carrierStrategy.directLeg.separateHysteriaBinaryRequired, false);

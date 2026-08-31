@@ -121,10 +121,12 @@ export default function DualMultipathPage() {
       && privateBridge.listener.portPlanning.status === "planned-read-only"
       ? "已就绪"
       : "等待自动发现 / 规划"
-    : privateBridge.endpointDiscovery.status === "verified-read-only" ? "已就绪" : "等待发现 endpoint";
+    : privateBridge.type === "forwardx-managed-mieru-sidecar"
+      ? privateBridge.listener.portPlanning.status === "planned-read-only" ? "等待凭据注入" : "等待自动规划"
+      : privateBridge.endpointDiscovery.status === "verified-read-only" ? "已就绪" : "等待发现 endpoint";
   const directStatus = form.infrastructure.directCarrier?.status === "resolved" ? "已就绪" : "运行时未配置";
   const ingressPort = form.infrastructure.openClashIngressAdapter.portPlanning.port;
-  const privatePort = privateBridge.type === "mihomo-dedicated-listener" ? privateBridge.listener.portPlanning.port : null;
+  const privatePort = privateBridge.type === "external-local-socks5" ? null : privateBridge.listener.portPlanning.port;
   const privateProxy = privateBridge.type === "mihomo-dedicated-listener" ? privateBridge.target.discovery.proxyRef : null;
   const serverTarget = form.infrastructure.serverTargetDiscovery;
   const clientTarget = form.infrastructure.clientTarget;
@@ -173,7 +175,7 @@ export default function DualMultipathPage() {
               <Label>名称</Label>
               <Input value={form.name} onChange={(event) => patchForm({ name: event.target.value })} />
             </div>
-            <StatusRow label="专线" protocol="Mieru" status={privateStatus} detail="首选路径；ForwardX 将通过 Mihomo dedicated listener 固定到单一纯 Mieru proxy。" />
+            <StatusRow label="专线" protocol="Mieru" status={privateStatus} detail="首选路径；ForwardX 独立管理官方 Mieru client sidecar，不依赖 Clash Mi。" />
             <StatusRow label="直连" protocol="Hysteria2" status={directStatus} detail="达到阈值后追加；后续固定走 Dual 公网侧，不改变系统默认路由。" />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2"><Label>专线带宽（Mbps）</Label><Input type="number" min={1} value={form.privateBandwidthMbps} onChange={(event) => patchForm({ privateBandwidthMbps: event.target.value })} /></div>
@@ -198,8 +200,8 @@ export default function DualMultipathPage() {
               <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">客户端</p><p className="mt-1 break-all text-sm">{clientTargetLabel}</p></div>
               <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Client snapshot</p><p className="mt-1 break-all text-sm">{clientSnapshotId ?? "未获取"}</p></div>
               <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Dual ingress port</p><p className="mt-1 text-sm">{ingressPort ?? "等待自动规划"}</p></div>
-              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Mieru bridge port</p><p className="mt-1 text-sm">{privatePort ?? "等待自动规划"}</p></div>
-              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Mieru proxy</p><p className="mt-1 text-sm">{privateProxy ?? "等待发现"}</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Mieru sidecar SOCKS</p><p className="mt-1 text-sm">{privatePort ?? "等待自动规划"}</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Private carrier owner</p><p className="mt-1 text-sm">{privateBridge.type === "forwardx-managed-mieru-sidecar" ? "ForwardX official Mieru" : privateProxy ?? "外部 bridge"}</p></div>
             </div>
             <div className="flex flex-wrap gap-3">
               <Button type="button" variant="outline" onClick={() => submit("preview")} disabled={busy}>{previewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}生成诊断预览</Button>
@@ -213,7 +215,7 @@ export default function DualMultipathPage() {
               </div>
             ) : null}
             <div className="grid gap-4 xl:grid-cols-3">
-              <PreviewBlock title="Mihomo dedicated listener" value={previewData?.mihomoPrivateListener} />
+              <PreviewBlock title="Official Mieru sidecar" value={previewData?.mieruPrivateSidecar ?? previewData?.mihomoPrivateListener} />
               <PreviewBlock title="Client sidecar" value={previewData?.clientConfig} />
               <PreviewBlock title="Server runtime boundary" value={previewData?.serverPreview} />
             </div>

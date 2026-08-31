@@ -51,8 +51,8 @@ export function planDualClientLoopbackPorts(
   const snapshot = dualPortAvailabilitySnapshotSchema.parse(snapshotInput);
   const clientTargetRef = assertDualClientSnapshotTarget(draft.clientTarget, snapshot.clientTargetRef);
   const freshness = assertFreshDualClientSnapshot(snapshot, freshnessInput);
-  if (draft.privateCarrierBridge.type !== "mihomo-dedicated-listener") {
-    throw new Error("Dual client loopback auto-port 规划只适用于 Mihomo dedicated listener bridge");
+  if (draft.privateCarrierBridge.type === "external-local-socks5") {
+    throw new Error("Dual client loopback auto-port 规划不适用于 external local SOCKS5 bridge");
   }
 
   const unavailable = new Set(snapshot.occupiedTcpPorts);
@@ -93,7 +93,7 @@ export function planDualClientLoopbackPorts(
       observedAt: snapshot.observedAt,
       freshness,
       candidateRange: DUAL_CLIENT_LOOPBACK_AUTO_PORT_RANGE,
-      selected: { dualIngressPort: ingressPort, mihomoDedicatedListenerPort: privateBridgePort },
+      selected: { dualIngressPort: ingressPort, privateCarrierSocksPort: privateBridgePort },
       deterministic: true as const,
     },
     safety: {

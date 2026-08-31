@@ -165,7 +165,7 @@ function redactedSecretReference(reference: string) {
 }
 
 function privateBridgeEndpoint(bridge: DualMultipathDraft["privateCarrierBridge"]) {
-  if (bridge.type === "mihomo-dedicated-listener") {
+  if (bridge.type === "mihomo-dedicated-listener" || bridge.type === "forwardx-managed-mieru-sidecar") {
     return { server: bridge.listener.listen, server_port: bridge.listener.portPlanning.port ?? UNRESOLVED_AUTO_PRIVATE_PORT };
   }
   if (bridge.endpointDiscovery.status === "verified-read-only") {
@@ -182,6 +182,14 @@ function privateBridgeReadiness(bridge: DualMultipathDraft["privateCarrierBridge
       listenerPortPlanning: bridge.listener.portPlanning.status,
       proxyDiscovery: bridge.target.discovery.status,
       ready: listenerPortPlanned && proxyDiscovered,
+    };
+  }
+  if (bridge.type === "forwardx-managed-mieru-sidecar") {
+    const listenerPortPlanned = bridge.listener.portPlanning.status === "planned-read-only";
+    return {
+      listenerPortPlanning: bridge.listener.portPlanning.status,
+      credentials: "secret-references" as const,
+      ready: listenerPortPlanned,
     };
   }
   const endpointDiscovered = bridge.endpointDiscovery.status === "verified-read-only";
@@ -263,6 +271,27 @@ export function compileDualMultipathPreview(input: unknown) {
       directOrPublicFallbackAllowed: false as const,
     },
   } : null;
+  const mieruPrivateSidecar = privateBridge.type === "forwardx-managed-mieru-sidecar" ? {
+    status: bridgeReadiness.ready ? "ready" as const : "blocked" as const,
+    owner: privateBridge.runtime.owner,
+    foreground: privateBridge.runtime.mode === "foreground-child",
+    configScope: privateBridge.runtime.configScope,
+    globalConfigWrite: privateBridge.runtime.globalConfigWrite,
+    clashMiDependency: privateBridge.runtime.clashMiDependency,
+    listener: {
+      type: privateBridge.listener.kind,
+      listen: privateBridge.listener.listen,
+      port: privateBridge.listener.portPlanning.port ?? UNRESOLVED_AUTO_PRIVATE_PORT,
+    },
+    carrier: {
+      protocol: privateBridge.carrier.protocol,
+      transport: privateBridge.carrier.transport,
+      serverSource: privateBridge.carrier.serverSource,
+      portSource: privateBridge.carrier.portSource,
+      username: redactedSecretReference(privateBridge.carrier.usernameSecretRef),
+      password: redactedSecretReference(privateBridge.carrier.passwordSecretRef),
+    },
+  } : null;
   const serverPreview = {
     multipathConfig: { inbounds: [inbound] },
     verifiedTopology: topologyPreview(discovery),
@@ -304,6 +333,9 @@ export function compileDualMultipathPreview(input: unknown) {
     clientTarget: draft.clientTarget,
     clientPortPlanning: {
       openClashIngress: draft.openClashIngressAdapter.portPlanning,
+      privateCarrierSocks: privateBridge.type === "external-local-socks5"
+        ? null
+        : privateBridge.listener.portPlanning,
       mihomoPrivateListener: privateBridge.type === "mihomo-dedicated-listener"
         ? privateBridge.listener.portPlanning
         : null,
@@ -322,6 +354,7 @@ export function compileDualMultipathPreview(input: unknown) {
       facts: bridgeReadiness,
     },
     mihomoPrivateListener,
+    mieruPrivateSidecar,
     clientConfig,
     serverPreview,
     secretHandling: { acceptedInput: "references-only" as const, resolved: false as const, previewValues: "redacted-placeholders" as const },
@@ -356,10 +389,6 @@ function upgradeV2Draft(legacy: z.output<typeof legacyV2DraftSchema>) {
   });
 }
 
-function unresolvedLegacyMihomoProxyDiscovery() {
-  return { status: "unresolved" as const, proxyRef: null };
-}
-
 function upgradePortableV3Draft(legacy: DualMultipathDraftV3) {
   const infrastructure = createDefaultDualMultipathInfrastructure(legacy.targetDiscovery);
   const privateCarrierBridge = legacy.privateCarrierBridge.type === "mihomo-dedicated-listener"
@@ -368,10 +397,6 @@ function upgradePortableV3Draft(legacy: DualMultipathDraftV3) {
       listener: {
         ...infrastructure.privateCarrierBridge.listener,
         listen: legacy.privateCarrierBridge.listener.listen,
-      },
-      target: {
-        ...infrastructure.privateCarrierBridge.target,
-        discovery: unresolvedLegacyMihomoProxyDiscovery(),
       },
     }
     : {
@@ -431,10 +456,6 @@ function upgradePinnedV3Draft(legacy: z.output<typeof legacyPinnedV3DraftSchema>
       listener: {
         ...infrastructure.privateCarrierBridge.listener,
         listen: legacy.privateCarrierBridge.listener.listen,
-      },
-      target: {
-        ...infrastructure.privateCarrierBridge.target,
-        discovery: unresolvedLegacyMihomoProxyDiscovery(),
       },
     }
     : {
