@@ -152,6 +152,7 @@ func (p *dualLinuxReadonlyProvider) DefaultRoute() (dualCollectorDefaultRouteSna
 			if ip := net.ParseIP(address); ip != nil && ip.To4() != nil {
 				return dualCollectorDefaultRouteSnapshot{Dev: selected.dev, Via: selected.gateway, SourceAddress: ip.String()}, nil
 			}
+		}
 	}
 	return dualCollectorDefaultRouteSnapshot{}, fmt.Errorf("default route interface %q has no IPv4 source address", selected.dev)
 }
@@ -227,9 +228,9 @@ func (p *dualLinuxReadonlyProvider) MitaRuntime() (*dualCollectorMitaRuntimeSnap
 				binaryPath = &pathCopy
 			}
 			matches = append(matches, dualCollectorMitaRuntimeSnapshot{
-				BinaryPath: binaryPath,
+				BinaryPath:    binaryPath,
 				ServiceStatus: "active",
-				Listener: dualCollectorListenerSnapshot{Network: "tcp", Listen: listener.address, Port: listener.port},
+				Listener:      dualCollectorListenerSnapshot{Network: "tcp", Listen: listener.address, Port: listener.port},
 			})
 		}
 	}
@@ -323,6 +324,7 @@ func readProcessSocketInodes(fdRoot string) (map[string]struct{}, error) {
 				result[inode] = struct{}{}
 			}
 		}
+	}
 	return result, nil
 }
 
