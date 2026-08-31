@@ -51,7 +51,7 @@ jobs:
           node --import tsx --test server/agentCrypto.test.ts
           node --import tsx --test server/userTrafficHistory.test.ts
           pnpm test:protocol-access
-          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualMultipathPortPlanner.test.ts server/dualMultipathClientDiscovery.test.ts server/dualMultipathMobileGrayBundle.test.ts client/src/lib/dualMultipathForm.test.ts
+          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualMultipathPortPlanner.test.ts server/dualMultipathClientDiscovery.test.ts server/dualMultipathMobileGrayBundle.test.ts server/dualMultipathGrayRuntimeBundle.test.ts client/src/lib/dualMultipathForm.test.ts
           node --import tsx --test server/protocolMieruCredentials.test.ts server/protocolMieruRuntimePlan.test.ts server/agentProtocolTrafficAccounting.test.ts server/agentProtocolTrafficRoute.test.ts server/repositories/protocolUserTrafficRepository.test.ts
           node --import tsx --test server/protocolVlessCredentials.test.ts server/protocolVlessIsolation.test.ts
           pnpm test:server
@@ -129,5 +129,70 @@ jobs:
             ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe
             ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe.sha256
             ${{ runner.temp }}/dual-windows-gray/build-metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+  dual-linux-gray-artifact:
+    name: Dual Linux amd64 Gray artifact + config check
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build pinned Linux amd64 sidecar/server
+        run: bash scripts/build-dual-linux-sidecar.sh "$RUNNER_TEMP/dual-linux-gray"
+
+      - name: Generate isolated Gray certificate and configs
+        run: |
+          mkdir -p "$RUNNER_TEMP/dual-gray-tls" "$RUNNER_TEMP/dual-gray-fixtures"
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -subj "/CN=forwardx-dual-gray.test" \
+            -keyout "$RUNNER_TEMP/dual-gray-tls/server.key" \
+            -out "$RUNNER_TEMP/dual-gray-tls/server.crt"
+          node --import tsx scripts/generate-dual-gray-ci-fixtures.ts \
+            "$RUNNER_TEMP/dual-gray-fixtures" \
+            "$RUNNER_TEMP/dual-gray-tls/server.crt" \
+            "$RUNNER_TEMP/dual-gray-tls/server.key"
+
+      - name: Check generated client and server configs with pinned binary
+        run: |
+          BIN="$RUNNER_TEMP/dual-linux-gray/sing-box-linux-amd64"
+          "$BIN" version
+          "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/windows-gray.json"
+          "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/server-gray.json"
+
+      - name: Upload Linux amd64 Gray artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-singbox-multipath-linux-amd64
+          path: |
+            ${{ runner.temp }}/dual-linux-gray/sing-box-linux-amd64
+            ${{ runner.temp }}/dual-linux-gray/sing-box-linux-amd64.sha256
+            ${{ runner.temp }}/dual-linux-gray/build-metadata.json
           if-no-files-found: error
           retention-days: 7
