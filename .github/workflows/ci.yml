@@ -51,7 +51,7 @@ jobs:
           node --import tsx --test server/agentCrypto.test.ts
           node --import tsx --test server/userTrafficHistory.test.ts
           pnpm test:protocol-access
-          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualMultipathPortPlanner.test.ts server/dualMultipathClientDiscovery.test.ts client/src/lib/dualMultipathForm.test.ts
+          node --import tsx --test server/multipathPocPlan.test.ts server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualMultipathPortPlanner.test.ts server/dualMultipathClientDiscovery.test.ts server/dualMultipathMobileGrayBundle.test.ts client/src/lib/dualMultipathForm.test.ts
           node --import tsx --test server/protocolMieruCredentials.test.ts server/protocolMieruRuntimePlan.test.ts server/agentProtocolTrafficAccounting.test.ts server/agentProtocolTrafficRoute.test.ts server/repositories/protocolUserTrafficRepository.test.ts
           node --import tsx --test server/protocolVlessCredentials.test.ts server/protocolVlessIsolation.test.ts
           pnpm test:server
@@ -62,3 +62,40 @@ jobs:
         run: |
           (cd agent && go test ./... && go vet ./...)
           (cd forwardx-fxp && go test ./... && go vet ./...)
+
+  dual-android-gray-artifact:
+    name: Dual Android arm64 Gray artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Build pinned Android arm64 sidecar
+        run: bash scripts/build-dual-android-sidecar.sh "$RUNNER_TEMP/dual-android-gray"
+
+      - name: Upload Android arm64 sidecar
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-singbox-multipath-android-arm64
+          path: |
+            ${{ runner.temp }}/dual-android-gray/sing-box-android-arm64
+            ${{ runner.temp }}/dual-android-gray/sing-box-android-arm64.sha256
+            ${{ runner.temp }}/dual-android-gray/build-metadata.json
+          if-no-files-found: error
+          retention-days: 7
