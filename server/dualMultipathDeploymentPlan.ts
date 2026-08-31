@@ -4,7 +4,7 @@ import {
   type DualMultipathDraftInput,
 } from "./dualMultipathControlPlane";
 
-export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 4 as const;
+export const DUAL_MULTIPATH_DEPLOYMENT_PLAN_VERSION = 5 as const;
 
 const FULL_CONFIG_PATH_PLACEHOLDER = "<FULL_CONFIG_PATH>";
 
@@ -21,14 +21,20 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
   const preview = compileDualMultipathPreview(draft);
   const serverInbound = preview.serverPreview.multipathConfig.inbounds[0];
 
-  const privateBridgeResolved = draft.privateCarrierBridge.status === "resolved";
-  const ingressPortResolved = draft.openClashIngressAdapter.status === "resolved";
+  const ingressPortPlanned = draft.openClashIngressAdapter.portPlanning.status === "planned-read-only";
+  const mihomoBridge = draft.privateCarrierBridge.type === "mihomo-dedicated-listener" ? draft.privateCarrierBridge : null;
+  const privateListenerPortPlanned = mihomoBridge?.listener.portPlanning.status === "planned-read-only";
+  const pureMieruProxyDiscovered = mihomoBridge?.target.discovery.status === "verified-read-only";
+  const externalEndpointDiscovered = draft.privateCarrierBridge.type === "external-local-socks5"
+    && draft.privateCarrierBridge.endpointDiscovery.status === "verified-read-only";
   const targetDiscoveryResolved = draft.targetDiscovery.status === "verified-read-only";
   const directCarrierResolved = draft.directCarrier.status === "resolved";
   const blockers = [
     "客户端 carrier 目前只包含 secret reference；尚未建立灰度 secret resolver 与进程级注入边界",
-    ...(ingressPortResolved ? [] : ["Dual ingress loopback 端口尚未经过目标端口占用检查与自动规划"]),
-    ...(privateBridgeResolved ? [] : ["private carrier bridge 尚未解析到单一纯 Mieru proxy 或真实 external SOCKS5 endpoint"]),
+    ...(ingressPortPlanned ? [] : ["Dual ingress loopback 端口尚未依据 read-only availability snapshot 完成自动规划"]),
+    ...(mihomoBridge && !privateListenerPortPlanned ? ["Mihomo dedicated listener loopback 端口尚未依据 read-only availability snapshot 完成自动规划"] : []),
+    ...(mihomoBridge && !pureMieruProxyDiscovered ? ["单一纯 Mieru proxy 尚未完成 verified read-only discovery"] : []),
+    ...(draft.privateCarrierBridge.type === "external-local-socks5" && !externalEndpointDiscovered ? ["external local SOCKS5 endpoint 尚未完成 verified read-only discovery"] : []),
     ...(targetDiscoveryResolved ? [] : ["Dual 目标尚无 verified-read-only discovery snapshot"]),
     ...(directCarrierResolved ? [] : ["Hysteria2 端口、TLS server name 与最终 runtime 仍未解析"]),
     "Mihomo dedicated listener 尚未在 OpenClash override 机制中生成并执行原生配置校验",
@@ -97,7 +103,7 @@ export function buildDualMultipathDeploymentPlan(input: DualMultipathDraftInput 
       {
         kind: "config" as const,
         name: "redacted client sing-box config preview",
-        source: "Dual v3 draft + carrier references",
+        source: "Dual v4 draft + carrier references",
         destination: null,
         status: "preview-only" as const,
       },

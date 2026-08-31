@@ -1,7 +1,7 @@
 import {
   NO_BRAND_DUAL_DISCOVERY_SNAPSHOT,
   createDefaultDualMultipathInfrastructure,
-  type DualMultipathDraftV3,
+  type DualMultipathDraftV4,
   type DualMultipathInfrastructureState,
 } from "@shared/dualMultipath";
 
@@ -38,7 +38,7 @@ function requiredInteger(value: string, label: string, min = 1, max = Number.MAX
   return parsed;
 }
 
-export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): DualMultipathDraftV3 {
+export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): DualMultipathDraftV4 {
   const name = form.name.trim();
   if (!name) throw new Error("请填写 Dual 配置名称");
   const privateBandwidthMbps = requiredInteger(form.privateBandwidthMbps, "专线带宽", 1, UINT32_MAX);
@@ -49,7 +49,7 @@ export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): D
   const { line, legs, ...infrastructure } = form.infrastructure;
 
   return {
-    version: 3,
+    version: 4,
     state: "draft",
     name,
     line: { ...line, activationThresholdMbps, activationWindow },
@@ -62,7 +62,7 @@ export function buildDualMultipathDraftFromForm(form: DualMultipathFormState): D
 }
 
 export function dualMultipathFormFromDraft(
-  draft: DualMultipathDraftV3 | null | undefined,
+  draft: DualMultipathDraftV4 | null | undefined,
 ): DualMultipathFormState {
   const base = defaultDualMultipathForm();
   if (!draft) return base;

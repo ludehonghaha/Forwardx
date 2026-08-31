@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DUAL_MULTIPATH_CONTROL_PLANE_VERSION = 3 as const;
+export const DUAL_MULTIPATH_CONTROL_PLANE_VERSION = 4 as const;
 
 const UINT32_MAX = 0xffffffff;
 const MAX_REORDER_BYTES = 512 * 1024 * 1024;
@@ -64,7 +64,7 @@ const socksCredentialsSchema = z.object({
   passwordSecretRef: dualSecretReferenceSchema,
 }).strict();
 
-const mihomoDedicatedListenerBridgeSchema = z.object({
+const legacyV3MihomoDedicatedListenerBridgeSchema = z.object({
   type: z.literal("mihomo-dedicated-listener"),
   status: z.enum(["unresolved", "resolved"]),
   listener: z.object({
@@ -84,7 +84,7 @@ const mihomoDedicatedListenerBridgeSchema = z.object({
   }).strict(),
 }).strict();
 
-const externalLocalSocks5BridgeSchema = z.object({
+const legacyV3ExternalLocalSocks5BridgeSchema = z.object({
   type: z.literal("external-local-socks5"),
   status: z.enum(["unresolved", "resolved"]),
   endpoint: z.object({
@@ -95,9 +95,9 @@ const externalLocalSocks5BridgeSchema = z.object({
   credentials: socksCredentialsSchema.optional(),
 }).strict();
 
-const privateCarrierBridgeSchema = z.union([
-  mihomoDedicatedListenerBridgeSchema,
-  externalLocalSocks5BridgeSchema,
+const legacyV3PrivateCarrierBridgeSchema = z.union([
+  legacyV3MihomoDedicatedListenerBridgeSchema,
+  legacyV3ExternalLocalSocks5BridgeSchema,
 ]);
 
 const directCarrierSchema = z.object({
@@ -109,7 +109,7 @@ const directCarrierSchema = z.object({
   authSecretRef: dualSecretReferenceSchema,
 }).strict();
 
-const openClashIngressAdapterSchema = z.object({
+const legacyV3OpenClashIngressAdapterSchema = z.object({
   type: z.literal("local-socks-sidecar"),
   status: z.enum(["unresolved", "resolved"]),
   tag: z.string().trim().min(1).max(128),
@@ -161,15 +161,15 @@ const serverRuntimeSchema = z.object({
   }).strict(),
 }).strict();
 
-export const dualMultipathDraftSchema = z.object({
-  version: z.literal(DUAL_MULTIPATH_CONTROL_PLANE_VERSION).default(DUAL_MULTIPATH_CONTROL_PLANE_VERSION),
+export const dualMultipathDraftV3Schema = z.object({
+  version: z.literal(3).default(3),
   state: z.literal("draft").default("draft"),
   name: z.string().trim().min(1, "请填写 Dual 配置名称").max(80),
   line: dualMultipathLineSchema,
   legs: z.tuple([dualPrivateLegSchema, dualDirectLegSchema]),
   targetDiscovery: dualTargetDiscoverySnapshotSchema,
-  openClashIngressAdapter: openClashIngressAdapterSchema,
-  privateCarrierBridge: privateCarrierBridgeSchema,
+  openClashIngressAdapter: legacyV3OpenClashIngressAdapterSchema,
+  privateCarrierBridge: legacyV3PrivateCarrierBridgeSchema,
   directCarrier: directCarrierSchema,
   serverRuntime: serverRuntimeSchema,
 }).strict().superRefine((draft, ctx) => {
@@ -224,15 +224,136 @@ export const dualMultipathDraftSchema = z.object({
   }
 });
 
-export type DualMultipathDraftV3 = z.output<typeof dualMultipathDraftSchema>;
-export type DualMultipathDraftV3Input = z.input<typeof dualMultipathDraftSchema>;
+export const dualAutoPortPlanningSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("unresolved"),
+    strategy: z.literal("auto"),
+    port: z.null(),
+  }).strict(),
+  z.object({
+    status: z.literal("planned-read-only"),
+    strategy: z.literal("auto"),
+    port: dualPortSchema,
+    snapshotId: z.string().trim().min(1).max(128),
+  }).strict(),
+]);
+
+const pureMieruProxyDiscoverySchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("unresolved"), proxyRef: z.null() }).strict(),
+  z.object({
+    status: z.literal("verified-read-only"),
+    proxyRef: z.string().trim().min(1).max(255),
+  }).strict(),
+]);
+
+const externalSocksEndpointDiscoverySchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("unresolved"), endpoint: z.null() }).strict(),
+  z.object({
+    status: z.literal("verified-read-only"),
+    endpoint: z.object({
+      listenerKind: z.literal("dedicated-socks"),
+      host: dualLoopbackSchema,
+      port: dualPortSchema,
+    }).strict(),
+  }).strict(),
+]);
+
+const mihomoDedicatedListenerBridgeSchema = z.object({
+  type: z.literal("mihomo-dedicated-listener"),
+  listener: z.object({
+    kind: z.literal("socks"),
+    scope: z.literal("dedicated"),
+    listen: dualLoopbackSchema,
+    portPlanning: dualAutoPortPlanningSchema,
+  }).strict(),
+  target: z.object({
+    selection: z.literal("single-proxy"),
+    protocol: z.literal("mieru"),
+    discovery: pureMieruProxyDiscoverySchema,
+    routing: z.literal("fixed-proxy"),
+    fallback: z.literal("none"),
+    transportScope: z.literal("private-only"),
+  }).strict(),
+}).strict();
+
+const externalLocalSocks5BridgeSchema = z.object({
+  type: z.literal("external-local-socks5"),
+  endpointDiscovery: externalSocksEndpointDiscoverySchema,
+  credentials: socksCredentialsSchema.optional(),
+}).strict();
+
+const privateCarrierBridgeSchema = z.union([
+  mihomoDedicatedListenerBridgeSchema,
+  externalLocalSocks5BridgeSchema,
+]);
+
+const openClashIngressAdapterSchema = z.object({
+  type: z.literal("local-socks-sidecar"),
+  tag: z.string().trim().min(1).max(128),
+  listen: dualLoopbackSchema,
+  portPlanning: dualAutoPortPlanningSchema,
+}).strict();
+
+export const dualMultipathDraftSchema = z.object({
+  version: z.literal(DUAL_MULTIPATH_CONTROL_PLANE_VERSION).default(DUAL_MULTIPATH_CONTROL_PLANE_VERSION),
+  state: z.literal("draft").default("draft"),
+  name: z.string().trim().min(1, "请填写 Dual 配置名称").max(80),
+  line: dualMultipathLineSchema,
+  legs: z.tuple([dualPrivateLegSchema, dualDirectLegSchema]),
+  targetDiscovery: dualTargetDiscoverySnapshotSchema,
+  openClashIngressAdapter: openClashIngressAdapterSchema,
+  privateCarrierBridge: privateCarrierBridgeSchema,
+  directCarrier: directCarrierSchema,
+  serverRuntime: serverRuntimeSchema,
+}).strict().superRefine((draft, ctx) => {
+  const [privateLeg, directLeg] = draft.legs;
+  if (privateLeg.outboundTag === directLeg.outboundTag) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["legs", 1, "outboundTag"], message: "专线与直连必须引用不同的 outbound tag" });
+  }
+  const udpLegIndex = draft.line.udpLegIndex ?? 0;
+  if (draft.legs[udpLegIndex].supportsUdp === false) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["line", "udpLegIndex"], message: "指定的 UDP 路径不支持 UDP" });
+  }
+  const ingressPort = draft.openClashIngressAdapter.portPlanning.port;
+  const bridge = draft.privateCarrierBridge;
+  if (bridge.type === "mihomo-dedicated-listener") {
+    const privatePort = bridge.listener.portPlanning.port;
+    if (privatePort !== null && ingressPort !== null && privatePort === ingressPort) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "listener", "portPlanning"], message: "private listener 与 Dual ingress 不能使用同一端口" });
+    }
+    if (bridge.target.discovery.status === "verified-read-only" && bridge.target.discovery.proxyRef === draft.openClashIngressAdapter.tag) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "target", "discovery", "proxyRef"], message: "private bridge 不允许递归回 ForwardX Dual ingress" });
+    }
+  } else if (
+    bridge.endpointDiscovery.status === "verified-read-only"
+    && ingressPort !== null
+    && bridge.endpointDiscovery.endpoint.port === ingressPort
+  ) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["privateCarrierBridge", "endpointDiscovery"], message: "private listener 与 Dual ingress 不能使用同一端口" });
+  }
+  if (draft.directCarrier.status === "resolved" && (draft.directCarrier.serverPort === null || draft.directCarrier.tls.serverName === null)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["directCarrier", "status"], message: "已解析的 Hysteria2 carrier 必须包含端口和 TLS server name" });
+  }
+  if (
+    draft.serverRuntime.multipathListener.listen !== (draft.line.listen ?? "127.0.0.1")
+    || draft.serverRuntime.multipathListener.port !== draft.line.serverPort
+  ) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["serverRuntime", "multipathListener"], message: "server runtime multipath listener 必须与 line 的 loopback target 一致" });
+  }
+});
+
+export type DualMultipathDraftV3 = z.output<typeof dualMultipathDraftV3Schema>;
+export type DualMultipathDraftV3Input = z.input<typeof dualMultipathDraftV3Schema>;
+export type DualMultipathDraftV4 = z.output<typeof dualMultipathDraftSchema>;
+export type DualMultipathDraftV4Input = z.input<typeof dualMultipathDraftSchema>;
+export type DualAutoPortPlanning = z.output<typeof dualAutoPortPlanningSchema>;
 export type DualTargetDiscoverySnapshot = z.output<typeof dualTargetDiscoverySnapshotSchema>;
 export type DualMultipathInfrastructureState = Pick<
-  DualMultipathDraftV3,
+  DualMultipathDraftV4,
   "line" | "legs" | "targetDiscovery" | "openClashIngressAdapter" | "privateCarrierBridge" | "directCarrier" | "serverRuntime"
 >;
 export type DualMihomoDedicatedListenerBridge = Extract<
-  DualMultipathDraftV3["privateCarrierBridge"],
+  DualMultipathDraftV4["privateCarrierBridge"],
   { type: "mihomo-dedicated-listener" }
 >;
 export type DefaultDualMultipathInfrastructureState = Omit<DualMultipathInfrastructureState, "privateCarrierBridge"> & {
@@ -292,19 +413,22 @@ export function createDefaultDualMultipathInfrastructure(
     targetDiscovery,
     openClashIngressAdapter: {
       type: "local-socks-sidecar",
-      status: "unresolved",
       tag: "forwardx-dual-ingress-1",
       listen: "127.0.0.1",
-      portStrategy: "auto",
-      port: null,
+      portPlanning: { status: "unresolved", strategy: "auto", port: null },
     },
     privateCarrierBridge: {
       type: "mihomo-dedicated-listener",
-      status: "unresolved",
-      listener: { kind: "socks", scope: "dedicated", listen: "127.0.0.1", portStrategy: "auto", port: null },
+      listener: {
+        kind: "socks",
+        scope: "dedicated",
+        listen: "127.0.0.1",
+        portPlanning: { status: "unresolved", strategy: "auto", port: null },
+      },
       target: {
         selection: "single-proxy",
         protocol: "mieru",
+        discovery: { status: "unresolved", proxyRef: null },
         routing: "fixed-proxy",
         fallback: "none",
         transportScope: "private-only",

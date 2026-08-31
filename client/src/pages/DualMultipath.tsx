@@ -115,8 +115,17 @@ export default function DualMultipathPage() {
   const planData = planMutation.data;
   const configured = currentQuery.data?.configured === true;
   const busy = previewMutation.isPending || planMutation.isPending || saveMutation.isPending;
-  const privateStatus = form.infrastructure.privateCarrierBridge?.status === "resolved" ? "已就绪" : "等待自动发现纯 Mieru 节点";
+  const privateBridge = form.infrastructure.privateCarrierBridge;
+  const privateStatus = privateBridge.type === "mihomo-dedicated-listener"
+    ? privateBridge.target.discovery.status === "verified-read-only"
+      && privateBridge.listener.portPlanning.status === "planned-read-only"
+      ? "已就绪"
+      : "等待自动发现 / 规划"
+    : privateBridge.endpointDiscovery.status === "verified-read-only" ? "已就绪" : "等待发现 endpoint";
   const directStatus = form.infrastructure.directCarrier?.status === "resolved" ? "已就绪" : "运行时未配置";
+  const ingressPort = form.infrastructure.openClashIngressAdapter.portPlanning.port;
+  const privatePort = privateBridge.type === "mihomo-dedicated-listener" ? privateBridge.listener.portPlanning.port : null;
+  const privateProxy = privateBridge.type === "mihomo-dedicated-listener" ? privateBridge.target.discovery.proxyRef : null;
 
   return (
     <DashboardLayout>
@@ -173,9 +182,9 @@ export default function DualMultipathPage() {
           <summary className="cursor-pointer px-5 py-4 text-sm font-medium">高级 / 诊断（离线、脱敏）</summary>
           <div className="space-y-5 border-t border-border/50 p-5">
             <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">OpenClash adapter</p><p className="mt-1 text-sm">本地 SOCKS sidecar · 自动规划</p></div>
-              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Private bridge</p><p className="mt-1 text-sm">Mihomo dedicated listener · {privateStatus}</p></div>
-              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Server listener</p><p className="mt-1 text-sm">loopback-only · 不允许公网暴露</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Dual ingress port</p><p className="mt-1 text-sm">{ingressPort ?? "等待自动规划"}</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Mieru bridge port</p><p className="mt-1 text-sm">{privatePort ?? "等待自动规划"}</p></div>
+              <div className="rounded-lg bg-muted/25 p-3"><p className="text-xs text-muted-foreground">Mieru proxy</p><p className="mt-1 text-sm">{privateProxy ?? "等待发现"}</p></div>
             </div>
             <div className="flex flex-wrap gap-3">
               <Button type="button" variant="outline" onClick={() => submit("preview")} disabled={busy}>{previewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}生成诊断预览</Button>
