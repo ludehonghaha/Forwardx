@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.289] - 2026-09-01
+
+### 新增
+
+- 「协议接入」订阅地址新增 IPv4 / IPv6 手动选择，默认继续使用 IPv4；同一订阅可显式请求 `ipVersion=4` 或 `ipVersion=6`。
+- IPv6 订阅从协议端点关联主机的 `hosts.ipv6` 读取真实地址，URI 自动使用 `[IPv6]:端口`，Mihomo/OpenClash 输出对应 IPv6 `server`。
+
+### 修复与优化
+
+- 主机没有可用 IPv6 时返回明确错误并禁止静默回退 IPv4；非法 `ipVersion` 请求同样显式拒绝。
+- 增加隔离 dev-panel 灰度 smoke 和 CI 覆盖，验证默认 IPv4、显式 IPv4/IPv6、URI IPv6 括号、Mihomo IPv6、422 no-fallback 和非法参数。
+
+### 版本
+
+- 面板与 APK Release `2.3.289`，Agent `2.2.197`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.288] - 2026-08-30
 
 ### 新增
