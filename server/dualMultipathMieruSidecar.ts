@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   dualMultipathDraftSchema,
   dualPortSchema,
+  dualPrivateCarrierClientEndpointDiscoverySchema,
   type DualMultipathDraftV5,
 } from "../shared/dualMultipath";
 
@@ -61,12 +62,19 @@ function managedBridge(draft: DualMultipathDraftV5) {
   return draft.privateCarrierBridge;
 }
 
-export function buildDualMieruClientConfigTemplate(draftInput: unknown, socks5PortInput: unknown) {
+export function buildDualMieruClientConfigTemplate(
+  draftInput: unknown,
+  socks5PortInput: unknown,
+  clientEndpointDiscoveryInput: unknown,
+) {
   const draft = dualMultipathDraftSchema.parse(draftInput);
   const socks5Port = dualPortSchema.parse(socks5PortInput);
   const bridge = managedBridge(draft);
-  const discovery = draft.serverTargetDiscovery;
-  if (discovery.status !== "verified-read-only") throw new Error("unreachable discovery state");
+  const clientEndpointDiscovery = dualPrivateCarrierClientEndpointDiscoverySchema.parse(clientEndpointDiscoveryInput);
+  if (clientEndpointDiscovery.status !== "verified-read-only") {
+    throw new Error("Windows Mieru config 缺少 verified client-visible private carrier endpoint");
+  }
+  const endpoint = clientEndpointDiscovery.endpoint;
 
   return {
     profiles: [{
@@ -76,10 +84,10 @@ export function buildDualMieruClientConfigTemplate(draftInput: unknown, socks5Po
         password: secretPlaceholder(bridge.carrier.passwordSecretRef),
       },
       servers: [{
-        ipAddress: discovery.privateSide.sourceAddress,
+        ipAddress: endpoint.server,
         portBindings: [{
-          port: discovery.existingPrivateCarrier.listener.port,
-          protocol: bridge.carrier.transport,
+          port: endpoint.port,
+          protocol: endpoint.protocol,
         }],
       }],
     }],
@@ -94,9 +102,14 @@ export function buildDualMieruClientConfigTemplate(draftInput: unknown, socks5Po
 export function materializeDualMieruClientConfig(
   draftInput: unknown,
   socks5PortInput: unknown,
+  clientEndpointDiscoveryInput: unknown,
   secretValuesInput: unknown,
 ) {
-  const config = structuredClone(buildDualMieruClientConfigTemplate(draftInput, socks5PortInput));
+  const config = structuredClone(buildDualMieruClientConfigTemplate(
+    draftInput,
+    socks5PortInput,
+    clientEndpointDiscoveryInput,
+  ));
   const secretValues = mieruSecretValuesSchema.parse(secretValuesInput);
   config.profiles[0].user.name = secretValues.username;
   config.profiles[0].user.password = secretValues.password;

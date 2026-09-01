@@ -38,6 +38,7 @@ test("keeps unresolved private and HY2 runtimes as explicit blockers", () => {
   assert.match(text, /secret resolver/);
   assert.match(text, /Dual ingress.*availability snapshot/);
   assert.match(text, /private carrier SOCKS.*availability snapshot/);
+  assert.match(text, /client-visible Mieru ingress.*verified Gray discovery/);
   assert.match(text, /真实 Mieru client username\/password/);
   assert.match(text, /Hysteria2 端口/);
   assert.match(text, /Mieru/);

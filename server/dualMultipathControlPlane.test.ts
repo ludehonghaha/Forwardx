@@ -95,11 +95,38 @@ test("does not default or emit the rejected 127.0.0.1:1080 private endpoint", ()
   assert.doesNotMatch(serialized, /1080/);
   assert.equal(defaults.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
   assert.equal(defaults.privateCarrierBridge.runtime.clashMiDependency, false);
+  assert.equal(defaults.privateCarrierBridge.carrier.endpointSource, "verified-client-visible-discovery");
   assert.equal(defaults.privateCarrierBridge.carrier.usernameSecretRef, "dual.mieru.username");
   assert.equal(defaults.privateCarrierBridge.listener.portPlanning.strategy, "auto");
   assert.equal(defaults.privateCarrierBridge.listener.portPlanning.port, null);
   assert.equal(defaults.openClashIngressAdapter.portPlanning.port, null);
   assert.doesNotMatch(serialized, /20808|20809/);
+});
+
+test("upgrades the c2d066b managed Mieru source markers without inventing a client endpoint", () => {
+  const defaults = defaultDualMultipathInfrastructure();
+  const parsed = parseDualMultipathDraft({
+    version: 5,
+    state: "draft",
+    name: "c2d066b compatibility",
+    ...defaults,
+    privateCarrierBridge: {
+      ...defaults.privateCarrierBridge,
+      carrier: {
+        protocol: "mieru",
+        transport: "TCP",
+        serverSource: "discovered-private-side",
+        portSource: "existing-mita-listener",
+        usernameSecretRef: "dual.mieru.username",
+        passwordSecretRef: "dual.mieru.password",
+      },
+    },
+  });
+  assert.equal(parsed.privateCarrierBridge.type, "forwardx-managed-mieru-sidecar");
+  if (parsed.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") throw new Error("expected managed bridge");
+  assert.equal(parsed.privateCarrierBridge.carrier.endpointSource, "verified-client-visible-discovery");
+  assert.equal("serverSource" in parsed.privateCarrierBridge.carrier, false);
+  assert.doesNotMatch(JSON.stringify(parsed.privateCarrierBridge.carrier), /172\.16\.4\.114|211\.136\.162\.188/);
 });
 
 test("allows a planned Mihomo listener port while pure Mieru proxy discovery is unresolved", () => {

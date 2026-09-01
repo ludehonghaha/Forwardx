@@ -1,15 +1,26 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dualMultipathDraftSchema } from "../shared/dualMultipath";
+import {
+  dualMultipathDraftSchema,
+  dualPrivateCarrierClientEndpointDiscoverySchema,
+} from "../shared/dualMultipath";
 import { defaultDualMultipathInfrastructure } from "../server/dualMultipathControlPlane";
 import { buildDualMultipathGrayRuntimeBundle } from "../server/dualMultipathGrayRuntimeBundle";
 import { materializeDualMieruClientConfig } from "../server/dualMultipathMieruSidecar";
 
-const [outputArg, certificateArg, keyArg, authFileArg, mieruUsernameFileArg, mieruPasswordFileArg] = process.argv.slice(2);
-if (!outputArg || !certificateArg || !keyArg || !authFileArg || !mieruUsernameFileArg || !mieruPasswordFileArg) {
+const [
+  outputArg,
+  certificateArg,
+  keyArg,
+  privateCarrierEndpointFileArg,
+  authFileArg,
+  mieruUsernameFileArg,
+  mieruPasswordFileArg,
+] = process.argv.slice(2);
+if (!outputArg || !certificateArg || !keyArg || !privateCarrierEndpointFileArg || !authFileArg || !mieruUsernameFileArg || !mieruPasswordFileArg) {
   throw new Error(
-    "usage: materialize-dual-gray-local.ts <outside-repo-output-dir> <certificate-path> <key-path> <hy2-auth-file> <mieru-username-file> <mieru-password-file>",
+    "usage: materialize-dual-gray-local.ts <outside-repo-output-dir> <certificate-path> <key-path> <verified-private-carrier-client-endpoint-file> <hy2-auth-file> <mieru-username-file> <mieru-password-file>",
   );
 }
 
@@ -17,6 +28,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = resolve(outputArg);
 const certificatePath = resolve(certificateArg);
 const keyPath = resolve(keyArg);
+const privateCarrierEndpointFilePath = resolve(privateCarrierEndpointFileArg);
 const authFilePath = resolve(authFileArg);
 const mieruUsernameFilePath = resolve(mieruUsernameFileArg);
 const mieruPasswordFilePath = resolve(mieruPasswordFileArg);
@@ -30,6 +42,7 @@ function assertOutsideRepository(path: string, label: string) {
 
 assertOutsideRepository(outputDir, "output directory");
 assertOutsideRepository(keyPath, "TLS private key");
+assertOutsideRepository(privateCarrierEndpointFilePath, "private carrier client endpoint evidence file");
 assertOutsideRepository(authFilePath, "HY2 auth secret file");
 assertOutsideRepository(mieruUsernameFilePath, "Mieru username secret file");
 assertOutsideRepository(mieruPasswordFilePath, "Mieru password secret file");
@@ -37,6 +50,9 @@ assertOutsideRepository(mieruPasswordFilePath, "Mieru password secret file");
 const hy2AuthSecret = readFileSync(authFilePath, "utf8").trim();
 const mieruUsername = readFileSync(mieruUsernameFilePath, "utf8").trim();
 const mieruPassword = readFileSync(mieruPasswordFilePath, "utf8").trim();
+const privateCarrierClientEndpoint = dualPrivateCarrierClientEndpointDiscoverySchema.parse(
+  JSON.parse(readFileSync(privateCarrierEndpointFilePath, "utf8")) as unknown,
+);
 if (hy2AuthSecret.length < 16 || hy2AuthSecret.length > 512) {
   throw new Error("Gray HY2 auth 长度必须在 16 到 512 字符之间");
 }
@@ -61,6 +77,7 @@ const draft = dualMultipathDraftSchema.parse({
 const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
+  privateCarrierClientEndpoint,
   hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: certificatePath,
@@ -70,7 +87,7 @@ const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
 
 const windowsConfig = structuredClone(bundle.fragments.windowsSidecarConfig);
 const serverConfig = structuredClone(bundle.fragments.serverConfig);
-const mieruConfig = materializeDualMieruClientConfig(draft, 24181, {
+const mieruConfig = materializeDualMieruClientConfig(draft, 24181, privateCarrierClientEndpoint, {
   username: mieruUsername,
   password: mieruPassword,
 });
@@ -106,6 +123,8 @@ writePrivateJson("materialization-metadata.json", {
   windows: {
     ingressPort: 24180,
     privateSocksPort: 24181,
+    privateCarrierClientEndpoint: bundle.topology.privateLeg.clientVisibleIngress,
+    privateCarrierClientEndpointEvidence: bundle.sourceDraft.privateCarrierClientEndpointEvidence,
     dedicatedMieruOwner: "forwardx-official-sidecar",
     clashMiDependency: false,
   },

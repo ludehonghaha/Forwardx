@@ -17,6 +17,31 @@ export const dualLoopbackSchema = z.literal("127.0.0.1", {
 });
 export const dualPortSchema = z.number().int().min(1).max(65535);
 
+export const dualPrivateCarrierClientEndpointDiscoverySchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("unresolved"),
+    endpoint: z.null(),
+  }).strict(),
+  z.object({
+    status: z.literal("verified-read-only"),
+    endpoint: z.object({
+      server: z.string().trim().min(1).max(255),
+      port: dualPortSchema,
+      protocol: z.literal("TCP"),
+    }).strict(),
+    evidence: z.object({
+      snapshotId: z.string().trim().min(1).max(128),
+      targetId: z.string().trim().min(1).max(128),
+      observedAt: z.string().datetime({ offset: true }),
+      discoverySource: z.enum([
+        "windows-established-tcp-connection",
+        "client-config-read-only",
+        "synthetic-test",
+      ]),
+    }).strict(),
+  }).strict(),
+]);
+
 export const dualMultipathLineSchema = z.object({
   id: z.number().int().positive(),
   server: z.string().trim().min(1, "请填写 multipath 服务端地址").max(255),
@@ -448,7 +473,20 @@ const externalLocalSocks5BridgeSchema = z.object({
   credentials: socksCredentialsSchema.optional(),
 }).strict();
 
-const forwardxManagedMieruSidecarBridgeSchema = z.object({
+function normalizeLegacyManagedMieruCarrierSource(input: unknown) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const bridge = input as Record<string, unknown>;
+  if (!bridge.carrier || typeof bridge.carrier !== "object" || Array.isArray(bridge.carrier)) return input;
+  const carrier = bridge.carrier as Record<string, unknown>;
+  if (carrier.serverSource !== "discovered-private-side" || carrier.portSource !== "existing-mita-listener") return input;
+  const { serverSource: _legacyServerSource, portSource: _legacyPortSource, ...rest } = carrier;
+  return {
+    ...bridge,
+    carrier: { ...rest, endpointSource: "verified-client-visible-discovery" },
+  };
+}
+
+const forwardxManagedMieruSidecarBridgeSchema = z.preprocess(normalizeLegacyManagedMieruCarrierSource, z.object({
   type: z.literal("forwardx-managed-mieru-sidecar"),
   listener: z.object({
     kind: z.literal("socks"),
@@ -459,8 +497,7 @@ const forwardxManagedMieruSidecarBridgeSchema = z.object({
   carrier: z.object({
     protocol: z.literal("mieru"),
     transport: z.literal("TCP"),
-    serverSource: z.literal("discovered-private-side"),
-    portSource: z.literal("existing-mita-listener"),
+    endpointSource: z.literal("verified-client-visible-discovery"),
     usernameSecretRef: dualSecretReferenceSchema,
     passwordSecretRef: dualSecretReferenceSchema,
   }).strict(),
@@ -471,7 +508,7 @@ const forwardxManagedMieruSidecarBridgeSchema = z.object({
     globalConfigWrite: z.literal(false),
     clashMiDependency: z.literal(false),
   }).strict(),
-}).strict();
+}).strict());
 
 const privateCarrierBridgeSchema = z.union([
   forwardxManagedMieruSidecarBridgeSchema,
@@ -565,6 +602,7 @@ export type DualMultipathDraftV5Input = z.input<typeof dualMultipathDraftSchema>
 export type DualAutoPortPlanning = z.output<typeof dualAutoPortPlanningSchema>;
 export type DualClientTarget = z.output<typeof dualClientTargetSchema>;
 export type DualClientSnapshotEvidence = z.output<typeof dualClientSnapshotEvidenceSchema>;
+export type DualPrivateCarrierClientEndpointDiscovery = z.output<typeof dualPrivateCarrierClientEndpointDiscoverySchema>;
 export type DualServerTargetDiscoverySnapshot = z.output<typeof dualServerTargetDiscoverySnapshotSchema>;
 export type DualTargetDiscoverySnapshot = z.output<typeof dualTargetDiscoverySnapshotSchema>;
 export type DualMultipathInfrastructureState = Pick<
@@ -658,8 +696,7 @@ export function createDefaultDualMultipathInfrastructure(
       carrier: {
         protocol: "mieru",
         transport: "TCP",
-        serverSource: "discovered-private-side",
-        portSource: "existing-mita-listener",
+        endpointSource: "verified-client-visible-discovery",
         usernameSecretRef: "dual.mieru.username",
         passwordSecretRef: "dual.mieru.password",
       },

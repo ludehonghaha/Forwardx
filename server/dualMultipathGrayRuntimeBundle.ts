@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   dualMultipathDraftSchema,
   dualPortSchema,
+  dualPrivateCarrierClientEndpointDiscoverySchema,
   type DualMultipathDraftV5,
 } from "../shared/dualMultipath";
 import {
@@ -15,7 +16,7 @@ import {
   buildDualMieruClientConfigTemplate,
 } from "./dualMultipathMieruSidecar";
 
-export const DUAL_GRAY_RUNTIME_BUNDLE_VERSION = 2 as const;
+export const DUAL_GRAY_RUNTIME_BUNDLE_VERSION = 3 as const;
 export const DUAL_WINDOWS_GRAY_ARTIFACT = {
   platform: "windows" as const,
   architecture: "amd64" as const,
@@ -33,6 +34,7 @@ export const DUAL_LINUX_GRAY_ARTIFACT = {
 export const dualGrayRuntimeInputSchema = z.object({
   windowsSidecarIngressPort: dualPortSchema,
   windowsPrivateSocksPort: dualPortSchema,
+  privateCarrierClientEndpoint: dualPrivateCarrierClientEndpointDiscoverySchema,
   hy2Port: dualPortSchema,
   tlsServerName: z.string().trim().min(1).max(255),
   tlsCertificatePath: z.string().trim().min(1).max(1024),
@@ -70,8 +72,8 @@ function secretPlaceholder(reference: string) {
  * official Mieru foreground sidecar which exposes the dedicated loopback SOCKS
  * child outbound. Clash Mi is neither inspected nor modified.
  *
- * This function never consumes client discovery evidence and never makes the
- * persisted v5 clientTarget trusted. It is only an ephemeral Gray harness.
+ * This function ignores persisted client discovery state. The client-visible
+ * Mieru ingress must instead arrive as explicit verified Gray runtime evidence.
  */
 export function buildDualMultipathGrayRuntimeBundle(
   draftInput: unknown,
@@ -98,6 +100,10 @@ export function buildDualMultipathGrayRuntimeBundle(
   if (draft.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") {
     throw new Error("Dual Gray private bridge 必须使用 ForwardX-managed official Mieru sidecar");
   }
+  if (input.privateCarrierClientEndpoint.status !== "verified-read-only") {
+    throw new Error("Dual Gray 缺少 verified client-visible Mieru ingress，拒绝生成 Windows runtime");
+  }
+  const privateCarrierEndpoint = input.privateCarrierClientEndpoint.endpoint;
 
   const legs = compilerLegs(draft);
   const multipathOutbound = buildMultipathPocOutbound(draft.line, legs);
@@ -108,7 +114,11 @@ export function buildDualMultipathGrayRuntimeBundle(
 
   const publicAddress = serverTarget.publicSide.sourceAddress;
   const hy2Password = secretPlaceholder(draft.directCarrier.authSecretRef);
-  const windowsMieruClientConfig = buildDualMieruClientConfigTemplate(draft, input.windowsPrivateSocksPort);
+  const windowsMieruClientConfig = buildDualMieruClientConfigTemplate(
+    draft,
+    input.windowsPrivateSocksPort,
+    input.privateCarrierClientEndpoint,
+  );
 
   const windowsSidecarConfig = {
     log: { level: "info" as const },
@@ -185,6 +195,7 @@ export function buildDualMultipathGrayRuntimeBundle(
       name: draft.name,
       clientTargetIgnored: true as const,
       clientEvidenceIgnored: true as const,
+      privateCarrierClientEndpointEvidence: input.privateCarrierClientEndpoint.evidence,
     },
     artifacts: {
       windows: DUAL_WINDOWS_GRAY_ARTIFACT,
@@ -195,6 +206,7 @@ export function buildDualMultipathGrayRuntimeBundle(
         clientEngine: "forwardx-managed-official-mieru" as const,
         upstream: DUAL_MIERU_UPSTREAM,
         localSocks: { listen: "127.0.0.1" as const, port: input.windowsPrivateSocksPort },
+        clientVisibleIngress: privateCarrierEndpoint,
         carrier: "existing-mita-mieru" as const,
         existingServerBinaryPath: serverTarget.existingPrivateCarrier.binaryPath,
         existingServerUnitName: serverTarget.existingPrivateCarrier.unitName ?? null,

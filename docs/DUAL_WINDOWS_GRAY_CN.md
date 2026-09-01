@@ -9,11 +9,14 @@
   -> pinned singbox-multipath
        leg0 -> SOCKS5 127.0.0.1:24181
                     -> ForwardX-managed official enfein/mieru client
-                    -> 172.16.4.114:11464/TCP (existing Mita, preserve)
+                    -> verified client-visible Mieru ingress
+                       current Gray evidence: 211.136.162.188:11464/TCP
        leg1 -> native Hysteria2 -> 87.86.22.221:61464/udp
 ```
 
 `24181` 不再读取、修改或依赖 Clash Mi。现有通用 `7890` 不参与该拓扑。
+
+`172.16.4.114` 只表示 Dual 服务端自己的 `eth1` 地址。它不是 Windows 可见入口，不能被 Mieru client config 自动引用。当前 `211.136.162.188:11464/TCP` 来自 Windows established connection 与本地只读客户端配置的交叉核验，只作为可替换的 Gray discovery evidence，不是 generic schema 常量。
 
 ## Official Mieru pin
 
@@ -33,8 +36,8 @@ ForwardX 独立生成每次运行专用 JSON：
 - `socks5Port=24181`
 - `socks5ListenLAN=false`
 - `rpcPort=0`
-- private server 来自 verified server discovery
-- port 来自现有 Mita listener discovery（当前 `11464/TCP`）
+- private carrier destination 必须来自独立的 `verified-read-only` client-visible endpoint evidence
+- endpoint 未解析时 materializer fail closed；禁止从 `serverTargetDiscovery.privateSide` 或 Mita 本地 listener 推导
 - username/password 只接受 `dual.mieru.username`、`dual.mieru.password` secret reference
 
 launcher 只把 `MIERU_CONFIG_JSON_FILE=<gray config>` 注入它创建的 Mieru 子进程并执行 `mieru run`，不调用 `mieru apply config`，因此不写用户全局 Mieru 配置。
@@ -44,6 +47,7 @@ launcher 只把 `MIERU_CONFIG_JSON_FILE=<gray config>` 注入它创建的 Mieru 
 ```bash
 node --import tsx scripts/materialize-dual-gray-local.ts \
   <outside-repo-output-dir> <certificate-path> <private-key-path> \
+  <verified-private-carrier-client-endpoint-file> \
   <hy2-auth-file> <mieru-username-file> <mieru-password-file>
 ```
 
@@ -71,7 +75,8 @@ launcher 先检查 `24180/24181` 空闲，再启动 Mieru并等待 `24181` ready
 
 ## 仍然阻塞
 
-- 真实 Mieru client 明文 username/password 尚未注入；不能从只保存 checksum 的 Mita 恢复；
+- 用户控制的本地客户端配置中可确认 credential material 存在，但尚未通过 ForwardX Gray secret resolver 安全注入；
+- client-visible ingress 必须在每次真实 Gray 前刷新 read-only evidence，不能把当前观察值当作永久稳定地址；
 - Windows 真机端口、官方 Mieru 启动、双进程清理尚未实机验收；
 - server Gray 尚未获准部署，HY2/TLS/auth、网络可达性、健康检查和回滚尚未验收；
 - `readyForRuntime=false`，PR 保持 Draft。

@@ -49,6 +49,8 @@ Do not assume Mieru is a native sing-box outbound. The Windows Gray adapter is n
 
 The Mieru client uses a per-run JSON through `MIERU_CONFIG_JSON_FILE` and foreground `mieru run`; it must not read or write Clash Mi or the user's global Mieru config.
 
+The client destination is a separate fact from the Dual server interfaces. `172.16.4.114` describes only server-side `eth1` and must never be copied into a Windows Mieru config. Current read-only Windows connection evidence and locally retained client configs agree on `211.136.162.188:11464/TCP` for the NoBrand IPLC ingress. That value is supplied through verified Gray endpoint evidence and is not a schema literal.
+
 ## Verified target topology (sanitized)
 
 The target NoBrand Dual host has two network sides:
@@ -101,6 +103,8 @@ Verified Dual server topology:
 - active Mita binary is `/usr/bin/mita`; unit `mita-oneclick@uc650fd438a46ab4e.service` is active on TCP `*:11464` and must be preserved;
 - no installed `sing-box`, `hysteria`, or standalone `mieru` binary was found.
 
+These server facts do not define the address seen by a remote Mieru client. The current client-visible ingress is independently observed as `211.136.162.188:11464/TCP`; a missing or unresolved client endpoint blocks Windows config materialization.
+
 The pinned source contains native Hysteria2 inbound/outbound support. Its normal release build tags include `with_quic`, so one correctly built and checksum-pinned singbox-multipath artifact can host both multipath and Hysteria2. Artifact provenance, architecture-specific checksums, final HY2 listener fields, secret injection, and runtime lifecycle are still unresolved.
 
 ## Windows official Mieru sidecar update
@@ -109,7 +113,8 @@ The pinned source contains native Hysteria2 inbound/outbound support. Its normal
 - commit: `155ebbd60f86e472586a60d7ffe58ec8f8682cb1`
 - Windows amd64 ZIP SHA256: `f0136fa3bbfb1489a0a41c1ef5c3aa58ecf5b4793dc51d5a813cf7f5803017d1`
 - `24181` is owned by the ForwardX-managed Mieru child and no longer depends on Clash Mi.
-- real client username/password remain unresolved live secrets; they cannot be recovered from a Mita password checksum.
+- user-controlled local client configs confirm that client credential material is available, but values remain outside the repository and are not printed or imported automatically.
+- the runtime bundle requires explicit verified client-visible endpoint evidence; it never derives the client destination from the server private interface.
 - `readyToDeploy=false`; no server deployment was performed.
 
 ## Codex next task

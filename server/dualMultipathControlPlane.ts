@@ -286,8 +286,7 @@ export function compileDualMultipathPreview(input: unknown) {
     carrier: {
       protocol: privateBridge.carrier.protocol,
       transport: privateBridge.carrier.transport,
-      serverSource: privateBridge.carrier.serverSource,
-      portSource: privateBridge.carrier.portSource,
+      endpointSource: privateBridge.carrier.endpointSource,
       username: redactedSecretReference(privateBridge.carrier.usernameSecretRef),
       password: redactedSecretReference(privateBridge.carrier.passwordSecretRef),
     },

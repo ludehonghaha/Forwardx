@@ -64,7 +64,10 @@ export function buildDualMultipathDeploymentPlan(
     ...(draft.privateCarrierBridge.type === "external-local-socks5" && !externalEndpointDiscovered ? ["external local SOCKS5 endpoint 尚未完成 verified read-only discovery"] : []),
     ...(serverTargetDiscoveryResolved ? [] : ["Dual server target 尚无 verified-read-only discovery snapshot"]),
     ...(directCarrierResolved ? [] : ["Hysteria2 端口、TLS server name 与最终 runtime 仍未解析"]),
-    ...(managedMieruBridge ? ["真实 Mieru client username/password 尚未通过 Gray secret resolver 注入"] : []),
+    ...(managedMieruBridge ? [
+      "client-visible Mieru ingress 尚未通过独立 verified Gray discovery/runtime input 注入",
+      "真实 Mieru client username/password 尚未通过 Gray secret resolver 注入",
+    ] : []),
     ...(mihomoBridge ? ["旧 Mihomo dedicated listener 草稿必须迁移到 ForwardX-managed official Mieru sidecar"] : []),
     "Hysteria2 服务端监听、TLS secret 注入和回环转发语义尚未执行原生配置校验",
     "尚未确认 OpenWrt aarch64 与 Dual x86_64 的固定 artifact 安装目录",

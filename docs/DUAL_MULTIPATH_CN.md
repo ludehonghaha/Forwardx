@@ -40,10 +40,13 @@ ForwardX 的 Dual 聚合实验以 `WuSiYu/singbox-multipath` 为唯一 PoC 上�
 - `clientTarget`：独立的客户端绑定；正式 ForwardX Host 使用 Panel 所有的 `hosts.id`，未注册 OpenWrt 使用 `dual-client:<namespace>:<stable-key>`，不能用 IP 或 server target 代替；
 - `openClashIngressAdapter`：OpenClash 连接 ForwardX sidecar 的本地入口；
 - `privateCarrierBridge`：默认使用 ForwardX-managed official Mieru foreground sidecar；旧 Mihomo bridge 只保留兼容读取；
+- `dualPrivateCarrierClientEndpointDiscoverySchema`：独立描述客户端真正可见的 Mieru server/port/TCP 与只读证据；未 verified 时 Gray materializer fail closed；
 - `directCarrier`：pinned artifact 的 native Hysteria2；
 - `serverRuntime`：与具体主机无关的 loopback multipath 边界和未解析 HY2 runtime 策略。
 
 generic schema 不包含 `eth0`、`eth1`、固定 IP、gateway 或 Mita 端口 literal。当前 NoBrand Dual 的已核验结果单独保存为 `NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT`；以后更换为 `ens3`、`10.x` 或不同 Mita 端口时，只注入新的 server snapshot，不修改 TypeScript schema/source code。
+
+服务端 `privateSide.sourceAddress` 只描述服务端网卡，绝不能推导客户端 Mieru destination。当前 NoBrand Windows Gray 观察到的 `211.136.162.188:11464/TCP` 作为独立 runtime discovery evidence 传入；默认产品模型不硬编码该地址。
 
 客户端入口与 Mieru sidecar SOCKS 各自持有独立的 `portPlanning` discriminated union。未规划时是 `{ status: "unresolved", strategy: "auto", port: null }`；只有同时携带 `snapshotId` 与 `clientTargetRef` 的 read-only evidence 才能成为 `planned-read-only`。schema 会拒绝任何与当前 `clientTarget` 不一致的 client-side evidence。
 

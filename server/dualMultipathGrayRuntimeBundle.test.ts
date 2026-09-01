@@ -30,6 +30,16 @@ function grayDraft() {
 const runtimeInput = {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
+  privateCarrierClientEndpoint: {
+    status: "verified-read-only" as const,
+    endpoint: { server: "211.136.162.188", port: 11464, protocol: "TCP" as const },
+    evidence: {
+      snapshotId: "windows-mieru-established-20260830",
+      targetId: "nobrand-windows-gray",
+      observedAt: "2026-08-30T12:57:41.381Z",
+      discoverySource: "windows-established-tcp-connection" as const,
+    },
+  },
   hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: "/tmp/forwardx-dual-gray.crt",
@@ -54,12 +64,17 @@ test("builds Windows private SOCKS + native HY2 + multipath without pretending s
 });
 
 test("models an official ForwardX-managed Mieru client with a dedicated loopback SOCKS listener", () => {
-  const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), runtimeInput);
+  const draft = grayDraft();
+  const bundle = buildDualMultipathGrayRuntimeBundle(draft, runtimeInput);
   const config = bundle.fragments.windowsMieruClientConfig;
   assert.equal(config.socks5Port, 24181);
   assert.equal(config.socks5ListenLAN, false);
   assert.equal(config.rpcPort, 0);
-  assert.equal(config.profiles[0].servers[0].ipAddress, "172.16.4.114");
+  assert.equal(draft.serverTargetDiscovery.status, "verified-read-only");
+  if (draft.serverTargetDiscovery.status !== "verified-read-only") throw new Error("expected server discovery");
+  assert.equal(draft.serverTargetDiscovery.privateSide.sourceAddress, "172.16.4.114");
+  assert.equal(config.profiles[0].servers[0].ipAddress, "211.136.162.188");
+  assert.notEqual(config.profiles[0].servers[0].ipAddress, draft.serverTargetDiscovery.privateSide.sourceAddress);
   assert.equal(config.profiles[0].servers[0].portBindings[0].port, 11464);
   assert.equal(config.profiles[0].servers[0].portBindings[0].protocol, "TCP");
   assert.match(config.profiles[0].user.name, /<secret:dual\.mieru\.username>/);
@@ -67,6 +82,14 @@ test("models an official ForwardX-managed Mieru client with a dedicated loopback
   assert.equal(bundle.topology.privateLeg.clientEngine, "forwardx-managed-official-mieru");
   assert.equal(bundle.safety.clashMiRead, false);
   assert.equal(bundle.safety.clashMiMutation, false);
+  assert.deepEqual(bundle.topology.privateLeg.clientVisibleIngress, runtimeInput.privateCarrierClientEndpoint.endpoint);
+});
+
+test("fails closed when the client-visible Mieru ingress is unresolved", () => {
+  assert.throws(() => buildDualMultipathGrayRuntimeBundle(grayDraft(), {
+    ...runtimeInput,
+    privateCarrierClientEndpoint: { status: "unresolved", endpoint: null },
+  }), /verified client-visible Mieru ingress/);
 });
 
 test("server Gray binds HY2 only to discovered public address while multipath remains loopback-only", () => {

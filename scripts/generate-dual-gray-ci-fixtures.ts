@@ -32,16 +32,28 @@ const draft = dualMultipathDraftSchema.parse({
   ],
 });
 
+const syntheticClientEndpoint = {
+  status: "verified-read-only" as const,
+  endpoint: { server: "198.51.100.23", port: 11464, protocol: "TCP" as const },
+  evidence: {
+    snapshotId: "synthetic-ci-private-carrier-ingress",
+    targetId: "synthetic-ci-windows-client",
+    observedAt: "2026-08-30T00:00:00Z",
+    discoverySource: "synthetic-test" as const,
+  },
+};
+
 const bundle = buildDualMultipathGrayRuntimeBundle(draft, {
   windowsSidecarIngressPort: 24180,
   windowsPrivateSocksPort: 24181,
+  privateCarrierClientEndpoint: syntheticClientEndpoint,
   hy2Port: 61464,
   tlsServerName: "forwardx-dual-gray.test",
   tlsCertificatePath: certificatePath,
   tlsPrivateKeyPath: keyPath,
   tlsMode: "self-signed-gray",
 });
-const mieruConfig = materializeDualMieruClientConfig(draft, 24181, {
+const mieruConfig = materializeDualMieruClientConfig(draft, 24181, syntheticClientEndpoint, {
   username: "forwardx-gray-test-user",
   password: "forwardx-gray-test-password",
 });
