@@ -25,11 +25,22 @@ export function selectProtocolFeedAddressFamily(
   ipv6ByEndpoint: ReadonlyMap<number, string> = new Map(),
 ): ProtocolFeedEntry[] {
   if (ipVersion === "4") return entries;
-  return entries.map((entry) => {
+
+  const selected: ProtocolFeedEntry[] = [];
+  let firstUnavailable: ProtocolFeedEntry | undefined;
+  for (const entry of entries) {
     const ipv6 = String(ipv6ByEndpoint.get(Number(entry.endpointId)) || "").trim();
-    if (!ipv6) throw new ProtocolFeedIpv6UnavailableError(entry);
-    return { ...entry, publicHost: ipv6 };
-  });
+    if (!ipv6) {
+      firstUnavailable ||= entry;
+      continue;
+    }
+    selected.push({ ...entry, publicHost: ipv6 });
+  }
+
+  if (selected.length === 0 && firstUnavailable) {
+    throw new ProtocolFeedIpv6UnavailableError(firstUnavailable);
+  }
+  return selected;
 }
 
 export async function selectProtocolFeedEntriesForIpVersion(
