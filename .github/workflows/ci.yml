@@ -279,6 +279,14 @@ jobs:
           MIERU="$RUNNER_TEMP/dual-openwrt-arm64-gray/mieru-linux-arm64"
           readelf -h "$SINGBOX" | grep -q 'Machine:.*AArch64'
           readelf -h "$MIERU" | grep -q 'Machine:.*AArch64'
+          if readelf -l "$SINGBOX" | grep -q 'INTERP'; then
+            echo "Pinned singbox-multipath arm64 candidate unexpectedly requires a dynamic loader" >&2
+            exit 1
+          fi
+          if readelf -l "$MIERU" | grep -q 'INTERP'; then
+            echo "Official Mieru Linux arm64 candidate requires a dynamic loader; unsafe to assume OpenWrt compatibility" >&2
+            exit 1
+          fi
           grep -q '"targetArchitectureVerified": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
           grep -q '"runtimeActivation": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
           grep -q '"deployment": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
