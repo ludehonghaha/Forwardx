@@ -117,7 +117,7 @@ done
 
 MIERU_CONFIG_JSON_FILE="$MIERU_CONFIG" "$MIERU_BIN" run &
 MIERU_PID=$!
-for _ in $(seq 1 150); do
+for ((attempt=0; attempt<150; attempt++)); do
   kill -0 "$MIERU_PID" 2>/dev/null || { echo "Managed Mieru child exited before 24181 became ready" >&2; exit 1; }
   if nc -z 127.0.0.1 24181 >/dev/null 2>&1; then break; fi
   sleep 0.1
@@ -126,7 +126,7 @@ nc -z 127.0.0.1 24181 >/dev/null 2>&1 || { echo "Timed out waiting for Mieru 127
 
 "$MULTIPATH_BIN" run -c "$DUAL_CONFIG" &
 MULTIPATH_PID=$!
-for _ in $(seq 1 150); do
+for ((attempt=0; attempt<150; attempt++)); do
   kill -0 "$MULTIPATH_PID" 2>/dev/null || { echo "Managed multipath child exited before 24180 became ready" >&2; exit 1; }
   if nc -z 127.0.0.1 24180 >/dev/null 2>&1; then break; fi
   sleep 0.1
