@@ -1,5 +1,10 @@
 import express from "express";
 import { getProtocolFeedByToken } from "./repositories/protocolAccessRepository";
+import {
+  ProtocolFeedIpv6UnavailableError,
+  parseProtocolFeedIpVersion,
+  selectProtocolFeedEntriesForIpVersion,
+} from "./protocolFeedIpVersion";
 import { renderProtocolMihomoSubscription, renderProtocolUriSubscription } from "./protocolSubscription";
 
 export const protocolFeedRouter = express.Router();
@@ -38,11 +43,39 @@ async function loadFeed(req: express.Request, res: express.Response) {
   return feed;
 }
 
+async function entriesForRequest(
+  req: express.Request,
+  res: express.Response,
+  feed: NonNullable<Awaited<ReturnType<typeof getProtocolFeedByToken>>>,
+) {
+  let ipVersion;
+  try {
+    ipVersion = parseProtocolFeedIpVersion(req.query.ipVersion);
+  } catch (error) {
+    setFeedHeaders(res, feed, 0);
+    res.status(400).type("text/plain").send(error instanceof Error ? error.message : "ipVersion 必须是 4 或 6");
+    return undefined;
+  }
+
+  try {
+    return await selectProtocolFeedEntriesForIpVersion(feed.entries, ipVersion);
+  } catch (error) {
+    if (error instanceof ProtocolFeedIpv6UnavailableError) {
+      setFeedHeaders(res, feed, 0);
+      res.status(422).type("text/plain").send(error.message);
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 protocolFeedRouter.get("/api/v1/access-feed/:token/mihomo", async (req, res, next) => {
   try {
     const feed = await loadFeed(req, res);
     if (!feed) return;
-    const rendered = renderProtocolMihomoSubscription(feed.entries);
+    const entries = await entriesForRequest(req, res, feed);
+    if (!entries) return;
+    const rendered = renderProtocolMihomoSubscription(entries);
     if (rendered.included === 0) {
       setFeedHeaders(res, feed, rendered.skipped.length);
       res.status(404).type("text/plain").send("No compatible protocol entries");
@@ -59,7 +92,9 @@ protocolFeedRouter.get("/api/v1/access-feed/:token", async (req, res, next) => {
   try {
     const feed = await loadFeed(req, res);
     if (!feed) return;
-    const rendered = renderProtocolUriSubscription(feed.entries);
+    const entries = await entriesForRequest(req, res, feed);
+    if (!entries) return;
+    const rendered = renderProtocolUriSubscription(entries);
     if (rendered.included === 0) {
       setFeedHeaders(res, feed, rendered.skipped.length);
       res.status(404).type("text/plain").send("No compatible protocol entries; use the Mihomo feed for chained protocols");
