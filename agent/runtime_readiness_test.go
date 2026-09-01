@@ -193,6 +193,98 @@ func TestXrayOnlyConfiguredPortIsNotReportedAsGost(t *testing.T) {
 	}
 }
 
+func TestLocalRuntimeHeartbeatReconcilesXrayListenerTransitions(t *testing.T) {
+	localRuntimeStateMu.Lock()
+	previousSignature := lastLocalRuntimeStateSignature
+	previousForceSend := forceSendLocalRuntimeState
+	lastLocalRuntimeStateSignature = ""
+	forceSendLocalRuntimeState = true
+	localRuntimeStateMu.Unlock()
+	t.Cleanup(func() {
+		localRuntimeStateMu.Lock()
+		lastLocalRuntimeStateSignature = previousSignature
+		forceSendLocalRuntimeState = previousForceSend
+		localRuntimeStateMu.Unlock()
+	})
+
+	state := func(ready bool) localRuntimeStatePayload {
+		return localRuntimeStatePayload{
+			Services:  []localRuntimeServiceState{{Name: xrayServiceName, Active: true, HasWork: true}},
+			Listeners: []localRuntimeListenerState{{Runtime: "xray", Port: 32676, Protocol: "tcp", Ready: ready}},
+		}
+	}
+	assertUploadedReady := func(want bool) {
+		t.Helper()
+		_, uploaded := localRuntimeStateUploadForHeartbeat(state(want))
+		if uploaded == nil || len(uploaded.Listeners) != 1 || uploaded.Listeners[0].Ready != want {
+			t.Fatalf("uploaded state = %#v, want listener ready=%v", uploaded, want)
+		}
+	}
+
+	assertUploadedReady(false)
+	if _, duplicate := localRuntimeStateUploadForHeartbeat(state(false)); duplicate != nil {
+		t.Fatalf("unchanged failed listener state was uploaded again: %#v", duplicate)
+	}
+	requestLocalRuntimeStateUpload()
+	assertUploadedReady(false)
+	assertUploadedReady(true)
+	assertUploadedReady(false)
+	assertUploadedReady(true)
+}
+
+func TestXrayRuntimeSyncUsesIndependentListenerVerification(t *testing.T) {
+	a := action{
+		StatusType:  "runtime",
+		Op:          "apply",
+		ForwardType: "xray-runtime-sync",
+		ManagedConfigs: []managedConfigSpec{{
+			Path:        xrayConfigPath,
+			ServiceName: xrayServiceName,
+		}},
+	}
+	if !shouldVerifyManagedRuntimeSync(a) {
+		t.Fatal("Xray runtime sync did not require listener verification")
+	}
+	wantNeedles := []string{"xray", "forwardx-xray"}
+	if got := managedRuntimeProcessNeedles(a.ManagedConfigs[0]); !reflect.DeepEqual(got, wantNeedles) {
+		t.Fatalf("Xray process needles = %#v, want %#v", got, wantNeedles)
+	}
+}
+
+func TestManagedRuntimeSyncReadyRetriesUntilListenerStarts(t *testing.T) {
+	attempts := 0
+	sleeps := []time.Duration{}
+	ready := func(action) bool {
+		attempts++
+		return attempts == 4
+	}
+	if !waitForManagedRuntimeSyncReadyWith(action{}, 10, time.Second, ready, func(delay time.Duration) {
+		sleeps = append(sleeps, delay)
+	}) {
+		t.Fatal("listener retry did not accept a later successful check")
+	}
+	if attempts != 4 || !reflect.DeepEqual(sleeps, []time.Duration{time.Second, time.Second, time.Second}) {
+		t.Fatalf("retry attempts=%d sleeps=%v", attempts, sleeps)
+	}
+}
+
+func TestManagedRuntimeSyncReadyFailsAfterBoundedRetries(t *testing.T) {
+	attempts := 0
+	sleeps := 0
+	ready := func(action) bool {
+		attempts++
+		return false
+	}
+	if waitForManagedRuntimeSyncReadyWith(action{}, 10, time.Second, ready, func(time.Duration) {
+		sleeps++
+	}) {
+		t.Fatal("listener retry reported success after every check failed")
+	}
+	if attempts != 10 || sleeps != 9 {
+		t.Fatalf("bounded retry attempts=%d sleeps=%d, want attempts=10 sleeps=9", attempts, sleeps)
+	}
+}
+
 func TestGostRuntimeReadinessCacheSeparatesMainAndTunnelScopes(t *testing.T) {
 	mainKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostMainRuntimeScope)
 	tunnelKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostTunnelRuntimeScope)

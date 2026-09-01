@@ -282,6 +282,41 @@ test("Xray service failure is reported as Reality runtime unhealthy", () => {
   assert.match(result.lastError || "", /forwardx-xray/);
 });
 
+test("Reality listener health reconciles failed, recovered, failed, recovered without retaining an active error", () => {
+  const input = {
+    endpoint: endpoint({ protocol: "vless_reality", configJson: { listenPort: 32676 } }),
+    host: host({ agentVersion: "2.2.198" }),
+    hostProtocolRevision: 12,
+  };
+  const project = (ready: boolean) => projectProtocolEndpointRuntimeStatus({
+    ...input,
+    localState: xrayState([{ runtime: "xray", port: 32676, protocol: "tcp", ready }]),
+  });
+
+  const initialFailure = project(false);
+  const historicalLastError = initialFailure.lastError;
+  assert.equal(initialFailure.state, "unhealthy");
+  assert.equal(initialFailure.listenerHealthy, false);
+  assert.match(historicalLastError || "", /TCP.*32676/);
+
+  const firstRecovery = project(true);
+  assert.equal(firstRecovery.state, "healthy");
+  assert.equal(firstRecovery.listenerHealthy, true);
+  assert.equal(firstRecovery.lastError, null);
+  assert.match(historicalLastError || "", /TCP.*32676/, "historical error may remain outside current health");
+
+  const secondFailure = project(false);
+  assert.equal(secondFailure.state, "unhealthy");
+  assert.equal(secondFailure.listenerHealthy, false);
+  assert.match(secondFailure.lastError || "", /TCP.*32676/);
+
+  const secondRecovery = project(true);
+  assert.equal(secondRecovery.state, "healthy");
+  assert.equal(secondRecovery.listenerHealthy, true);
+  assert.equal(secondRecovery.lastError, null);
+  assert.equal(secondRecovery.label, "运行正常");
+});
+
 test("managed entry protocols stay pending until the Agent applies their revision", () => {
   const result = projectProtocolEndpointRuntimeStatus({
     endpoint: endpoint({ protocol: "vless_reality" }),

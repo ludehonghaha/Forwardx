@@ -335,6 +335,9 @@ var forceSendLocalRuntimeState = true
 // 在 SSE 唤醒风暴（churn）期间可消除重复的 ss/systemctl 调用。
 const localRuntimeReadinessCacheTTL = 5 * time.Second
 
+const xrayRuntimeSyncReadyMaxAttempts = 10
+const xrayRuntimeSyncReadyRetryInterval = time.Second
+
 var localRuntimeReadinessCacheMu sync.Mutex
 var localRuntimeReadinessCacheResult *localRuntimeReadiness
 var localRuntimeReadinessCachedAt time.Time
@@ -2401,7 +2404,10 @@ func localRuntimeStateSignature(state localRuntimeStatePayload) string {
 }
 
 func localRuntimeStateForHeartbeat() (string, *localRuntimeStatePayload) {
-	state := readLocalRuntimeStatePayload()
+	return localRuntimeStateUploadForHeartbeat(readLocalRuntimeStatePayload())
+}
+
+func localRuntimeStateUploadForHeartbeat(state localRuntimeStatePayload) (string, *localRuntimeStatePayload) {
 	signature := localRuntimeStateSignature(state)
 	localRuntimeStateMu.Lock()
 	sendFull := forceSendLocalRuntimeState || signature != lastLocalRuntimeStateSignature
@@ -4889,6 +4895,9 @@ func handleActionJobWithRuntimeSnapshot(cfg Config, a action, releaseRuntimeGate
 			if mimicAction && shouldLogAgentReport("mimic-runtime-skip", agentReportLogInterval) {
 				logf("mimic runtime sync skipped; cached state healthy diagnostics=%s", mimicRuntimeDiagnostics())
 			}
+			if strings.TrimSpace(a.ForwardType) == "xray-runtime-sync" {
+				requestLocalRuntimeStateUpload()
+			}
 			return true
 		}
 		if wireGuardAction {
@@ -4989,7 +4998,11 @@ func handleActionJobWithRuntimeSnapshot(cfg Config, a action, releaseRuntimeGate
 			logf("runtime action complete forwardType=%s ok=%v", a.ForwardType, ok)
 		}
 		rememberRuntimeActionResult(a, ok)
-		invalidateLocalRuntimeReadinessCache()
+		if strings.TrimSpace(a.ForwardType) == "xray-runtime-sync" {
+			requestLocalRuntimeStateUpload()
+		} else {
+			invalidateLocalRuntimeReadinessCache()
+		}
 		if a.ReportStatus != nil && *a.ReportStatus {
 			if !ok {
 				message := strings.TrimSpace(actionMessage.get())
@@ -5617,7 +5630,7 @@ func shouldVerifyManagedRuntimeSync(a action) bool {
 		return false
 	}
 	switch strings.TrimSpace(a.ForwardType) {
-	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync", "mihomo-runtime-sync":
+	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync", "mihomo-runtime-sync", "xray-runtime-sync":
 		return true
 	default:
 		return false
@@ -5625,6 +5638,15 @@ func shouldVerifyManagedRuntimeSync(a action) bool {
 }
 
 func waitForManagedRuntimeSyncReady(a action, timeout time.Duration) bool {
+	if strings.TrimSpace(a.ForwardType) == "xray-runtime-sync" {
+		return waitForManagedRuntimeSyncReadyWith(
+			a,
+			xrayRuntimeSyncReadyMaxAttempts,
+			xrayRuntimeSyncReadyRetryInterval,
+			managedRuntimeSyncReady,
+			time.Sleep,
+		)
+	}
 	if managedRuntimeSyncReady(a) {
 		return true
 	}
@@ -5636,6 +5658,45 @@ func waitForManagedRuntimeSyncReady(a action, timeout time.Duration) bool {
 		}
 	}
 	return managedRuntimeSyncReady(a)
+}
+
+func waitForManagedRuntimeSyncReadyWith(
+	a action,
+	maxAttempts int,
+	retryInterval time.Duration,
+	ready func(action) bool,
+	sleep func(time.Duration),
+) bool {
+	if maxAttempts <= 0 || ready == nil {
+		return false
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if ready(a) {
+			return true
+		}
+		if attempt+1 < maxAttempts && sleep != nil {
+			sleep(retryInterval)
+		}
+	}
+	return false
+}
+
+func managedRuntimeProcessNeedles(spec managedConfigSpec) []string {
+	service := strings.ToLower(strings.TrimSpace(spec.ServiceName))
+	path := strings.ToLower(strings.TrimSpace(spec.Path))
+	if strings.Contains(service, "mita") || strings.Contains(path, "mieru") || strings.Contains(path, "/mita/") {
+		return []string{"mita", "forwardx-mita"}
+	}
+	if strings.Contains(service, "mihomo") || strings.Contains(path, "/mihomo/") {
+		return []string{"mihomo", "forwardx-mihomo"}
+	}
+	if strings.Contains(service, "xray") || strings.Contains(path, "/xray/") {
+		return []string{"xray", "forwardx-xray"}
+	}
+	if strings.Contains(service, "nginx") || strings.Contains(path, "nginx") {
+		return []string{"nginx"}
+	}
+	return []string{"gost", "forwardx-runt"}
 }
 
 func managedRuntimeSyncReady(a action) bool {
@@ -5658,14 +5719,7 @@ func managedRuntimeSyncReady(a action) bool {
 		if !managedServiceActive(service) {
 			return false
 		}
-		needles := []string{"gost", "forwardx-runt"}
-		if strings.Contains(strings.ToLower(service), "mita") || strings.Contains(strings.ToLower(spec.Path), "mieru") || strings.Contains(strings.ToLower(spec.Path), "/mita/") {
-			needles = []string{"mita", "forwardx-mita"}
-		} else if strings.Contains(strings.ToLower(service), "mihomo") || strings.Contains(strings.ToLower(spec.Path), "/mihomo/") {
-			needles = []string{"mihomo", "forwardx-mihomo"}
-		} else if strings.Contains(strings.ToLower(service), "nginx") || strings.Contains(strings.ToLower(spec.Path), "nginx") {
-			needles = []string{"nginx"}
-		}
+		needles := managedRuntimeProcessNeedles(spec)
 		for _, listen := range listens {
 			port := addrPort(listen.Addr)
 			if port <= 0 || !runtimeListenPortReady(snapshot, port, listen.Protocol, needles) {
