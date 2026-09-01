@@ -939,16 +939,19 @@ type localRuntimeReadiness struct {
 	nginxRuntimePorts          map[int]bool
 	mieruRuntimePorts          map[int]bool
 	mihomoRuntimePorts         map[int]bool
+	xrayRuntimePorts           map[int]bool
 	gostRuntimePortProtocols   map[int]map[string]bool
 	tunnelRuntimePortProtocols map[int]map[string]bool
 	nginxRuntimePortProtocols  map[int]map[string]bool
 	mieruRuntimePortProtocols  map[int]map[string]bool
 	mihomoRuntimePortProtocols map[int]map[string]bool
+	xrayRuntimePortProtocols   map[int]map[string]bool
 	gostRuntimeReady           bool
 	tunnelRuntimeReady         bool
 	nginxRuntimeReady          bool
 	mieruRuntimeReady          bool
 	mihomoRuntimeReady         bool
+	xrayRuntimeReady           bool
 	sharedRuntimeReady         bool
 	serviceStates              []localRuntimeServiceState
 	serviceActiveCache         map[string]bool
@@ -1045,16 +1048,19 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		nginxRuntimePorts:          map[int]bool{},
 		mieruRuntimePorts:          map[int]bool{},
 		mihomoRuntimePorts:         map[int]bool{},
+		xrayRuntimePorts:           map[int]bool{},
 		gostRuntimePortProtocols:   map[int]map[string]bool{},
 		tunnelRuntimePortProtocols: map[int]map[string]bool{},
 		nginxRuntimePortProtocols:  map[int]map[string]bool{},
 		mieruRuntimePortProtocols:  map[int]map[string]bool{},
 		mihomoRuntimePortProtocols: map[int]map[string]bool{},
+		xrayRuntimePortProtocols:   map[int]map[string]bool{},
 		gostRuntimeReady:           true,
 		tunnelRuntimeReady:         true,
 		nginxRuntimeReady:          true,
 		mieruRuntimeReady:          true,
 		mihomoRuntimeReady:         true,
+		xrayRuntimeReady:           true,
 		sharedRuntimeReady:         true,
 		serviceActiveCache:         map[string]bool{},
 		kernelSnapshot:             newKernelForwardSnapshot(),
@@ -1098,6 +1104,9 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 				case "mihomo":
 					readiness.mihomoRuntimePorts[port] = true
 					addRuntimePortProtocol(readiness.mihomoRuntimePortProtocols, port, protocol)
+				case "xray":
+					readiness.xrayRuntimePorts[port] = true
+					addRuntimePortProtocol(readiness.xrayRuntimePortProtocols, port, protocol)
 				case "nginx":
 					readiness.nginxRuntimePorts[port] = true
 					addRuntimePortProtocol(readiness.nginxRuntimePortProtocols, port, protocol)
@@ -1124,6 +1133,8 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 				readiness.mieruRuntimeReady = false
 			case "mihomo":
 				readiness.mihomoRuntimeReady = false
+			case "xray":
+				readiness.xrayRuntimeReady = false
 			case "nginx":
 				readiness.nginxRuntimeReady = false
 			case "tunnel-gost":
@@ -1306,6 +1317,16 @@ func (r *localRuntimeReadiness) mihomoReadyForPort(port int, protocol string) bo
 		r.mihomoRuntimePorts[port] &&
 		runtimePortProtocolConfigured(r.mihomoRuntimePortProtocols, port, protocol) &&
 		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"mihomo", "forwardx-mihomo"})
+}
+
+func (r *localRuntimeReadiness) xrayReadyForPort(port int, protocol string) bool {
+	if r == nil || port <= 0 {
+		return false
+	}
+	return r.xrayRuntimeReady &&
+		r.xrayRuntimePorts[port] &&
+		runtimePortProtocolConfigured(r.xrayRuntimePortProtocols, port, protocol) &&
+		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"xray", "forwardx-xray"})
 }
 
 func addrPort(addr string) int {
@@ -2241,6 +2262,7 @@ func localRuntimeListenerStates(readiness *localRuntimeReadiness) []localRuntime
 	appendStates("nginx", readiness.nginxRuntimePortProtocols, readiness.nginxReadyForPort)
 	appendStates("mieru", readiness.mieruRuntimePortProtocols, readiness.mieruReadyForPort)
 	appendStates("mihomo", readiness.mihomoRuntimePortProtocols, readiness.mihomoReadyForPort)
+	appendStates("xray", readiness.xrayRuntimePortProtocols, readiness.xrayReadyForPort)
 	sort.Slice(listeners, func(i, j int) bool {
 		if listeners[i].Runtime != listeners[j].Runtime {
 			return listeners[i].Runtime < listeners[j].Runtime

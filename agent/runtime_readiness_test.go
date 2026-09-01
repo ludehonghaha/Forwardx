@@ -107,6 +107,92 @@ func TestLocalRuntimeStateReportsConfiguredListenerReadiness(t *testing.T) {
 	}
 }
 
+func TestLocalRuntimeStateReportsXrayListenerIndependentlyFromGost(t *testing.T) {
+	const port = 24568
+	tests := []struct {
+		name       string
+		listenLine string
+		wantXray   bool
+		wantGost   bool
+	}{
+		{
+			name:       "forwardx-xray listener",
+			listenLine: `tcp LISTEN 0 4096 *:24568 *:* users:(("forwardx-xray",pid=51,fd=3))`,
+			wantXray:   true,
+			wantGost:   false,
+		},
+		{
+			name:       "gost listener on same port",
+			listenLine: `tcp LISTEN 0 4096 *:24568 *:* users:(("forwardx-runtim",pid=52,fd=3))`,
+			wantXray:   false,
+			wantGost:   true,
+		},
+		{
+			name:       "IPv6 wildcard forwardx-xray listener",
+			listenLine: `tcp LISTEN 0 4096 [::]:24568 [::]:* users:(("forwardx-xray",pid=53,fd=3))`,
+			wantXray:   true,
+			wantGost:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := &runtimeListenSnapshot{
+				tcpPorts: map[int][]string{},
+				udpPorts: map[int][]string{},
+			}
+			snapshot.parseSSListenOutput(tt.listenLine)
+			readiness := localRuntimeReadiness{
+				gostRuntimePorts:           map[int]bool{port: true},
+				xrayRuntimePorts:           map[int]bool{port: true},
+				gostRuntimePortProtocols:   map[int]map[string]bool{port: {"tcp": true}},
+				xrayRuntimePortProtocols:   map[int]map[string]bool{port: {"tcp": true}},
+				gostRuntimeReady:           true,
+				xrayRuntimeReady:           true,
+				tunnelRuntimePortProtocols: map[int]map[string]bool{},
+				nginxRuntimePortProtocols:  map[int]map[string]bool{},
+				mieruRuntimePortProtocols:  map[int]map[string]bool{},
+				mihomoRuntimePortProtocols: map[int]map[string]bool{},
+				listenSnapshot:             snapshot,
+			}
+
+			got := localRuntimeListenerStates(&readiness)
+			want := []localRuntimeListenerState{
+				{Runtime: "gost", Port: port, Protocol: "tcp", Ready: tt.wantGost},
+				{Runtime: "xray", Port: port, Protocol: "tcp", Ready: tt.wantXray},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("listener states = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
+func TestXrayOnlyConfiguredPortIsNotReportedAsGost(t *testing.T) {
+	const port = 24569
+	readiness := localRuntimeReadiness{
+		xrayRuntimePorts:         map[int]bool{port: true},
+		xrayRuntimePortProtocols: map[int]map[string]bool{port: {"tcp": true}},
+		xrayRuntimeReady:         true,
+		gostRuntimePortProtocols: map[int]map[string]bool{},
+		listenSnapshot: &runtimeListenSnapshot{
+			tcpPorts: map[int][]string{
+				port: {`tcp LISTEN 0 4096 *:24569 *:* users:(("forwardx-xray",pid=54,fd=3))`},
+			},
+			udpPorts: map[int][]string{},
+			usable:   true,
+		},
+	}
+
+	got := localRuntimeListenerStates(&readiness)
+	want := []localRuntimeListenerState{
+		{Runtime: "xray", Port: port, Protocol: "tcp", Ready: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("listener states = %#v, want %#v", got, want)
+	}
+}
+
 func TestGostRuntimeReadinessCacheSeparatesMainAndTunnelScopes(t *testing.T) {
 	mainKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostMainRuntimeScope)
 	tunnelKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostTunnelRuntimeScope)
