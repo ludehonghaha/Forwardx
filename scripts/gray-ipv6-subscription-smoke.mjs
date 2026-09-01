@@ -108,6 +108,7 @@ function seedGrayProtocolData() {
         now,
       );
       insertAccess.run(Number(dualEndpoint.lastInsertRowid), dualUser.id, now, now);
+      insertAccess.run(Number(ipv4OnlyEndpoint.lastInsertRowid), dualUser.id, now, now);
       insertAccess.run(Number(ipv4OnlyEndpoint.lastInsertRowid), ipv4OnlyUser.id, now, now);
       insertToken.run(dualUser.id, DUAL_TOKEN, now, now);
       insertToken.run(ipv4OnlyUser.id, IPV4_ONLY_TOKEN, now, now);
@@ -117,11 +118,15 @@ function seedGrayProtocolData() {
   }
 }
 
-async function responseText(pathname, expectedStatus = 200) {
+async function fetchResponse(pathname, expectedStatus = 200) {
   const response = await fetch(`${apiBase}${pathname}`, { redirect: "error" });
   const text = await response.text();
   assert.equal(response.status, expectedStatus, `${pathname} returned ${response.status}: ${text}`);
-  return text;
+  return { response, text };
+}
+
+async function responseText(pathname, expectedStatus = 200) {
+  return (await fetchResponse(pathname, expectedStatus)).text;
 }
 
 function decodeUriFeed(body) {
@@ -131,17 +136,24 @@ function decodeUriFeed(body) {
 async function verifyGrayFeeds() {
   const defaultFeed = decodeUriFeed(await responseText(`/api/v1/access-feed/${DUAL_TOKEN}`));
   assert.match(defaultFeed, /@198\.51\.100\.41:18443#/);
+  assert.match(defaultFeed, /@192\.0\.2\.21:18444#/);
 
   const ipv4Feed = decodeUriFeed(await responseText(`/api/v1/access-feed/${DUAL_TOKEN}?ipVersion=4`));
   assert.match(ipv4Feed, /@198\.51\.100\.41:18443#/);
+  assert.match(ipv4Feed, /@192\.0\.2\.21:18444#/);
 
-  const ipv6Feed = decodeUriFeed(await responseText(`/api/v1/access-feed/${DUAL_TOKEN}?ipVersion=6`));
+  const ipv6Result = await fetchResponse(`/api/v1/access-feed/${DUAL_TOKEN}?ipVersion=6`);
+  const ipv6Feed = decodeUriFeed(ipv6Result.text);
   assert.match(ipv6Feed, /@\[2001:db8:10::41d\]:18443#/);
   assert.doesNotMatch(ipv6Feed, /198\.51\.100\.41/);
+  assert.doesNotMatch(ipv6Feed, /192\.0\.2\.21/);
+  assert.equal(ipv6Result.response.headers.get("x-forwardx-skipped-entries"), "1");
 
-  const mihomoIpv6 = await responseText(`/api/v1/access-feed/${DUAL_TOKEN}/mihomo?ipVersion=6`);
-  assert.match(mihomoIpv6, /server: "2001:db8:10::41d"/);
-  assert.match(mihomoIpv6, /port: 18443/);
+  const mihomoResult = await fetchResponse(`/api/v1/access-feed/${DUAL_TOKEN}/mihomo?ipVersion=6`);
+  assert.match(mihomoResult.text, /server: "2001:db8:10::41d"/);
+  assert.match(mihomoResult.text, /port: 18443/);
+  assert.doesNotMatch(mihomoResult.text, /192\.0\.2\.21/);
+  assert.equal(mihomoResult.response.headers.get("x-forwardx-skipped-entries"), "1");
 
   const noIpv6 = await responseText(`/api/v1/access-feed/${IPV4_ONLY_TOKEN}?ipVersion=6`, 422);
   assert.match(noIpv6, /没有可用 IPv6 地址/);
@@ -206,9 +218,11 @@ try {
   console.log("\n[IPv6 Gray] PASS");
   console.log("- default feed remains IPv4");
   console.log("- explicit ipVersion=4 remains IPv4");
+  console.log("- mixed IPv6 feed keeps dual-stack endpoints and skips IPv4-only endpoints");
+  console.log("- skipped IPv4-only endpoints are counted in response headers");
   console.log("- explicit ipVersion=6 uses hosts.ipv6 with bracketed URI literal");
   console.log("- Mihomo IPv6 server field uses the IPv6 host");
-  console.log("- IPv4-only endpoint returns 422 instead of falling back");
+  console.log("- all-IPv4 feed still returns 422 instead of falling back");
   console.log("- invalid ipVersion returns 400");
 } catch (error) {
   console.error("\n[IPv6 Gray] FAIL");
