@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.290] - 2026-09-01
+
+### 修复与优化
+
+- 修复混合 IPv4 / IPv6 用户订阅中，只要任一已分配端点没有 `hosts.ipv6` 就会让整个 `ipVersion=6` 订阅返回 `422`、导致 Shadowrocket 提示“服务器 URL 遇到问题”的问题。
+- `ipVersion=6` 现在只输出具备真实 IPv6 的端点；IPv4-only 端点会被跳过且绝不回退 IPv4。若该用户没有任何可用 IPv6 端点，仍明确返回 `422`。
+- `X-ForwardX-Skipped-Entries` 会计入因缺少 IPv6 被跳过的端点，并补充混合双栈/IPv4-only 的 URI、Mihomo 隔离灰度与单元测试覆盖。
+
+### 版本
+
+- 面板与 APK Release `2.3.290`，Agent `2.2.197`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.289] - 2026-09-01
 
 ### 新增
