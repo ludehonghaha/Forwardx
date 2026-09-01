@@ -309,3 +309,56 @@ jobs:
             ${{ runner.temp }}/dual-openwrt-arm64-gray/README-OPENWRT-ARM64-GRAY.txt
           if-no-files-found: error
           retention-days: 7
+
+  dual-macos-arm64-gray-artifact:
+    name: Dual macOS arm64 Gray artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Build pinned macOS arm64 Gray package
+        run: bash scripts/build-dual-macos-arm64-sidecar.sh "$RUNNER_TEMP/dual-macos-arm64-gray"
+
+      - name: Verify macOS artifact format, launcher, and safety metadata
+        run: |
+          ROOT="$RUNNER_TEMP/dual-macos-arm64-gray"
+          bash -n "$ROOT/run-forwardx-dual-gray.sh"
+          file "$ROOT/sing-box-macos-arm64" | grep -Eiq 'Mach-O.*arm64|Mach-O.*ARM64'
+          file "$ROOT/mieru-macos-arm64" | grep -Eiq 'Mach-O.*arm64|Mach-O.*ARM64'
+          grep -q '"runtimeConfigIncluded": false' "$ROOT/build-metadata.json"
+          grep -q '"secretMaterialIncluded": false' "$ROOT/build-metadata.json"
+          grep -q '"systemProxyMutation": false' "$ROOT/build-metadata.json"
+          grep -q '"routeMutation": false' "$ROOT/build-metadata.json"
+          grep -q '"runtimeActivation": false' "$ROOT/build-metadata.json"
+          grep -q '"deployment": false' "$ROOT/build-metadata.json"
+
+      - name: Upload macOS arm64 Gray package
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-macos-arm64
+          path: |
+            ${{ runner.temp }}/dual-macos-arm64-gray/sing-box-macos-arm64
+            ${{ runner.temp }}/dual-macos-arm64-gray/sing-box-macos-arm64.sha256
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-macos-arm64
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-macos-arm64.sha256
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-3.36.0-source.tar.gz
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-3.36.0-source.tar.gz.sha256
+            ${{ runner.temp }}/dual-macos-arm64-gray/MIERU-LICENSE-GPL-3.0.txt
+            ${{ runner.temp }}/dual-macos-arm64-gray/build-metadata.json
+            ${{ runner.temp }}/dual-macos-arm64-gray/SHA256SUMS.txt
+            ${{ runner.temp }}/dual-macos-arm64-gray/run-forwardx-dual-gray.sh
+            ${{ runner.temp }}/dual-macos-arm64-gray/README-MACOS-ARM64-GRAY.txt
+          if-no-files-found: error
+          retention-days: 7
