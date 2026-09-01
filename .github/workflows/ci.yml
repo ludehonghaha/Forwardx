@@ -251,3 +251,53 @@ jobs:
             ${{ runner.temp }}/dual-linux-gray/build-metadata.json
           if-no-files-found: error
           retention-days: 7
+
+  dual-openwrt-arm64-gray-artifact:
+    name: Dual OpenWrt/Linux arm64 Gray candidate artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Build pinned OpenWrt/Linux arm64 candidate
+        run: bash scripts/build-dual-openwrt-arm64-sidecar.sh "$RUNNER_TEMP/dual-openwrt-arm64-gray"
+
+      - name: Verify arm64 artifact architecture and safety metadata
+        run: |
+          SINGBOX="$RUNNER_TEMP/dual-openwrt-arm64-gray/sing-box-linux-arm64"
+          MIERU="$RUNNER_TEMP/dual-openwrt-arm64-gray/mieru-linux-arm64"
+          readelf -h "$SINGBOX" | grep -q 'Machine:.*AArch64'
+          readelf -h "$MIERU" | grep -q 'Machine:.*AArch64'
+          grep -q '"targetArchitectureVerified": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+          grep -q '"runtimeActivation": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+          grep -q '"deployment": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+          grep -q '"secretMaterialIncluded": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+
+      - name: Upload OpenWrt/Linux arm64 Gray candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-openwrt-linux-arm64
+          path: |
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/sing-box-linux-arm64
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/sing-box-linux-arm64.sha256
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-linux-arm64
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-linux-arm64.sha256
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-3.36.0-source.tar.gz
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-3.36.0-source.tar.gz.sha256
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/MIERU-LICENSE-GPL-3.0.txt
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/build-metadata.json
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/SHA256SUMS.txt
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/README-OPENWRT-ARM64-GRAY.txt
+          if-no-files-found: error
+          retention-days: 7
