@@ -48,6 +48,21 @@ test("explicit IPv6 selects the host IPv6 address", () => {
   assert.equal(selected[0]?.publicHost, "2001:db8::7");
 });
 
+test("explicit IPv6 skips IPv4-only endpoints without falling back", () => {
+  const selected = selectProtocolFeedAddressFamily(
+    [
+      entry(),
+      entry({ assignmentId: 12, endpointId: 8, name: "IPv4 only", publicHost: "198.51.100.8", publicPort: 13512 }),
+    ],
+    "6",
+    new Map([[7, "2001:db8::7"]]),
+  );
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0]?.endpointId, 7);
+  assert.equal(selected[0]?.publicHost, "2001:db8::7");
+  assert.ok(!selected.some((item) => item.publicHost === "198.51.100.8"));
+});
+
 test("IPv6 URI literals are bracketed", () => {
   const selected = selectProtocolFeedAddressFamily(
     [entry()],
@@ -59,7 +74,7 @@ test("IPv6 URI literals are bracketed", () => {
   assert.match(decoded, /@\[2001:db8::7\]:13511#/);
 });
 
-test("explicit IPv6 fails when an endpoint has no IPv6 instead of falling back", () => {
+test("explicit IPv6 still fails when no endpoint has IPv6", () => {
   assert.throws(
     () => selectProtocolFeedAddressFamily([entry()], "6", new Map()),
     (error: unknown) => error instanceof ProtocolFeedIpv6UnavailableError
