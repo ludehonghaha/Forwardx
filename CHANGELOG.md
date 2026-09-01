@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.291] - 2026-09-01
+
+### 修复与优化
+
+- 修复托管 VLESS + Reality / Xray 实际监听正常时，Agent 将 Xray 端口错误归类为 GOST，导致面板显示“TCP 监听未就绪”的问题。
+- Xray 现在拥有独立的 runtime ports、protocols 与 readiness 状态，并仅使用 Xray / forwardx-xray 监听进程判断健康状态。
+- 防止 GOST 与 Xray 在相同端口时互相冒充健康；IPv6 `[::]` 双栈监听继续正确识别。
+
+### 版本
+
+- 面板与 APK Release `2.3.291`，Agent `2.2.198`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.290] - 2026-09-01
 
 ### 修复与优化
