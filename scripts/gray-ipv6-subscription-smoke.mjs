@@ -58,18 +58,13 @@ function seedGrayProtocolData() {
     assert.equal(String(ipv4OnlyHost.ipv6 || ""), "", "IPv4-only dev host unexpectedly has IPv6");
 
     const now = Math.floor(Date.now() / 1000);
-    const removeExisting = db.transaction(() => {
+    db.transaction(() => {
       const rows = db.prepare("SELECT id FROM protocol_endpoints WHERE name IN (?, ?)")
         .all(DUAL_ENDPOINT_NAME, IPV4_ONLY_ENDPOINT_NAME);
-      for (const row of rows) {
-        db.prepare("DELETE FROM protocol_user_access WHERE endpointId = ?").run(row.id);
-      }
-      db.prepare("DELETE FROM protocol_endpoints WHERE name IN (?, ?)")
-        .run(DUAL_ENDPOINT_NAME, IPV4_ONLY_ENDPOINT_NAME);
-      db.prepare("DELETE FROM protocol_feed_tokens WHERE userId IN (?, ?)")
-        .run(dualUser.id, ipv4OnlyUser.id);
-    });
-    removeExisting();
+      for (const row of rows) db.prepare("DELETE FROM protocol_user_access WHERE endpointId = ?").run(row.id);
+      db.prepare("DELETE FROM protocol_endpoints WHERE name IN (?, ?)").run(DUAL_ENDPOINT_NAME, IPV4_ONLY_ENDPOINT_NAME);
+      db.prepare("DELETE FROM protocol_feed_tokens WHERE userId IN (?, ?)").run(dualUser.id, ipv4OnlyUser.id);
+    })();
 
     const insertEndpoint = db.prepare(`
       INSERT INTO protocol_endpoints (
@@ -89,7 +84,7 @@ function seedGrayProtocolData() {
       ) VALUES (?, ?, 1, NULL, ?, ?)
     `);
 
-    const seed = db.transaction(() => {
+    db.transaction(() => {
       const dualEndpoint = insertEndpoint.run(
         DUAL_ENDPOINT_NAME,
         dualHost.id,
@@ -116,8 +111,7 @@ function seedGrayProtocolData() {
       insertAccess.run(Number(ipv4OnlyEndpoint.lastInsertRowid), ipv4OnlyUser.id, now, now);
       insertToken.run(dualUser.id, DUAL_TOKEN, now, now);
       insertToken.run(ipv4OnlyUser.id, IPV4_ONLY_TOKEN, now, now);
-    });
-    seed();
+    })();
   } finally {
     db.close();
   }
@@ -156,8 +150,33 @@ async function verifyGrayFeeds() {
   assert.match(invalidVersion, /ipVersion 必须是 4 或 6/);
 }
 
-const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-const child = spawn(command, ["dev:panel"], {
+function waitForExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once("exit", onExit);
+  });
+}
+
+async function stopDevPanel(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  if (await waitForExit(child, 5_000)) return;
+  child.kill("SIGKILL");
+  await waitForExit(child, 5_000);
+}
+
+// Spawn the dev-panel Node process directly instead of `pnpm dev:panel`.
+// This makes SIGTERM reach scripts/dev-panel.mjs itself, whose shutdown handler
+// closes Vite and terminates its backend child before exiting.
+const child = spawn(process.execPath, ["scripts/dev-panel.mjs"], {
   cwd: root,
   env: {
     ...process.env,
@@ -166,7 +185,6 @@ const child = spawn(command, ["dev:panel"], {
     HOST: "127.0.0.1",
   },
   stdio: ["ignore", "pipe", "pipe"],
-  shell: process.platform === "win32",
 });
 
 let logs = "";
@@ -198,5 +216,5 @@ try {
   if (logs) console.error("\n[IPv6 Gray] dev-panel log tail:\n" + logs.slice(-5000));
   process.exitCode = 1;
 } finally {
-  if (!child.killed) child.kill("SIGTERM");
+  await stopDevPanel(child);
 }
