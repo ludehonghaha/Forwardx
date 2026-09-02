@@ -3,6 +3,7 @@ import {
   dualMultipathDraftSchema,
   dualPortSchema,
   dualPrivateCarrierClientEndpointDiscoverySchema,
+  dualSecretReferenceSchema,
   type DualMultipathDraftV5,
 } from "../shared/dualMultipath";
 import {
@@ -16,7 +17,7 @@ import {
   buildDualMieruClientConfigTemplate,
 } from "./dualMultipathMieruSidecar";
 
-export const DUAL_GRAY_RUNTIME_BUNDLE_VERSION = 3 as const;
+export const DUAL_GRAY_RUNTIME_BUNDLE_VERSION = 4 as const;
 export const DUAL_WINDOWS_GRAY_ARTIFACT = {
   platform: "windows" as const,
   architecture: "amd64" as const,
@@ -31,21 +32,103 @@ export const DUAL_LINUX_GRAY_ARTIFACT = {
   requiredBuildTag: "with_quic" as const,
 } as const;
 
+export const dualExistingForwardxHy2DiscoverySchema = z.object({
+  status: z.literal("verified-read-only"),
+  externalEndpoint: z.object({
+    server: z.string().trim().min(1).max(255),
+    port: dualPortSchema,
+    protocol: z.literal("UDP"),
+  }).strict(),
+  actualListener: z.object({
+    listen: z.string().trim().min(1).max(255),
+    port: dualPortSchema,
+    protocol: z.literal("UDP"),
+  }).strict(),
+  runtimeOwner: z.object({
+    service: z.string().trim().min(1).max(255),
+    process: z.string().trim().min(1).max(255),
+    networkNamespace: z.literal("host"),
+    configPath: z.string().trim().min(1).max(1024),
+  }).strict(),
+  mapping: z.object({
+    type: z.literal("forwardx-runtime-udp-forwarder"),
+    service: z.string().trim().min(1).max(255),
+    externalPort: dualPortSchema,
+    targetHost: z.literal("127.0.0.1"),
+    targetPort: dualPortSchema,
+  }).strict(),
+  tls: z.object({
+    serverName: z.string().trim().min(1).max(255),
+    insecure: z.boolean(),
+  }).strict(),
+  authSecretRef: dualSecretReferenceSchema,
+  obfs: z.object({
+    type: z.literal("salamander"),
+    passwordSecretRef: dualSecretReferenceSchema,
+  }).strict().optional(),
+  evidence: z.object({
+    snapshotId: z.string().trim().min(1).max(128),
+    targetId: z.string().trim().min(1).max(128),
+    observedAt: z.string().datetime({ offset: true }),
+    discoverySource: z.literal("forwardx-agent-runtime-read-only"),
+  }).strict(),
+}).strict().superRefine((input, ctx) => {
+  if (input.mapping.externalPort !== input.externalEndpoint.port) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["mapping", "externalPort"],
+      message: "ForwardX HY2 mapping externalPort 必须匹配 client-visible endpoint",
+    });
+  }
+  if (input.mapping.targetPort !== input.actualListener.port) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["mapping", "targetPort"],
+      message: "ForwardX HY2 mapping targetPort 必须匹配实际 listener",
+    });
+  }
+});
+
+export type DualExistingForwardxHy2Discovery = z.output<typeof dualExistingForwardxHy2DiscoverySchema>;
+
 export const dualGrayRuntimeInputSchema = z.object({
   windowsSidecarIngressPort: dualPortSchema,
   windowsPrivateSocksPort: dualPortSchema,
   privateCarrierClientEndpoint: dualPrivateCarrierClientEndpointDiscoverySchema,
-  hy2Port: dualPortSchema,
-  tlsServerName: z.string().trim().min(1).max(255),
-  tlsCertificatePath: z.string().trim().min(1).max(1024),
-  tlsPrivateKeyPath: z.string().trim().min(1).max(1024),
-  tlsMode: z.literal("self-signed-gray"),
+  hy2Port: dualPortSchema.optional(),
+  tlsServerName: z.string().trim().min(1).max(255).optional(),
+  tlsCertificatePath: z.string().trim().min(1).max(1024).optional(),
+  tlsPrivateKeyPath: z.string().trim().min(1).max(1024).optional(),
+  tlsMode: z.literal("self-signed-gray").optional(),
+  existingForwardxHy2: dualExistingForwardxHy2DiscoverySchema.optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.windowsSidecarIngressPort === input.windowsPrivateSocksPort) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["windowsPrivateSocksPort"],
       message: "Windows Gray sidecar ingress 与 private SOCKS 不能使用同一端口",
+    });
+  }
+  const newGrayFields = [
+    input.hy2Port,
+    input.tlsServerName,
+    input.tlsCertificatePath,
+    input.tlsPrivateKeyPath,
+    input.tlsMode,
+  ];
+  if (input.existingForwardxHy2) {
+    if (newGrayFields.some((value) => value !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["existingForwardxHy2"],
+        message: "复用现有 ForwardX HY2 时不得同时规划第二套 Gray HY2",
+      });
+    }
+  } else if (newGrayFields.some((value) => value === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["hy2Port"],
+      message: "新建 Gray HY2 必须提供端口、TLS 文件和 Gray TLS 模式",
     });
   }
 });
@@ -91,10 +174,13 @@ export function buildDualMultipathGrayRuntimeBundle(
   if (draft.line.server !== "127.0.0.1" || (draft.line.listen ?? "127.0.0.1") !== "127.0.0.1") {
     throw new Error("Dual Gray multipath target/listener 必须保持 127.0.0.1 loopback-only");
   }
-  if (input.hy2Port === serverTarget.existingPrivateCarrier.listener.port) {
+  const reusedHy2 = input.existingForwardxHy2;
+  const hy2Port = reusedHy2?.externalEndpoint.port ?? input.hy2Port;
+  if (!hy2Port) throw new Error("Dual Gray HY2 runtime input 无效");
+  if (hy2Port === serverTarget.existingPrivateCarrier.listener.port) {
     throw new Error("Dual Gray HY2 端口不能占用现有 Mita listener 端口");
   }
-  if (input.hy2Port === draft.serverRuntime.multipathListener.port) {
+  if (hy2Port === draft.serverRuntime.multipathListener.port) {
     throw new Error("Dual Gray HY2 端口不能与 multipath loopback listener 共用");
   }
   if (draft.privateCarrierBridge.type !== "forwardx-managed-mieru-sidecar") {
@@ -113,7 +199,10 @@ export function buildDualMultipathGrayRuntimeBundle(
   }
 
   const publicAddress = serverTarget.publicSide.sourceAddress;
-  const hy2Password = secretPlaceholder(draft.directCarrier.authSecretRef);
+  const hy2Server = reusedHy2?.externalEndpoint.server ?? publicAddress;
+  const hy2Password = secretPlaceholder(reusedHy2?.authSecretRef ?? draft.directCarrier.authSecretRef);
+  const hy2TlsServerName = reusedHy2?.tls.serverName ?? input.tlsServerName;
+  if (!hy2TlsServerName) throw new Error("Dual Gray HY2 TLS server name 未解析");
   const windowsMieruClientConfig = buildDualMieruClientConfigTemplate(
     draft,
     input.windowsPrivateSocksPort,
@@ -139,13 +228,19 @@ export function buildDualMultipathGrayRuntimeBundle(
       {
         type: "hysteria2" as const,
         tag: draft.legs[1].outboundTag,
-        server: publicAddress,
-        server_port: input.hy2Port,
+        server: hy2Server,
+        server_port: hy2Port,
         password: hy2Password,
+        ...(reusedHy2?.obfs ? {
+          obfs: {
+            type: reusedHy2.obfs.type,
+            password: secretPlaceholder(reusedHy2.obfs.passwordSecretRef),
+          },
+        } : {}),
         tls: {
           enabled: true as const,
-          server_name: input.tlsServerName,
-          insecure: true as const,
+          server_name: hy2TlsServerName,
+          insecure: reusedHy2?.tls.insecure ?? true,
         },
       },
       multipathOutbound,
@@ -153,24 +248,23 @@ export function buildDualMultipathGrayRuntimeBundle(
     route: { final: multipathOutbound.tag },
   };
 
+  const newGrayHy2Inbound = !reusedHy2 ? {
+    type: "hysteria2" as const,
+    tag: "forwardx-dual-gray-hy2-in",
+    listen: publicAddress,
+    listen_port: hy2Port,
+    users: [{ name: "forwardx-dual-gray", password: hy2Password }],
+    tls: {
+      enabled: true as const,
+      server_name: hy2TlsServerName,
+      certificate_path: input.tlsCertificatePath!,
+      key_path: input.tlsPrivateKeyPath!,
+    },
+  } : null;
+
   const serverConfig = {
     log: { level: "info" as const },
-    inbounds: [
-      {
-        type: "hysteria2" as const,
-        tag: "forwardx-dual-gray-hy2-in",
-        listen: publicAddress,
-        listen_port: input.hy2Port,
-        users: [{ name: "forwardx-dual-gray", password: hy2Password }],
-        tls: {
-          enabled: true as const,
-          server_name: input.tlsServerName,
-          certificate_path: input.tlsCertificatePath,
-          key_path: input.tlsPrivateKeyPath,
-        },
-      },
-      multipathInbound,
-    ],
+    inbounds: newGrayHy2Inbound ? [newGrayHy2Inbound, multipathInbound] : [multipathInbound],
     outbounds: [{ type: "direct" as const, tag: "direct" as const }],
     route: { final: "direct" as const },
   };
@@ -178,12 +272,16 @@ export function buildDualMultipathGrayRuntimeBundle(
   const blockers = [
     "Windows 两个本地 Gray 端口尚未在真实机器确认空闲",
     "真实 Mieru client username/password 尚未通过 Gray secret resolver 注入",
-    "Dual 服务端 Gray HY2 UDP 端口尚未在真实机器确认空闲",
-    "Gray 自签 TLS 仅用于隔离测试，不能作为生产 TLS 策略",
     "真实 HY2 auth secret 尚未通过 Gray secret resolver 注入",
-    "真实服务端证书/私钥文件尚未部署",
     "真实 Windows / Dual server materialized 配置尚未执行 sing-box check",
     "Gray runtime 尚未启动，健康检查与回滚尚未执行",
+    ...(reusedHy2 ? [
+      "现有 ForwardX HY2 能否代理到 loopback multipath target 尚未真机验证",
+    ] : [
+      "Dual 服务端 Gray HY2 UDP 端口尚未在真实机器确认空闲",
+      "Gray 自签 TLS 仅用于隔离测试，不能作为生产 TLS 策略",
+      "真实服务端证书/私钥文件尚未部署",
+    ]),
   ];
 
   return {
@@ -215,8 +313,16 @@ export function buildDualMultipathGrayRuntimeBundle(
       },
       directLeg: {
         clientEngine: "pinned-singbox-hysteria2" as const,
-        serverBind: publicAddress,
-        serverPort: input.hy2Port,
+        mode: reusedHy2 ? "reuse-existing-forwardx-hy2" as const : "new-gray-hy2" as const,
+        serverBind: reusedHy2 ? null : publicAddress,
+        serverAddress: hy2Server,
+        serverPort: hy2Port,
+        existingRuntime: reusedHy2 ? {
+          actualListener: reusedHy2.actualListener,
+          runtimeOwner: reusedHy2.runtimeOwner,
+          mapping: reusedHy2.mapping,
+          evidence: reusedHy2.evidence,
+        } : null,
       },
       multipath: {
         clientEngine: "pinned-singbox-multipath" as const,
@@ -231,8 +337,8 @@ export function buildDualMultipathGrayRuntimeBundle(
     },
     blockers,
     safety: {
-      tlsMode: input.tlsMode,
-      tlsVerificationDisabledOnGrayClient: true as const,
+      tlsMode: reusedHy2 ? "existing-forwardx-hy2" as const : input.tlsMode!,
+      tlsVerificationDisabledOnGrayClient: reusedHy2?.tls.insecure ?? true,
       productionTlsApproved: false as const,
       templatesContainSecretValues: false as const,
       secretReferencesOnly: true as const,
@@ -245,6 +351,7 @@ export function buildDualMultipathGrayRuntimeBundle(
       firewallMutation: false as const,
       routeMutation: false as const,
       existingMitaMutation: false as const,
+      existingForwardxHy2Mutation: false as const,
       productionDbWrite: false as const,
       clashMiRead: false as const,
       clashMiMutation: false as const,

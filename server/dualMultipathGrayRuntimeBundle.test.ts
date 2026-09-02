@@ -47,6 +47,34 @@ const runtimeInput = {
   tlsMode: "self-signed-gray" as const,
 };
 
+const existingForwardxHy2 = {
+  status: "verified-read-only" as const,
+  externalEndpoint: { server: "87.86.22.221", port: 24618, protocol: "UDP" as const },
+  actualListener: { listen: "0.0.0.0", port: 13666, protocol: "UDP" as const },
+  runtimeOwner: {
+    service: "forwardx-mihomo.service",
+    process: "forwardx-mihomo",
+    networkNamespace: "host" as const,
+    configPath: "/etc/forwardx/mihomo/config.yaml",
+  },
+  mapping: {
+    type: "forwardx-runtime-udp-forwarder" as const,
+    service: "forwardx-runtime.service",
+    externalPort: 24618,
+    targetHost: "127.0.0.1" as const,
+    targetPort: 13666,
+  },
+  tls: { serverName: "www.cloudflare.com", insecure: true },
+  authSecretRef: "dual.hy2.auth",
+  obfs: { type: "salamander" as const, passwordSecretRef: "dual.hy2.obfs-password" },
+  evidence: {
+    snapshotId: "nobrand-7cm-agent-hy2-20260902",
+    targetId: "nobrand-dual-current",
+    observedAt: "2026-09-02T16:23:37.000Z",
+    discoverySource: "forwardx-agent-runtime-read-only" as const,
+  },
+};
+
 test("builds Windows private SOCKS + native HY2 + multipath without pretending sing-box supports Mieru", () => {
   const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), runtimeInput);
   const config = bundle.fragments.windowsSidecarConfig;
@@ -104,13 +132,71 @@ test("server Gray binds HY2 only to discovered public address while multipath re
   assert.equal(bundle.fragments.serverConfig.route.final, "direct");
 });
 
+test("reuses the verified ForwardX Agent HY2 without creating a second server listener", () => {
+  const bundle = buildDualMultipathGrayRuntimeBundle(grayDraft(), {
+    windowsSidecarIngressPort: 24180,
+    windowsPrivateSocksPort: 24181,
+    privateCarrierClientEndpoint: runtimeInput.privateCarrierClientEndpoint,
+    existingForwardxHy2,
+  });
+  const clientHy2 = bundle.fragments.windowsSidecarConfig.outbounds[1];
+  assert.equal(clientHy2.type, "hysteria2");
+  assert.equal(clientHy2.server, "87.86.22.221");
+  assert.equal(clientHy2.server_port, 24618);
+  assert.ok("obfs" in clientHy2);
+  assert.deepEqual(clientHy2.obfs, {
+    type: "salamander",
+    password: "<secret:dual.hy2.obfs-password>",
+  });
+  assert.ok("tls" in clientHy2);
+  assert.deepEqual(clientHy2.tls, {
+    enabled: true,
+    server_name: "www.cloudflare.com",
+    insecure: true,
+  });
+  assert.equal(bundle.fragments.serverConfig.inbounds.length, 1);
+  assert.equal(bundle.fragments.serverConfig.inbounds[0].type, "multipath");
+  assert.equal(bundle.fragments.serverConfig.inbounds[0].listen, "127.0.0.1");
+  assert.equal(bundle.fragments.serverConfig.inbounds[0].listen_port, 39000);
+  assert.equal(bundle.topology.directLeg.mode, "reuse-existing-forwardx-hy2");
+  assert.equal(bundle.topology.directLeg.serverPort, 24618);
+  assert.equal(bundle.topology.directLeg.existingRuntime?.actualListener.port, 13666);
+  assert.equal(bundle.safety.existingForwardxHy2Mutation, false);
+  assert.equal(bundle.safety.firewallMutation, false);
+  assert.equal(bundle.readyForRuntime, false);
+});
+
+test("rejects inconsistent or mixed existing HY2 discovery", () => {
+  const base = {
+    windowsSidecarIngressPort: 24180,
+    windowsPrivateSocksPort: 24181,
+    privateCarrierClientEndpoint: runtimeInput.privateCarrierClientEndpoint,
+  };
+  assert.throws(() => buildDualMultipathGrayRuntimeBundle(grayDraft(), {
+    ...base,
+    existingForwardxHy2: {
+      ...existingForwardxHy2,
+      mapping: { ...existingForwardxHy2.mapping, targetPort: 19999 },
+    },
+  }), /targetPort/);
+  assert.throws(() => buildDualMultipathGrayRuntimeBundle(grayDraft(), {
+    ...base,
+    existingForwardxHy2,
+    hy2Port: 61464,
+    tlsServerName: "forwardx-dual-gray.test",
+    tlsCertificatePath: "/tmp/gray.crt",
+    tlsPrivateKeyPath: "/tmp/gray.key",
+    tlsMode: "self-signed-gray",
+  }), /不得同时规划第二套 Gray HY2/);
+});
+
 test("preserves existing Mita and never mutates the source draft", () => {
   const draft = grayDraft();
   const before = structuredClone(draft);
   const bundle = buildDualMultipathGrayRuntimeBundle(draft, runtimeInput);
   assert.deepEqual(draft, before);
-  assert.equal(bundle.topology.privateLeg.existingServerBinaryPath, "/usr/bin/mita");
-  assert.equal(bundle.topology.privateLeg.existingServerUnitName, "mita-oneclick@uc650fd438a46ab4e.service");
+  assert.equal(bundle.topology.privateLeg.existingServerBinaryPath, "/usr/local/lib/nobrand-oneclick/bin/mita");
+  assert.equal(bundle.topology.privateLeg.existingServerUnitName, "nobrand-mieru@ud17b1f3bca519c5f.service");
   assert.equal(bundle.topology.privateLeg.existingServerListenerPort, 11464);
   assert.equal(bundle.topology.privateLeg.lifecycle, "preserve");
   assert.equal(bundle.safety.existingMitaMutation, false);

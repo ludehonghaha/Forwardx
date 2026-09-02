@@ -639,8 +639,8 @@ export const NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT = {
   defaultRoute: { via: "87.86.22.1", dev: "eth0" },
   existingPrivateCarrier: {
     type: "mita",
-    binaryPath: "/usr/bin/mita",
-    unitName: "mita-oneclick@uc650fd438a46ab4e.service",
+    binaryPath: "/usr/local/lib/nobrand-oneclick/bin/mita",
+    unitName: "nobrand-mieru@ud17b1f3bca519c5f.service",
     serviceStatus: "active",
     listener: { network: "tcp", listen: "*", port: 11464 },
     lifecycle: "preserve",
