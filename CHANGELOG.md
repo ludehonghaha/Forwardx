@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.292] - 2026-09-02
+
+### 修复与优化
+
+- 修复托管 VLESS + Reality / Xray 已恢复正常监听后，面板仍长期保留旧的“TCP 监听未就绪”状态的问题。
+- Agent 会在后续 heartbeat / runtime reconciliation 中重新采集 Xray listener 状态，健康快照可自动覆盖旧故障并清除当前 active error，无需重新部署端点。
+- Xray runtime sync 增加有上限的 listener readiness 重试，兼容服务启动稍慢的场景；重试耗尽时仍保持失败状态，不会误报健康。
+
+### 版本
+
+- 面板与 APK Release `2.3.292`，Agent `2.2.198`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.291] - 2026-09-01
 
 ### 修复与优化
