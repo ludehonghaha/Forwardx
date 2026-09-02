@@ -17,12 +17,16 @@ import { pollingInterval } from "@/lib/polling";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { HOST_PROBE_CARRIER_LABELS, type HostProbeCarrier, type HostProbeKind } from "@shared/hostProbeMetadata";
 
 type ServiceForm = {
   name: string;
   method: "tcping" | "ping";
   targetIp: string;
   targetPort: string;
+  probeKind: HostProbeKind;
+  carrier: HostProbeCarrier | null;
+  region: string;
   hostScope: "all" | "exclude" | "specific";
   hostIds: number[];
   excludeHostIds: number[];
@@ -39,6 +43,9 @@ const defaultForm: ServiceForm = {
   method: "tcping",
   targetIp: "",
   targetPort: "",
+  probeKind: "custom",
+  carrier: null,
+  region: "",
   hostScope: "all",
   hostIds: [],
   excludeHostIds: [],
@@ -96,6 +103,10 @@ function serviceMatchesSearchQuery(service: any, query: string, hostsById: Map<n
     service?.targetIp,
     service?.targetPort,
     serviceTarget(service),
+    service?.probeKind,
+    service?.carrier,
+    service?.carrier ? HOST_PROBE_CARRIER_LABELS[service.carrier as HostProbeCarrier] : null,
+    service?.region,
     status,
     scopeText(service, hostsById),
     ...scopeHostValues,
@@ -132,6 +143,9 @@ function buildServiceUpdatePayload(service: any, isEnabled = service?.isEnabled 
     method,
     targetIp: String(service?.targetIp || "").trim(),
     targetPort: method === "tcping" ? Number(service?.targetPort || 0) : null,
+    probeKind: (service?.probeKind === "china_carrier" ? "china_carrier" : "custom") as HostProbeKind,
+    carrier: service?.probeKind === "china_carrier" ? (service?.carrier || null) : null,
+    region: String(service?.region || "").trim() || null,
     hostScope: service?.hostScope === "exclude" || service?.hostScope === "specific" ? service.hostScope : "all",
     hostIds: Array.isArray(service?.hostIds) ? service.hostIds.map(Number).filter(Boolean) : [],
     excludeHostIds: Array.isArray(service?.excludeHostIds) ? service.excludeHostIds.map(Number).filter(Boolean) : [],
@@ -233,6 +247,11 @@ type HostProbeServiceManagerProps = {
   hideViewModeToggle?: boolean;
   searchQuery?: string;
   onFilterStatsChange?: (stats: { filtered: number; total: number }) => void;
+  probeKindFilter?: HostProbeKind | "all";
+  defaultProbeKind?: HostProbeKind;
+  defaultCarrier?: HostProbeCarrier | null;
+  defaultHostId?: number | null;
+  defaultFormValues?: Partial<ServiceForm>;
 };
 
 export default function HostProbeServiceManager({
@@ -243,12 +262,23 @@ export default function HostProbeServiceManager({
   hideViewModeToggle = false,
   searchQuery = "",
   onFilterStatsChange,
+  probeKindFilter = "all",
+  defaultProbeKind = "custom",
+  defaultCarrier = null,
+  defaultHostId = null,
+  defaultFormValues,
 }: HostProbeServiceManagerProps) {
   const utils = trpc.useUtils();
   const confirmDialog = useConfirmDialog();
   const { data: hosts = [] } = trpc.hosts.options.useQuery(undefined, { staleTime: 30000 });
   const { data: services = [], isLoading } = trpc.hosts.probeServices.useQuery(undefined, { refetchInterval: pollingInterval("slow") });
-  const serviceItems = useMemo(() => (services as any[] | undefined) || [], [services]);
+  const allServiceItems = useMemo(() => (services as any[] | undefined) || [], [services]);
+  const serviceItems = useMemo(
+    () => probeKindFilter === "all"
+      ? allServiceItems
+      : allServiceItems.filter((service) => (service?.probeKind === "china_carrier" ? "china_carrier" : "custom") === probeKindFilter),
+    [allServiceItems, probeKindFilter],
+  );
   const hostsById = useMemo(() => new Map((hosts as any[]).map((host) => [Number(host.id), host])), [hosts]);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const isTextFiltered = normalizedSearchQuery.length > 0;
@@ -269,6 +299,22 @@ export default function HostProbeServiceManager({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ServiceForm>(defaultForm);
+  const newServiceForm = useMemo<ServiceForm>(() => {
+    const hostId = Number(defaultHostId || 0);
+    const isCarrier = defaultProbeKind === "china_carrier";
+    return {
+      ...defaultForm,
+      ...defaultFormValues,
+      probeKind: defaultProbeKind,
+      carrier: isCarrier ? defaultCarrier : null,
+      hostScope: hostId > 0 ? "specific" : (defaultFormValues?.hostScope ?? defaultForm.hostScope),
+      hostIds: hostId > 0 ? [hostId] : (defaultFormValues?.hostIds ?? defaultForm.hostIds),
+      excludeHostIds: hostId > 0 ? [] : (defaultFormValues?.excludeHostIds ?? defaultForm.excludeHostIds),
+      intervalSeconds: isCarrier
+        ? Math.max(5, Number(defaultFormValues?.intervalSeconds) || 60)
+        : Math.max(5, Number(defaultFormValues?.intervalSeconds) || defaultForm.intervalSeconds),
+    };
+  }, [defaultCarrier, defaultFormValues, defaultHostId, defaultProbeKind]);
   const [internalViewMode, setInternalViewMode] = useState<HostProbeServiceViewMode>(() => getStoredServiceViewMode());
   const viewMode = controlledViewMode ?? internalViewMode;
   const selectedScopeHostIds = form.hostScope === "exclude" ? form.excludeHostIds : form.hostIds;
@@ -289,20 +335,20 @@ export default function HostProbeServiceManager({
   );
 
   const createMutation = trpc.hosts.createProbeService.useMutation({
-    onSuccess: () => { utils.hosts.probeServices.invalidate(); setDialogOpen(false); setForm(defaultForm); toast.success("服务已添加"); },
+    onSuccess: () => { utils.hosts.probeServices.invalidate(); utils.hosts.chinaCarrierProbeOverview.invalidate(); setDialogOpen(false); setForm(newServiceForm); toast.success("服务已添加"); },
     onError: (err) => toast.error(err.message || "添加服务失败"),
   });
   const updateMutation = trpc.hosts.updateProbeService.useMutation({
-    onSuccess: () => { utils.hosts.probeServices.invalidate(); setDialogOpen(false); setEditingId(null); setForm(defaultForm); toast.success("服务已更新"); },
+    onSuccess: () => { utils.hosts.probeServices.invalidate(); utils.hosts.chinaCarrierProbeOverview.invalidate(); setDialogOpen(false); setEditingId(null); setForm(newServiceForm); toast.success("服务已更新"); },
     onError: (err) => toast.error(err.message || "更新服务失败"),
   });
   const toggleMutation = trpc.hosts.updateProbeService.useMutation({
     onSuccess: async () => {
-      await utils.hosts.probeServices.invalidate();
+      await Promise.all([utils.hosts.probeServices.invalidate(), utils.hosts.chinaCarrierProbeOverview.invalidate()]);
     },
   });
   const deleteMutation = trpc.hosts.deleteProbeService.useMutation({
-    onSuccess: () => { utils.hosts.probeServices.invalidate(); toast.success("服务已删除"); },
+    onSuccess: () => { utils.hosts.probeServices.invalidate(); utils.hosts.chinaCarrierProbeOverview.invalidate(); toast.success("服务已删除"); },
     onError: (err) => toast.error(err.message || "删除服务失败"),
   });
   const reorderServicesMutation = trpc.hosts.reorderProbeServices.useMutation({
@@ -341,10 +387,10 @@ export default function HostProbeServiceManager({
   useEffect(() => {
     if (createSignal <= 0) return;
     setEditingId(null);
-    setForm(defaultForm);
+    setForm(newServiceForm);
     setDialogOpen(true);
     onCreateSignalHandled();
-  }, [createSignal, onCreateSignalHandled]);
+  }, [createSignal, newServiceForm, onCreateSignalHandled]);
 
   const submit = () => {
     const name = form.name.trim();
@@ -354,7 +400,16 @@ export default function HostProbeServiceManager({
     if (!targetIp) { toast.error("请输入 IP 地址"); return; }
     if (form.method === "tcping" && (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535)) { toast.error("目标端口必须在 1-65535 之间"); return; }
     if (form.hostScope === "specific" && form.hostIds.length === 0) { toast.error("请选择需要运行服务的主机"); return; }
-    const payload = { ...form, name, targetIp, targetPort: form.method === "tcping" ? targetPort : null, intervalSeconds: Math.max(5, Number(form.intervalSeconds) || 30) };
+    if (form.probeKind === "china_carrier" && !form.carrier) { toast.error("请选择运营商"); return; }
+    const payload = {
+      ...form,
+      name,
+      targetIp,
+      targetPort: form.method === "tcping" ? targetPort : null,
+      carrier: form.probeKind === "china_carrier" ? form.carrier : null,
+      region: form.region.trim() || null,
+      intervalSeconds: Math.max(5, Number(form.intervalSeconds) || 30),
+    };
     if (editingId) updateMutation.mutate({ ...payload, id: editingId });
     else createMutation.mutate(payload);
   };
@@ -394,6 +449,9 @@ export default function HostProbeServiceManager({
       method: service.method === "ping" ? "ping" : "tcping",
       targetIp: service.targetIp || "",
       targetPort: service.targetPort ? String(service.targetPort) : "",
+      probeKind: service.probeKind === "china_carrier" ? "china_carrier" : "custom",
+      carrier: service.probeKind === "china_carrier" ? (service.carrier || null) : null,
+      region: String(service.region || ""),
       hostScope: service.hostScope === "exclude" || service.hostScope === "specific" ? service.hostScope : "all",
       hostIds: Array.isArray(service.hostIds) ? service.hostIds.map(Number).filter(Boolean) : [],
       excludeHostIds: Array.isArray(service.excludeHostIds) ? service.excludeHostIds.map(Number).filter(Boolean) : [],
@@ -574,6 +632,41 @@ export default function HostProbeServiceManager({
               <div className="space-y-1.5"><Label>服务名</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如: 公网 API 延迟" /></div>
               <div className="space-y-1.5"><Label>类型</Label><Select value={form.method} onValueChange={(value) => setForm({ ...form, method: value as ServiceForm["method"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="tcping">TCPing</SelectItem><SelectItem value="ping">Ping</SelectItem></SelectContent></Select></div>
             </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>探测分类</Label>
+                <Select
+                  value={form.probeKind}
+                  disabled={probeKindFilter !== "all"}
+                  onValueChange={(value) => setForm({ ...form, probeKind: value as HostProbeKind, carrier: value === "china_carrier" ? form.carrier : null })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="custom">自定义探测</SelectItem>
+                    <SelectItem value="china_carrier">三网质量</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {form.probeKind === "china_carrier" ? (
+                <div className="space-y-1.5">
+                  <Label>运营商</Label>
+                  <Select value={form.carrier || ""} onValueChange={(value) => setForm({ ...form, carrier: value as HostProbeCarrier })}>
+                    <SelectTrigger><SelectValue placeholder="选择运营商" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cm">{HOST_PROBE_CARRIER_LABELS.cm}</SelectItem>
+                      <SelectItem value="cu">{HOST_PROBE_CARRIER_LABELS.cu}</SelectItem>
+                      <SelectItem value="ct">{HOST_PROBE_CARRIER_LABELS.ct}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : <div />}
+            </div>
+            {form.probeKind === "china_carrier" ? (
+              <div className="space-y-1.5">
+                <Label>地区 <span className="text-xs text-muted-foreground">可选</span></Label>
+                <Input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} placeholder="例如: 上海 / 广州 / 北京" />
+              </div>
+            ) : null}
             <div className={`grid gap-3 ${form.method === "tcping" ? "sm:grid-cols-[minmax(0,1fr)_150px]" : ""}`}>
               <div className="space-y-1.5"><Label>IP 地址 / 域名</Label><Input value={form.targetIp} onChange={(e) => setForm({ ...form, targetIp: e.target.value })} placeholder="1.1.1.1 或 example.com" /></div>
               {form.method === "tcping" && <div className="space-y-1.5"><Label>目标端口</Label><Input type="number" min={1} max={65535} value={form.targetPort} onChange={(e) => setForm({ ...form, targetPort: e.target.value })} placeholder="443" /></div>}

@@ -73,6 +73,9 @@ const hostProbeServiceInputSchema = z.object({
   method: z.enum(["tcping", "ping"]),
   targetIp: hostProbeTargetSchema,
   targetPort: z.number().int().min(1).max(65535).nullable().optional(),
+  probeKind: z.enum(["custom", "china_carrier"]).optional(),
+  carrier: z.enum(["ct", "cu", "cm"]).nullable().optional(),
+  region: z.string().trim().max(64).nullable().optional(),
   hostScope: z.enum(["all", "exclude", "specific"]).default("all"),
   hostIds: hostProbeIdsSchema,
   excludeHostIds: hostProbeIdsSchema,
@@ -857,6 +860,7 @@ export const hostsRouter = router({
         };
       },
     )),
+    chinaCarrierProbeOverview: adminProcedure.query(async () => db.getChinaCarrierProbeOverview()),
     probeServices: protectedProcedure.query(async ({ ctx }) => {
       const isAdmin = ctx.user.role === "admin";
       const services = await db.getHostProbeServices(isAdmin ? undefined : ctx.user.id);
