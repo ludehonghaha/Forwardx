@@ -62,6 +62,18 @@ function normalizeSortOrder(value: unknown) {
   return Math.max(0, Math.floor(Number(value) || 0));
 }
 
+function probeMeasurementIdentity(service: any) {
+  const method: HostProbeMethod = service?.method === "ping" ? "ping" : "tcping";
+  const targetIp = String(service?.targetIp || "").trim().toLowerCase();
+  const targetPort = method === "tcping" ? Math.max(0, Math.floor(Number(service?.targetPort) || 0)) : 0;
+  return `${method}|${targetIp}|${targetPort}`;
+}
+
+export function hostProbeMeasurementIdentityChanged(previous: any, next: any) {
+  if (!previous || !next) return false;
+  return probeMeasurementIdentity(previous) !== probeMeasurementIdentity(next);
+}
+
 function normalizeServiceInput(input: HostProbeServiceInput): InsertHostProbeService {
   const method = input.method === "ping" ? "ping" : "tcping";
   const hostScope = input.hostScope === "exclude" || input.hostScope === "specific" ? input.hostScope : "all";
@@ -133,6 +145,12 @@ export async function updateHostProbeService(id: number, input: Omit<HostProbeSe
   delete (payload as any).createdAt;
   await db.update(hostProbeServices).set({ ...payload, updatedAt: nowDate() }).where(eq(hostProbeServices.id, id));
   const next = await getHostProbeServiceById(id);
+  if (hostProbeMeasurementIdentityChanged(previous, next)) {
+    // Historical samples do not carry method/target metadata. Once the
+    // measurement identity changes, keeping old rows would make the current
+    // Ping/TCPing label reinterpret samples produced by a different probe.
+    await db.delete(hostProbeServiceStats).where(eq(hostProbeServiceStats.serviceId, id));
+  }
   await notifyHostProbeServiceChange(`probe-service-updated:${id}`, [previous, next]);
 }
 
