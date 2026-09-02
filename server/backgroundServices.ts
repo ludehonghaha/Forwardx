@@ -6,8 +6,18 @@ import { reconcileManagedProtocolTrafficBridges } from "./protocolTrafficBridge"
 
 let backgroundServicesStarted = false;
 
+function backgroundServicesDisabledByEnv() {
+  const value = String(process.env.FORWARDX_DISABLE_BACKGROUND_SERVICES || "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 export function startBackgroundServices() {
   if (backgroundServicesStarted) return false;
+  if (backgroundServicesDisabledByEnv()) {
+    backgroundServicesStarted = true;
+    console.info("[Background] Scheduler, traffic history, protocol bridge reconcile, and Telegram bot are disabled by FORWARDX_DISABLE_BACKGROUND_SERVICES");
+    return true;
+  }
   if (isDevPanelMode()) {
     backgroundServicesStarted = true;
     console.info("[DevPanel] Background scheduler and Telegram bot are disabled in local development panel mode");
