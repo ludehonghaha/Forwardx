@@ -44,7 +44,9 @@ type SeriesDefinition = {
   hostId: number;
   hostName: string;
   serviceName: string;
+  method: "ping" | "tcping";
   targetIp: string;
+  targetPort: number | null;
   carrier: ChinaCarrierKey;
   region: string;
   color: string;
@@ -76,6 +78,25 @@ function percentile(values: number[], ratio: number) {
   return sorted[index];
 }
 
+function formatProbeTarget(definition: SeriesDefinition) {
+  const targetIp = definition.targetIp || "--";
+  if (definition.method !== "tcping" || !definition.targetPort) return targetIp;
+  const host = targetIp.includes(":") && !targetIp.startsWith("[") ? `[${targetIp}]` : targetIp;
+  return `${host}:${definition.targetPort}`;
+}
+
+function probeFailureLabel(definition: SeriesDefinition) {
+  return definition.method === "tcping" ? "TCP 连接失败" : "Ping 丢包";
+}
+
+function probeTimeoutLabel(definition: SeriesDefinition) {
+  return definition.method === "tcping" ? "TCP 连接超时" : "目标超时";
+}
+
+function probeNoResponseLabel(definition: SeriesDefinition) {
+  return definition.method === "tcping" ? "TCP 连接失败" : "目标无响应";
+}
+
 function CarrierHistoryTooltip({ active, payload, definitions, metric }: any) {
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload || {};
@@ -93,6 +114,8 @@ function CarrierHistoryTooltip({ active, payload, definitions, metric }: any) {
           const noResponse = timeout && Number.isFinite(lossNumber) && lossNumber >= 100;
           const hasLatency = latency != null && Number.isFinite(Number(latency));
           const hasLoss = loss != null && Number.isFinite(lossNumber);
+          const target = formatProbeTarget(definition);
+          const failureLabel = probeFailureLabel(definition);
 
           if (metric === "latency" && !hasLatency && !timeout && !hasLoss) return null;
           if (metric === "loss" && !hasLoss && !timeout) return null;
@@ -105,24 +128,36 @@ function CarrierHistoryTooltip({ active, payload, definitions, metric }: any) {
                   <span className="block truncate" title={`${definition.hostName} · ${definition.serviceName}`}>
                     {definition.hostName} · {CHINA_CARRIER_LABELS[definition.carrier]}
                   </span>
-                  <span className="block truncate text-[10px] text-muted-foreground" title={definition.targetIp}>
-                    目标 {definition.targetIp || "--"}
+                  <span className="block truncate text-[10px] text-muted-foreground" title={target}>
+                    目标 {target}
                   </span>
                 </span>
               </span>
               <span className="shrink-0 text-right font-medium tabular-nums">
                 {metric === "latency" ? (
                   <>
-                    <span className={cn(noResponse || timeout ? "text-destructive" : "")}> 
-                      {noResponse ? "目标无响应" : timeout ? "目标超时" : hasLatency ? `${Math.round(Number(latency))}ms` : "--"}
+                    <span className={cn(noResponse || timeout ? "text-destructive" : "")}>
+                      {noResponse
+                        ? probeNoResponseLabel(definition)
+                        : timeout
+                          ? probeTimeoutLabel(definition)
+                          : hasLatency
+                            ? `${Math.round(Number(latency))}ms`
+                            : "--"}
                     </span>
                     <span className={cn("ml-2", hasLoss && lossNumber > 0 ? "text-destructive" : "text-muted-foreground")}>
-                      探测丢包 {hasLoss ? `${lossNumber.toFixed(1)}%` : "--"}
+                      {failureLabel} {hasLoss ? `${lossNumber.toFixed(1)}%` : "--"}
                     </span>
                   </>
                 ) : (
-                  <span className={cn(hasLoss && lossNumber > 0 ? "text-destructive" : "")}> 
-                    {noResponse ? "目标无响应 · 100%" : hasLoss ? `探测丢包 ${lossNumber.toFixed(1)}%` : timeout ? "目标超时" : "--"}
+                  <span className={cn(hasLoss && lossNumber > 0 ? "text-destructive" : "")}>
+                    {noResponse
+                      ? `${probeNoResponseLabel(definition)} · 100%`
+                      : hasLoss
+                        ? `${failureLabel} ${lossNumber.toFixed(1)}%`
+                        : timeout
+                          ? probeTimeoutLabel(definition)
+                          : "--"}
                   </span>
                 )}
               </span>
@@ -192,7 +227,9 @@ export default function HostProbeCarrierHistory() {
         hostId: Number(host.id),
         hostName: String(host.name || `#${host.id}`),
         serviceName: String(item.service.name || CHINA_CARRIER_LABELS[item.carrier]),
+        method: item.service.method === "tcping" ? "tcping" as const : "ping" as const,
         targetIp: String(item.service.targetIp || ""),
+        targetPort: item.service.method === "tcping" && Number(item.service.targetPort) > 0 ? Number(item.service.targetPort) : null,
         carrier: item.carrier,
         region: item.region,
       })));
@@ -263,12 +300,12 @@ export default function HostProbeCarrierHistory() {
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-semibold">三网目标探测 · RTT / 探测丢包</p>
+              <p className="text-sm font-semibold">三网目标探测 · RTT / 探测失败率</p>
               <Badge variant="outline" className="text-[10px]">Agent 高级探测</Badge>
-              <Badge variant="outline" className="text-[10px]">单目标探测</Badge>
+              <Badge variant="outline" className="text-[10px]">Ping / TCPing</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              展示 VPS 到固定 CT/CU/CM 探测目标的 Ping 结果；目标无响应不等于整个运营商网络 100% 丢包。
+              展示 VPS 到固定 CT/CU/CM 探测目标的 Ping / TCPing 结果；Ping 丢包与 TCP 连接失败是不同指标，单目标异常不等于整个运营商网络异常。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -297,7 +334,7 @@ export default function HostProbeCarrierHistory() {
             <Button size="sm" variant={scaleMode === "focus" ? "secondary" : "outline"} className="h-8 px-3 text-xs" onClick={() => setScaleMode("focus")}>聚焦正常</Button>
             <Button size="sm" variant={scaleMode === "full" ? "secondary" : "outline"} className="h-8 px-3 text-xs" onClick={() => setScaleMode("full")}>完整尖峰</Button>
 
-            <span className="ml-0 mr-1 text-xs font-medium text-muted-foreground sm:ml-3">探测丢包</span>
+            <span className="ml-0 mr-1 text-xs font-medium text-muted-foreground sm:ml-3">探测失败率</span>
             <Button size="sm" variant={showLossChart ? "secondary" : "outline"} className="h-8 px-3 text-xs" onClick={() => setShowLossChart((value) => !value)}>{showLossChart ? "显示" : "隐藏"}</Button>
           </div>
         </div>
@@ -311,7 +348,7 @@ export default function HostProbeCarrierHistory() {
           ) : chartData.length === 0 ? (
             <div className="flex min-h-[260px] flex-col items-center justify-center text-sm text-muted-foreground">
               <p>探测服务已配置，正在等待历史样本。</p>
-              <p className="mt-1 text-xs text-muted-foreground/70">Agent 上报后这里会自动出现 RTT 与探测丢包趋势。</p>
+              <p className="mt-1 text-xs text-muted-foreground/70">Agent 上报后这里会自动出现 RTT 与探测失败率趋势。</p>
             </div>
           ) : (
             <div className="h-[300px] w-full">
@@ -348,14 +385,14 @@ export default function HostProbeCarrierHistory() {
           )}
           {chartData.length > 0 && (
             <p className="mt-1 text-center text-[11px] text-muted-foreground">
-              RTT 图跨过无响应窗口连接趋势；无响应和丢包单独显示在下方，避免折线被大量断点切碎。
+              RTT 图跨过失败窗口连接趋势；Ping 丢包与 TCP 连接失败统一在下方按失败率展示，避免折线被大量断点切碎。
             </p>
           )}
         </div>
 
         {showLossChart && chartData.length > 0 && definitions.length > 0 && (
           <div className="border-t border-border/40 pt-4">
-            <div className="mb-2 text-center text-sm font-medium">目标探测丢包 · 0–100%</div>
+            <div className="mb-2 text-center text-sm font-medium">目标探测失败率 · 0–100%</div>
             <div className="h-[190px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
@@ -375,7 +412,7 @@ export default function HostProbeCarrierHistory() {
                       key={definition.lossKey}
                       type="linear"
                       dataKey={definition.lossKey}
-                      name={`${definition.hostName} · ${CHINA_CARRIER_LABELS[definition.carrier]} · 探测丢包`}
+                      name={`${definition.hostName} · ${CHINA_CARRIER_LABELS[definition.carrier]} · ${definition.method === "tcping" ? "TCP 连接失败率" : "Ping 丢包率"}`}
                       stroke={definition.color}
                       strokeWidth={1.5}
                       connectNulls
@@ -388,20 +425,23 @@ export default function HostProbeCarrierHistory() {
               </ResponsiveContainer>
             </div>
             <p className="mt-1 text-center text-[11px] text-muted-foreground">
-              100% 表示该固定探测目标在这个采样窗没有有效回应；这是目标探测结果，不直接代表运营商整体线路质量。
+              Ping 服务显示 Ping 丢包率，TCPing 服务显示 TCP 连接失败率；100% 仅表示该固定目标在采样窗内对应探测全部失败，不直接代表运营商整体线路质量。
             </p>
           </div>
         )}
 
         <div className="flex flex-wrap gap-x-4 gap-y-2 border-t border-border/40 pt-3 text-xs text-muted-foreground">
-          {definitions.map((definition) => (
-            <span key={definition.key} className="flex min-w-0 items-center gap-1.5">
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: definition.color }} />
-              <span className="truncate" title={`${definition.hostName} · ${definition.serviceName} · ${definition.targetIp}`}>
-                {definition.hostName} · {definition.region} {CHINA_CARRIER_LABELS[definition.carrier]}
+          {definitions.map((definition) => {
+            const target = formatProbeTarget(definition);
+            return (
+              <span key={definition.key} className="flex min-w-0 items-center gap-1.5">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: definition.color }} />
+                <span className="truncate" title={`${definition.hostName} · ${definition.serviceName} · ${definition.method.toUpperCase()} · ${target}`}>
+                  {definition.hostName} · {definition.region} {CHINA_CARRIER_LABELS[definition.carrier]}
+                </span>
               </span>
-            </span>
-          ))}
+            );
+          })}
         </div>
       </CardContent>
     </Card>
