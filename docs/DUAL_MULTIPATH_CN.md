@@ -48,6 +48,10 @@ generic schema 不包含 `eth0`、`eth1`、固定 IP、gateway 或 Mita 端口 l
 
 服务端 `privateSide.sourceAddress` 只描述服务端网卡，绝不能推导客户端 Mieru destination。当前 NoBrand Windows Gray 观察到的 `211.136.162.188:11464/TCP` 作为独立 runtime discovery evidence 传入；默认产品模型不硬编码该地址。
 
+当前 NoBrand 7CM Gray 的 direct carrier 使用 `reuse-existing-forwardx-hy2`：外部 endpoint 为 `87.86.22.221:24618/udp`，由 `forwardx-runtime.service` 在 host network namespace 转发到 `127.0.0.1:13666/udp`，实际 Hysteria2 listener 归 `forwardx-mihomo.service` 所有。Gray materializer 只读取脱敏 discovery 与 `dual.*` secret reference，在仓库外注入 auth、Salamander obfs 和 TLS/SNI；服务端配置只新增 `127.0.0.1:39000` multipath inbound，不创建第二个 HY2 listener，也不修改现有 Agent/Mihomo/runtime。
+
+2026-09-03 的首次真机门禁没有进入完整 Dual workload：当前 NoBrand per-user Mita 配置中 `allowLoopbackIP` 缺失，official Mieru sidecar 经 `211.136.162.188:11464` 请求服务端 `127.0.0.1:39000` 时得到 SOCKS5 reply code 2。现有 Mieru 的普通公网代理能力不等于它被授权访问服务器 loopback。在“不修改 Mita”且 multipath 必须 loopback-only 的边界下，这是 P1 的实际阻塞；不得用两条单路都可上网替代 single-flow multipath 结论。
+
 客户端入口与 Mieru sidecar SOCKS 各自持有独立的 `portPlanning` discriminated union。未规划时是 `{ status: "unresolved", strategy: "auto", port: null }`；只有同时携带 `snapshotId` 与 `clientTargetRef` 的 read-only evidence 才能成为 `planned-read-only`。schema 会拒绝任何与当前 `clientTarget` 不一致的 client-side evidence。
 
 `DualClientDiscoverySnapshot` 只包含 canonical client ref、显式时间、occupied TCP ports 与不含 secret 的 Mihomo candidate facts。`evaluateDualClientSnapshot()` 只使用调用方传入的 `referenceTime/maxAgeMs` 判定 freshness。`planDualClientLoopbackPorts()` 在集中定义的 `23180-23279` 范围内顺序选择两个不同且未占用的端口；`resolveDualPureMieruProxy()` 只接受恰好一个 private-only、无 fallback 的 concrete Mieru proxy，拒绝 group、DIRECT/REJECT、mixed listener、public fallback 与 ingress recursion。两者均为纯函数，不采集、不打开 socket、不持久化、不调用 Agent。

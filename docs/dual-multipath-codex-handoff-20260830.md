@@ -100,12 +100,16 @@ Verified Dual server topology:
 
 - `eth0 = 87.86.22.221/24`, public/Japan side, default gateway `87.86.22.1`;
 - `eth1 = 172.16.4.114/24`, private-line side;
-- active Mita binary is `/usr/bin/mita`; unit `mita-oneclick@uc650fd438a46ab4e.service` is active on TCP `*:11464` and must be preserved;
+- refreshed 2026-09-02 NoBrand Mita binary is `/usr/local/lib/nobrand-oneclick/bin/mita`; unit `nobrand-mieru@ud17b1f3bca519c5f.service` is active on TCP `*:11464` and must be preserved;
 - no installed `sing-box`, `hysteria`, or standalone `mieru` binary was found.
 
 These server facts do not define the address seen by a remote Mieru client. The current client-visible ingress is independently observed as `211.136.162.188:11464/TCP`; a missing or unresolved client endpoint blocks Windows config materialization.
 
 The pinned source contains native Hysteria2 inbound/outbound support. Its normal release build tags include `with_quic`, so one correctly built and checksum-pinned singbox-multipath artifact can host both multipath and Hysteria2. Artifact provenance, architecture-specific checksums, final HY2 listener fields, secret injection, and runtime lifecycle are still unresolved.
+
+2026-09-02 read-only discovery resolved the existing ForwardX Agent HY2 path: `87.86.22.221:24618/udp` is owned by `forwardx-runtime.service` and forwarded in the host network namespace to `127.0.0.1:13666/udp`, whose Hysteria2 listener is owned by `forwardx-mihomo.service`. The preferred Gray mode reuses that carrier and adds only the loopback multipath server; a second HY2 server remains Plan B only.
+
+2026-09-03 live gate result: the new per-user Mita instance remained unchanged, but its only user had no `allowLoopbackIP` field. A real official Mieru client connection to `127.0.0.1:39000` returned SOCKS5 reply code 2. Therefore the full `24180` Dual workload was not started and no aggregation claim was made. The temporary loopback multipath process and both server temp directories were removed; all production ForwardX/Mita PIDs, restart counters, existing listeners and routes remained unchanged.
 
 ## Windows official Mieru sidecar update
 

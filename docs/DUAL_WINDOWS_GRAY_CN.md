@@ -11,7 +11,7 @@
                     -> ForwardX-managed official enfein/mieru client
                     -> verified client-visible Mieru ingress
                        current Gray evidence: 211.136.162.188:11464/TCP
-       leg1 -> native Hysteria2 -> 87.86.22.221:61464/udp
+       leg1 -> native Hysteria2 -> existing ForwardX HY2 endpoint
 ```
 
 `24181` 不再读取、修改或依赖 Clash Mi。现有通用 `7890` 不参与该拓扑。
@@ -69,8 +69,9 @@ launcher 先检查 `24180/24181` 空闲，再启动 Mieru并等待 `24181` ready
 
 ## Server Gray
 
-- existing Mita `/usr/bin/mita`、unit `mita-oneclick@uc650fd438a46ab4e.service`、TCP `*:11464` 保持 `preserve`；
-- HY2 candidate 仅绑定 `87.86.22.221:61464/udp`；
+- current NoBrand Mita `/usr/local/lib/nobrand-oneclick/bin/mita`、unit `nobrand-mieru@ud17b1f3bca519c5f.service`、TCP `*:11464` 保持 `preserve`；
+- 首选复用现有 ForwardX Agent HY2：client endpoint `87.86.22.221:24618/udp` 经 `forwardx-runtime.service` 转发至 host netns 中由 `forwardx-mihomo.service` 持有的 `127.0.0.1:13666/udp`；
+- `61464/udp` 只保留为“现有 HY2 无法安全复用”时的隔离 Plan B，不是当前 Gray 默认；
 - multipath 仅监听 `127.0.0.1:39000`。
 
 ## 仍然阻塞
