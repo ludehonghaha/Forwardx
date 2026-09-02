@@ -13,8 +13,8 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/forwardx
-  SOURCE_SHA: d61b89d22ad1d50717398cf932bb4bbce3a2c83a
-  GRAY_TAG: pr73-probe-gray-safe-d61b89d2
+  SOURCE_SHA: 88566102520a371d1371b65e40e04f0895e47f62
+  GRAY_TAG: pr73-probe-gray-safe-88566102
 
 concurrency:
   group: pr73-probe-gray-image
