@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  hostProbeMeasurementIdentityChanged,
   hostProbeRefreshHostIds,
   hostProbeServiceAppliesToHost,
 } from "./repositories/hostProbeServiceRepository";
@@ -54,4 +55,41 @@ test("disabled probe services do not wake unrelated Agents", () => {
 
   assert.equal(hostProbeServiceAppliesToHost(disabled, 1), false);
   assert.deepEqual(hostProbeRefreshHostIds([disabled], [1, 2, 3]), []);
+});
+
+test("probe history resets only when the measurement identity changes", () => {
+  const base = {
+    name: "上海联通 CU",
+    method: "tcping",
+    targetIp: "210.22.84.3",
+    targetPort: 53,
+    intervalSeconds: 60,
+    hostScope: "specific",
+    hostIds: [1, 2],
+    isEnabled: true,
+  };
+
+  assert.equal(hostProbeMeasurementIdentityChanged(base, { ...base, name: "CU" }), false);
+  assert.equal(hostProbeMeasurementIdentityChanged(base, { ...base, intervalSeconds: 120 }), false);
+  assert.equal(hostProbeMeasurementIdentityChanged(base, { ...base, hostIds: [2, 3] }), false);
+  assert.equal(hostProbeMeasurementIdentityChanged(base, { ...base, isEnabled: false }), false);
+
+  assert.equal(hostProbeMeasurementIdentityChanged(base, { ...base, method: "ping", targetPort: null }), true);
+  assert.equal(hostProbeMeasurementIdentityChanged(base, { ...base, targetIp: "210.22.84.4" }), true);
+  assert.equal(hostProbeMeasurementIdentityChanged(base, { ...base, targetPort: 443 }), true);
+});
+
+test("Ping identity ignores an irrelevant target port and normalizes target text", () => {
+  const previous = {
+    method: "ping",
+    targetIp: " Example.COM ",
+    targetPort: null,
+  };
+  const next = {
+    method: "ping",
+    targetIp: "example.com",
+    targetPort: 443,
+  };
+
+  assert.equal(hostProbeMeasurementIdentityChanged(previous, next), false);
 });
