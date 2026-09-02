@@ -48,8 +48,8 @@ jobs:
         run: |
           set -euo pipefail
           cd agent
-          gofmt -w ping.go ping_system.go ping_system_test.go
-          git diff --exit-code -- ping.go ping_system.go ping_system_test.go
+          gofmt -w metrics.go paced_ping.go paced_ping_test.go
+          git diff --exit-code -- metrics.go paced_ping.go paced_ping_test.go
           go test ./...
           go vet ./...
 
