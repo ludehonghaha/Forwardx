@@ -13,8 +13,8 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/forwardx
-  SOURCE_SHA: 747343bf63dd86b3f77b7e8464bc7aa1c80321e6
-  GRAY_TAG: pr73-probe-gray-safe-747343bf
+  SOURCE_SHA: 255e332f9184ca90ec4fa9529165469dbd58e322
+  GRAY_TAG: pr73-probe-gray-safe-255e332f
 
 concurrency:
   group: pr73-probe-gray-image
@@ -72,7 +72,7 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.title=ForwardX
-            org.opencontainers.image.description=ForwardX PR73 carrier probe passive gray image
+            org.opencontainers.image.description=ForwardX PR73 corrected carrier probe passive gray image
             org.opencontainers.image.version=${{ steps.package.outputs.version }}
             org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
             org.forwardx.gray=pr73-probe-passive
