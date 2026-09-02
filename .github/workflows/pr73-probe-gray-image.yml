@@ -13,8 +13,8 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/forwardx
-  SOURCE_SHA: e04aa931aae537c06b6dc55c572d17c965026020
-  GRAY_TAG: pr73-probe-gray-e04aa931
+  SOURCE_SHA: 747343bf63dd86b3f77b7e8464bc7aa1c80321e6
+  GRAY_TAG: pr73-probe-gray-safe-747343bf
 
 concurrency:
   group: pr73-probe-gray-image
@@ -38,7 +38,7 @@ jobs:
             node_arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - name: Checkout verified PR source
+      - name: Checkout verified gray source
         uses: actions/checkout@v4
         with:
           ref: ${{ env.SOURCE_SHA }}
@@ -72,10 +72,10 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.title=ForwardX
-            org.opencontainers.image.description=ForwardX PR73 carrier probe gray image
+            org.opencontainers.image.description=ForwardX PR73 carrier probe passive gray image
             org.opencontainers.image.version=${{ steps.package.outputs.version }}
             org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
-            org.forwardx.gray=pr73-probe
+            org.forwardx.gray=pr73-probe-passive
           build-args: |
             FORWARDX_VERSION=${{ steps.package.outputs.version }}
           cache-from: type=gha,scope=forwardx-${{ matrix.arch }}
