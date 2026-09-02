@@ -1,0 +1,259 @@
+name: PR73 Agent Ping Accuracy Fix
+
+on:
+  push:
+    branches:
+      - ci/pr73-agent-ping-fix
+    paths:
+      - ".github/workflows/pr73-agent-ping-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout PR73 head
+        uses: actions/checkout@v4
+        with:
+          ref: fix/advanced-probe-carrier-history
+          fetch-depth: 0
+
+      - name: Verify expected starting head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "220604fd3a3b45b6cae33d8c78d2d675251792d0"
+
+      - name: Patch multi-sample Ping path
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("agent/metrics.go")
+          text = path.read_text()
+          old = '''\tif count < 1 {
+          \t\tcount = 1
+          \t}
+          \tif latency, successes, detail, err := nativePingLatencyStatsWithCount(target, timeout, count); err == nil {
+          '''
+          new = '''\tif count < 1 {
+          \t\tcount = 1
+          \t}
+          \t// Multi-sample quality probes must be paced. The native ICMP path sends
+          \t// all packets immediately, which can trigger ICMP rate limiting at the
+          \t// target and turn a healthy path into artificial 20/40/60/80% loss.
+          \t// Prefer the system ping for count > 1: it sends one sample per second
+          \t// and gives us the same packet counters users see from a normal ping.
+          \tif preferPacedSystemPing(count) {
+          \t\tif latency, successes, losses, detail, ok := pacedSystemPingLatencyStatsWithCount(target, timeout, count); ok {
+          \t\t\treturn latency, successes, losses, detail
+          \t\t} else if detail != "" && shouldLogAgentReport("paced-system-ping-fallback", 5*time.Minute) {
+          \t\t\tlogf("paced system ping unavailable target=%s: %s; falling back to native ping", target, detail)
+          \t\t}
+          \t}
+          \tif latency, successes, detail, err := nativePingLatencyStatsWithCount(target, timeout, count); err == nil {
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one ping hook, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+
+      - name: Add paced system Ping implementation
+        shell: bash
+        run: |
+          cat > agent/paced_ping.go <<'EOF'
+          package main
+
+          import (
+          	"context"
+          	"errors"
+          	"os"
+          	"os/exec"
+          	"runtime"
+          	"strconv"
+          	"strings"
+          	"time"
+          )
+
+          func preferPacedSystemPing(count int) bool {
+          	return count > 1
+          }
+
+          func pacedSystemPingArgs(target string, timeout time.Duration, count int, goos string) []string {
+          	if count < 1 {
+          		count = 1
+          	}
+          	if timeout <= 0 {
+          		timeout = tcpingProbeTimeout
+          	}
+          	familyArg := pingFamilyArg(target)
+          	if goos == "windows" {
+          		args := []string{}
+          		if familyArg != "" {
+          			args = append(args, familyArg)
+          		}
+          		timeoutMillis := int(timeout.Milliseconds())
+          		if timeoutMillis < 1 {
+          			timeoutMillis = 1
+          		}
+          		return append(args, "-n", strconv.Itoa(count), "-w", strconv.Itoa(timeoutMillis), target)
+          	}
+
+          	timeoutSeconds := int((timeout + time.Second - 1) / time.Second)
+          	if timeoutSeconds < 1 {
+          		timeoutSeconds = 1
+          	}
+          	args := []string{}
+          	if familyArg != "" {
+          		args = append(args, familyArg)
+          	}
+          	// Explicit one-second pacing is intentional. Do not replace this with
+          	// flood/burst Ping: carrier probe targets commonly rate-limit ICMP.
+          	return append(args,
+          		"-n",
+          		"-c", strconv.Itoa(count),
+          		"-i", "1",
+          		"-W", strconv.Itoa(timeoutSeconds),
+          		target,
+          	)
+          }
+
+          // pacedSystemPingLatencyStatsWithCount runs a conventional paced ping
+          // for multi-sample quality measurements. The boolean reports whether
+          // the result is authoritative; false asks the caller to use the native
+          // ICMP fallback (for example when the ping binary is not installed).
+          func pacedSystemPingLatencyStatsWithCount(target string, timeout time.Duration, count int) (int, int, int, string, bool) {
+          	target = normalizeNetworkTargetHost(target)
+          	if target == "" {
+          		return 0, 0, maxPingCount(count), "目标为空", true
+          	}
+          	if count < 2 {
+          		return 0, 0, 0, "single-sample probe", false
+          	}
+          	if timeout <= 0 {
+          		timeout = tcpingProbeTimeout
+          	}
+          	if _, err := exec.LookPath("ping"); err != nil {
+          		return 0, 0, count, err.Error(), false
+          	}
+
+          	ctxTimeout := time.Duration(count-1)*time.Second + timeout + 2*time.Second
+          	if runtime.GOOS == "windows" {
+          		ctxTimeout = timeout*time.Duration(count) + 2*time.Second
+          	}
+          	ctx, cancel := context.WithTimeout(context.Background(), ctxTimeout)
+          	defer cancel()
+
+          	select {
+          	case systemPingSlots <- struct{}{}:
+          		defer func() { <-systemPingSlots }()
+          	case <-ctx.Done():
+          		return 0, 0, count, "system ping queue timeout", true
+          	}
+
+          	cmd := exec.CommandContext(ctx, "ping", pacedSystemPingArgs(target, timeout, count, runtime.GOOS)...)
+          	if runtime.GOOS != "windows" {
+          		cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+          	}
+          	output, err := cmd.CombinedOutput()
+          	text := string(output)
+          	if ctx.Err() == context.DeadlineExceeded {
+          		return 0, 0, count, "timeout", true
+          	}
+
+          	if sent, received, ok := parsePingPacketCounts(text); ok {
+          		total := count
+          		if sent > 0 && sent < total {
+          			total = sent
+          		}
+          		if received > total {
+          			received = total
+          		}
+          		latency := parsePingLatencyMs(text)
+          		if received == 0 {
+          			return 0, 0, total, "timeout", true
+          		}
+          		if latency <= 0 {
+          			return 0, 0, count, "unable to parse ping RTT", false
+          		}
+          		return latency, received, total - received, "", true
+          	}
+
+          	if errors.Is(err, exec.ErrNotFound) {
+          		return 0, 0, count, err.Error(), false
+          	}
+          	detail := strings.TrimSpace(text)
+          	if detail == "" && err != nil {
+          		detail = err.Error()
+          	}
+          	if detail == "" {
+          		detail = "unable to parse ping packet counters"
+          	}
+          	return 0, 0, count, detail, false
+          }
+
+          func maxPingCount(count int) int {
+          	if count < 1 {
+          		return 1
+          	}
+          	return count
+          }
+          EOF
+
+          cat > agent/paced_ping_test.go <<'EOF'
+          package main
+
+          import (
+          	"reflect"
+          	"testing"
+          	"time"
+          )
+
+          func TestPreferPacedSystemPingOnlyForMultiSampleProbe(t *testing.T) {
+          	if preferPacedSystemPing(1) {
+          		t.Fatal("single-sample ping should keep the low-overhead native path")
+          	}
+          	if !preferPacedSystemPing(5) {
+          		t.Fatal("five-sample quality probe must use paced system ping")
+          	}
+          }
+
+          func TestPacedSystemPingArgsLinuxUsesOneSecondInterval(t *testing.T) {
+          	got := pacedSystemPingArgs("203.0.113.8", 2*time.Second, 5, "linux")
+          	want := []string{"-4", "-n", "-c", "5", "-i", "1", "-W", "2", "203.0.113.8"}
+          	if !reflect.DeepEqual(got, want) {
+          		t.Fatalf("linux paced ping args = %#v, want %#v", got, want)
+          	}
+          }
+
+          func TestPacedSystemPingArgsWindowsKeepsPerReplyTimeout(t *testing.T) {
+          	got := pacedSystemPingArgs("203.0.113.8", 1500*time.Millisecond, 5, "windows")
+          	want := []string{"-4", "-n", "5", "-w", "1500", "203.0.113.8"}
+          	if !reflect.DeepEqual(got, want) {
+          		t.Fatalf("windows paced ping args = %#v, want %#v", got, want)
+          	}
+          }
+          EOF
+
+      - name: Format and verify Agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          gofmt -w agent/metrics.go agent/paced_ping.go agent/paced_ping_test.go
+          cd agent
+          go test ./...
+          go vet ./...
+
+      - name: Commit to PR73 branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "hahadh"
+          git config user.email "hahadhlu@gmail.com"
+          git add agent/metrics.go agent/paced_ping.go agent/paced_ping_test.go
+          git diff --cached --check
+          test -n "$(git status --porcelain)"
+          git commit -m "fix(agent): pace multi-sample ping probes"
+          git push origin HEAD:fix/advanced-probe-carrier-history
