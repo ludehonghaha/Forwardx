@@ -1,10 +1,12 @@
 import { asc, desc, eq } from "drizzle-orm";
 import {
+  hosts,
   hostProbeServices,
   hostProbeServiceStats,
   type InsertHostProbeService,
   type InsertHostProbeServiceStat,
 } from "../../drizzle/schema";
+import { pushAgentRefresh } from "../agentEvents";
 import { executeRaw, getDb, insertAndGetId, nowDate, queryRaw } from "../dbRuntime";
 import { boolLiteral, bucketExpression, inList, quoteIdentifier } from "../dbCompat";
 import { clampPositiveInt, epochSeconds } from "./repositoryUtils";
@@ -116,23 +118,31 @@ export async function getHostProbeServiceById(id: number) {
 export async function createHostProbeService(input: HostProbeServiceInput) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return insertAndGetId("host_probe_services", normalizeServiceInput(input) as any);
+  const id = await insertAndGetId("host_probe_services", normalizeServiceInput(input) as any);
+  const created = await getHostProbeServiceById(Number(id));
+  await notifyHostProbeServiceChange(`probe-service-created:${Number(id)}`, [created]);
+  return id;
 }
 
 export async function updateHostProbeService(id: number, input: Omit<HostProbeServiceInput, "userId">) {
   const db = await getDb();
   if (!db) return;
+  const previous = await getHostProbeServiceById(id);
   const payload = normalizeServiceInput({ ...input, userId: 0 });
   delete (payload as any).userId;
   delete (payload as any).createdAt;
   await db.update(hostProbeServices).set({ ...payload, updatedAt: nowDate() }).where(eq(hostProbeServices.id, id));
+  const next = await getHostProbeServiceById(id);
+  await notifyHostProbeServiceChange(`probe-service-updated:${id}`, [previous, next]);
 }
 
 export async function deleteHostProbeService(id: number) {
   const db = await getDb();
   if (!db) return;
+  const previous = await getHostProbeServiceById(id);
   await db.delete(hostProbeServiceStats).where(eq(hostProbeServiceStats.serviceId, id));
   await db.delete(hostProbeServices).where(eq(hostProbeServices.id, id));
+  await notifyHostProbeServiceChange(`probe-service-deleted:${id}`, [previous]);
 }
 
 export async function reorderHostProbeServices(ids: number[], userId?: number) {
@@ -166,7 +176,7 @@ export async function reorderHostProbeServices(ids: number[], userId?: number) {
   }
 }
 
-function serviceAppliesToHost(service: any, hostId: number) {
+export function hostProbeServiceAppliesToHost(service: any, hostId: number) {
   const id = Number(hostId);
   if (!id || !service?.isEnabled) return false;
   const scope = String(service.hostScope || "all");
@@ -175,13 +185,41 @@ function serviceAppliesToHost(service: any, hostId: number) {
   return true;
 }
 
+export function hostProbeRefreshHostIds(services: any[], hostIds: number[]) {
+  const candidates = (services || []).filter(Boolean);
+  return Array.from(new Set((hostIds || [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0 && candidates.some((service) => hostProbeServiceAppliesToHost(service, id)))))
+    .sort((left, right) => left - right);
+}
+
+async function notifyHostProbeServiceChange(reason: string, services: any[]) {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    const hostRows = await db.select({ id: hosts.id }).from(hosts);
+    const affectedHostIds = hostProbeRefreshHostIds(services, hostRows.map((row: any) => Number(row.id)));
+    for (const hostId of affectedHostIds) {
+      // Probe service definitions are part of the Agent's signed incremental
+      // heartbeat state. Invalidate the stable-plan fast path and wake the
+      // Agent immediately so method/target/scope edits do not remain cached
+      // until an audit cycle or process restart.
+      pushAgentRefresh(hostId, reason, { urgent: true });
+    }
+  } catch (error) {
+    // The database mutation has already succeeded. Refresh is best-effort;
+    // the normal heartbeat audit remains a fallback if an event cannot be sent.
+    console.warn(`[HostProbe] Failed to refresh affected Agents after ${reason}:`, error);
+  }
+}
+
 export async function getHostProbeTasksForHost(hostId: number) {
   const db = await getDb();
   if (!db) return [];
   const rows = await db.select().from(hostProbeServices).where(eq(hostProbeServices.isEnabled, true)).orderBy(asc(hostProbeServices.sortOrder), desc(hostProbeServices.createdAt), desc(hostProbeServices.id));
   return rows
     .map(mapHostProbeService)
-    .filter((service: any) => serviceAppliesToHost(service, hostId))
+    .filter((service: any) => hostProbeServiceAppliesToHost(service, hostId))
     .map((service: any) => ({
       serviceId: service.id,
       method: service.method === "ping" ? "ping" : "tcping",
