@@ -23,6 +23,14 @@ func TestPacedSystemPingArgsLinuxUsesOneSecondInterval(t *testing.T) {
 	}
 }
 
+func TestPacedSystemPingArgsLinuxRoundsReplyTimeoutUp(t *testing.T) {
+	got := pacedSystemPingArgs("203.0.113.8", 1500*time.Millisecond, 5, "linux")
+	want := []string{"-4", "-n", "-c", "5", "-i", "1", "-W", "2", "203.0.113.8"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("linux paced ping timeout args = %#v, want %#v", got, want)
+	}
+}
+
 func TestPacedSystemPingArgsWindowsKeepsPerReplyTimeout(t *testing.T) {
 	got := pacedSystemPingArgs("203.0.113.8", 1500*time.Millisecond, 5, "windows")
 	want := []string{"-4", "-n", "5", "-w", "1500", "203.0.113.8"}
