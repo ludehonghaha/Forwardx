@@ -1,0 +1,115 @@
+name: PR73 Probe Gray Agent
+
+on:
+  push:
+    branches:
+      - ci/pr73-probe-gray-agent
+    paths:
+      - ".github/workflows/pr73-probe-gray-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr73-probe-gray-agent-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 12e3303f1c00c546a95c08e3f67d6eec6eb51c00
+  RELEASE_TAG: pr73-probe-agent-gray-12e3303f
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Verify pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "SOURCE_SHA=$SOURCE_SHA"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache-dependency-path: agent/go.mod
+
+      - name: Test Agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd agent
+          gofmt -w ping.go ping_system.go ping_system_test.go
+          git diff --exit-code -- ping.go ping_system.go ping_system_test.go
+          go test ./...
+          go vet ./...
+
+      - name: Build isolated gray Agent binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -nE "s/.*AGENT_VERSION[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"].*/\1/p" shared/versions.ts | head -n1)"
+          VERSION="${VERSION#v}"
+          test -n "$VERSION"
+          mkdir -p dist/pr73-probe-gray-agent
+
+          (
+            cd agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+              go build -trimpath -ldflags "-s -w -X main.Version=$VERSION" \
+              -o ../dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-amd64 .
+            CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+              go build -trimpath -ldflags "-s -w -X main.Version=$VERSION" \
+              -o ../dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-arm64 .
+          )
+
+          sha256sum dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-* \
+            > dist/pr73-probe-gray-agent/SHA256SUMS
+
+          echo "AGENT_VERSION=$VERSION"
+          cat dist/pr73-probe-gray-agent/SHA256SUMS
+
+      - name: Verify amd64 binary starts
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-amd64
+          dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-amd64 -h >/tmp/agent-help.txt 2>&1 || true
+          grep -q -- "-config" /tmp/agent-help.txt
+
+      - name: Publish isolated prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="PR73 Probe Gray Agent ${SOURCE_SHA:0:8}"
+          NOTES="Isolated gray Agent build for PR #73 probe pacing validation. Exact source commit: ${SOURCE_SHA}. Not a production release."
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-amd64 \
+              dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-arm64 \
+              dist/pr73-probe-gray-agent/SHA256SUMS \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$SOURCE_SHA" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --prerelease \
+              dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-amd64 \
+              dist/pr73-probe-gray-agent/forwardx-agent-pr73-gray-linux-arm64 \
+              dist/pr73-probe-gray-agent/SHA256SUMS
+          fi
+
+          echo "Published isolated gray Agent release: $RELEASE_TAG"
