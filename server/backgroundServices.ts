@@ -8,6 +8,11 @@ let backgroundServicesStarted = false;
 
 export function startBackgroundServices() {
   if (backgroundServicesStarted) return false;
+  if (process.env.FORWARDX_DISABLE_BACKGROUND_SERVICES === "true") {
+    backgroundServicesStarted = true;
+    console.info("[Background] Scheduler, traffic history, protocol bridge reconcile, and Telegram bot are disabled by FORWARDX_DISABLE_BACKGROUND_SERVICES");
+    return true;
+  }
   if (isDevPanelMode()) {
     backgroundServicesStarted = true;
     console.info("[DevPanel] Background scheduler and Telegram bot are disabled in local development panel mode");
