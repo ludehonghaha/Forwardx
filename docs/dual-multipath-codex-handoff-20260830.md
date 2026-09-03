@@ -109,7 +109,32 @@ The pinned source contains native Hysteria2 inbound/outbound support. Its normal
 
 2026-09-02 read-only discovery resolved the existing ForwardX Agent HY2 path: `87.86.22.221:24618/udp` is owned by `forwardx-runtime.service` and forwarded in the host network namespace to `127.0.0.1:13666/udp`, whose Hysteria2 listener is owned by `forwardx-mihomo.service`. The preferred Gray mode reuses that carrier and adds only the loopback multipath server; a second HY2 server remains Plan B only.
 
-2026-09-03 live gate result: the new per-user Mita instance remained unchanged, but its only user had no `allowLoopbackIP` field. A real official Mieru client connection to `127.0.0.1:39000` returned SOCKS5 reply code 2. Therefore the full `24180` Dual workload was not started and no aggregation claim was made. The temporary loopback multipath process and both server temp directories were removed; all production ForwardX/Mita PIDs, restart counters, existing listeners and routes remained unchanged.
+2026-09-03 P1 Gray supersedes the earlier loopback-permission blocker. A fully
+isolated temporary Mita instance used CM-IPLC port `11401` and enabled
+`allowLoopbackIP=true` only for its random Gray user; the production `11464`
+instance and user remained byte-identical and kept `allowLoopbackIP` missing.
+The official Mieru v3.36.0 client reached the loopback-only multipath listener.
+
+With the existing ForwardX Agent HY2 reused at `87.86.22.221:24618`, a 64 MiB
+single HTTP/1.1 connection completed in 6.783409 seconds. The same workload
+increased multipath payload counters by `67,109,041` bytes on the preferred
+Mieru leg and `5,701,545` bytes on the HY2 leg, with zero reported errors,
+reorder bytes, or replay bytes. The server log tied leg 0 creation, leg 1 join,
+and data-path activation to the same destination/session. A following 1 MiB
+connection used Mieru only. Removing the 8 MiB test trigger and retaining the
+formal `120 Mbps / 1s` policy also completed 64 MiB; server activation was
+`reason=throughput`, measured `431.82 Mbps` over `1.1s`, and both legs carried
+payload.
+
+The P1 result proves true single-flow multipath, but it does not clear the
+production gate. With `tcp_fast_open=true`, large flows reset after leg 1
+activation. Disabling it produced the successful 64 MiB runs, so ForwardX now
+defaults this experimental field to false. A later 256 MiB repeated-session
+run still reset early, which remains a runtime-stability blocker requiring
+long-flow soak and pinned-fork work before deployment. Cleanup removed the
+temporary Mita, multipath, origin, nft table, credentials, and server runtime;
+production Mita, HY2, Agent, routes, and persisted firewall state were verified
+unchanged.
 
 ## Windows official Mieru sidecar update
 

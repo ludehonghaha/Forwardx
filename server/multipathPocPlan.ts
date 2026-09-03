@@ -35,7 +35,11 @@ export type MultipathPocLine = {
 const UINT32_MAX = 0xffffffff;
 
 const DEFAULTS = {
-  tcpFastOpen: true,
+  // Live P1 Gray on 2026-09-03 completed 64 MiB single-flow aggregation
+  // only after disabling the early logical connection path. Keep the
+  // experimental runtime conservative until the pinned fork fixes the
+  // large-flow reset observed with tcp_fast_open enabled.
+  tcpFastOpen: false,
   activationThresholdMbps: 120,
   activationWindow: "1s",
   chunkSize: 64 * 1024,

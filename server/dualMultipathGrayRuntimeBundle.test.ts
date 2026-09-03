@@ -87,6 +87,7 @@ test("builds Windows private SOCKS + native HY2 + multipath without pretending s
   assert.equal(config.outbounds[1].server, "87.86.22.221");
   assert.equal(config.outbounds[1].server_port, 61464);
   assert.equal(config.outbounds[2].type, "multipath");
+  assert.equal(config.outbounds[2].tcp_fast_open, false);
   assert.equal(config.route.final, config.outbounds[2].tag);
   assert.doesNotMatch(JSON.stringify(config.outbounds), /"type":"mieru"/);
 });
@@ -158,6 +159,7 @@ test("reuses the verified ForwardX Agent HY2 without creating a second server li
   assert.equal(bundle.fragments.serverConfig.inbounds[0].type, "multipath");
   assert.equal(bundle.fragments.serverConfig.inbounds[0].listen, "127.0.0.1");
   assert.equal(bundle.fragments.serverConfig.inbounds[0].listen_port, 39000);
+  assert.equal(bundle.fragments.serverConfig.inbounds[0].tcp_fast_open, false);
   assert.equal(bundle.topology.directLeg.mode, "reuse-existing-forwardx-hy2");
   assert.equal(bundle.topology.directLeg.serverPort, 24618);
   assert.equal(bundle.topology.directLeg.existingRuntime?.actualListener.port, 13666);

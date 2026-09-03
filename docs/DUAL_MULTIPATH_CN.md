@@ -87,11 +87,14 @@ Dual 必须输出专用的 sing-box/multipath 客户端配置，不得伪装成�
   "queue_frames": 256,
   "bandwidth_mbps": [200, 1000],
   "leg1_replay_timeout": "5s",
-  "tcp_fast_open": true
+  "tcp_fast_open": false
 }
 ```
 
-参数必须可配置；上面只是符合当前上游示例/实验目标的起点。
+参数必须可配置。`tcp_fast_open=false` 是 2026-09-03 真机 P1 Gray
+验收后的安全默认值：开启时两个大连接都在 leg1 加入后提前 reset；关闭后
+64 MiB 单连接在默认 replay 5s 下完整完成并由两腿共同承载。该结论只针对
+当前 pinned fork，不能外推为普通 TCP Fast Open 的通用结论。
 
 ## 5. P1-0B 灰度验收矩阵
 

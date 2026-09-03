@@ -37,7 +37,7 @@ test("compiles a two-leg client outbound with conservative PoC defaults", () => 
     udp_outbound: "dedicated",
     server: "10.66.67.1",
     server_port: 39000,
-    tcp_fast_open: true,
+    tcp_fast_open: false,
     activation_threshold_mbps: 120,
     activation_window: "1s",
     chunk_size: 65536,
@@ -57,7 +57,7 @@ test("compiles the matching server inbound using inherited ListenOptions fields"
     tag: "forwardx-multipath-1",
     listen: "127.0.0.1",
     listen_port: 39000,
-    tcp_fast_open: true,
+    tcp_fast_open: false,
     activation_threshold_mbps: 120,
     activation_window: "1s",
     chunk_size: 65536,
@@ -69,8 +69,9 @@ test("compiles the matching server inbound using inherited ListenOptions fields"
     bandwidth_mbps: [160, 700],
     max_reorder_frames: 2048,
   });
-  assert.equal(inbound?.tcp_fast_open, true);
+  assert.equal(inbound?.tcp_fast_open, false);
   assert.equal(buildMultipathPocInbound({ ...line, tcpFastOpen: false }, legs)?.tcp_fast_open, false);
+  assert.equal(buildMultipathPocInbound({ ...line, tcpFastOpen: true }, legs)?.tcp_fast_open, true);
   assert.equal(JSON.stringify(inbound).includes("password"), false);
   assert.equal(JSON.stringify(inbound).includes("outbounds"), false);
 });

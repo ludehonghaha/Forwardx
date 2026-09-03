@@ -671,7 +671,7 @@ export function createDefaultDualMultipathInfrastructure(
       listen: "127.0.0.1",
       preferredLegIndex: 0,
       udpLegIndex: 0,
-      tcpFastOpen: true,
+      tcpFastOpen: false,
     },
     legs: [
       { role: "private", legIndex: 0, outboundTag: "forwardx-private-mieru", supportsUdp: true },
