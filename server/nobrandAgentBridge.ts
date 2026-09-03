@@ -6,6 +6,12 @@ import {
   takeNoBrandDiscoveryTasks,
   type NoBrandDiscoveryAgentResult,
 } from "./nobrandDiscoveryTasks";
+import {
+  completeDualPilotTask,
+  isDualPilotAction,
+  takeDualPilotTasks,
+  type DualPilotAgentResult,
+} from "./dualPilotTasks";
 
 export const nobrandAgentBridgeRouter = Router();
 
@@ -21,30 +27,55 @@ function isNoBrandDiscoveryResult(value: unknown): value is NoBrandDiscoveryAgen
     && typeof result.installed === "boolean";
 }
 
-function injectDiscoveryTasks(res: Response, hostId: number) {
+function isDualPilotResult(value: unknown): value is DualPilotAgentResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  return typeof result.taskId === "string"
+    && typeof result.success === "boolean"
+    && isDualPilotAction(result.action);
+}
+
+function injectDedicatedTasks(res: Response, hostId: number) {
   const originalJson = res.json.bind(res);
   res.json = ((body?: any) => {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return originalJson(body);
     }
-    const tasks = takeNoBrandDiscoveryTasks(hostId, 1);
-    if (tasks.length === 0) return originalJson(body);
-    return originalJson({ ...body, noBrandDiscoveryTasks: tasks });
+    const noBrandTasks = takeNoBrandDiscoveryTasks(hostId, 1);
+    const dualPilotTasks = takeDualPilotTasks(hostId, 1);
+    if (noBrandTasks.length === 0 && dualPilotTasks.length === 0) return originalJson(body);
+    return originalJson({
+      ...body,
+      ...(noBrandTasks.length > 0 ? { noBrandDiscoveryTasks: noBrandTasks } : {}),
+      ...(dualPilotTasks.length > 0 ? { dualPilotTasks } : {}),
+    });
   }) as Response["json"];
 }
 
 async function bridgeAgentRequest(req: Request, res: Response, next: NextFunction) {
   try {
     const path = effectiveAgentPath(req);
-    const candidate = req.body?.nobrandDiscoveryResult;
+    const noBrandCandidate = req.body?.nobrandDiscoveryResult;
+    const dualPilotCandidate = req.body?.dualPilotResult;
 
-    if (path === "/api/agent/plugin-action-result" && isNoBrandDiscoveryResult(candidate)) {
+    if (path === "/api/agent/plugin-action-result" && isNoBrandDiscoveryResult(noBrandCandidate)) {
       const host = await getAgentHostIdentityFromRequest(req);
       if (!host) {
         res.status(401).json({ error: "Invalid token" });
         return;
       }
-      const accepted = completeNoBrandDiscoveryTask(Number(host.id), candidate);
+      const accepted = completeNoBrandDiscoveryTask(Number(host.id), noBrandCandidate);
+      res.json({ success: true, accepted });
+      return;
+    }
+
+    if (path === "/api/agent/plugin-action-result" && isDualPilotResult(dualPilotCandidate)) {
+      const host = await getAgentHostIdentityFromRequest(req);
+      if (!host) {
+        res.status(401).json({ error: "Invalid token" });
+        return;
+      }
+      const accepted = completeDualPilotTask(Number(host.id), dualPilotCandidate);
       res.json({ success: true, accepted });
       return;
     }
@@ -55,7 +86,7 @@ async function bridgeAgentRequest(req: Request, res: Response, next: NextFunctio
         res.status(401).json({ error: "Invalid token" });
         return;
       }
-      injectDiscoveryTasks(res, Number(host.id));
+      injectDedicatedTasks(res, Number(host.id));
     }
 
     next();
@@ -65,7 +96,7 @@ async function bridgeAgentRequest(req: Request, res: Response, next: NextFunctio
 }
 
 // The Agent normally tunnels POST traffic through /api/sync. Keep direct paths
-// too so transport negotiation/fallback does not change NoBrand discovery behavior.
+// too so transport negotiation/fallback does not change dedicated task behavior.
 nobrandAgentBridgeRouter.post("/api/sync", agentEncryptionMiddleware, bridgeAgentRequest);
 nobrandAgentBridgeRouter.post("/api/agent/heartbeat", agentEncryptionMiddleware, bridgeAgentRequest);
 nobrandAgentBridgeRouter.post("/api/agent/plugin-action-result", agentEncryptionMiddleware, bridgeAgentRequest);
