@@ -164,6 +164,7 @@ function CarrierBadge({ carrier }: { carrier: ChinaCarrierKey }) {
 export default function HostProbeCarrierHistory() {
   const [regionFilter, setRegionFilter] = useState("all");
   const [selectedHostIds, setSelectedHostIds] = useState<number[]>([]);
+  const [focusedHostId, setFocusedHostId] = useState<number | null>(null);
   const [scaleMode, setScaleMode] = useState<"focus" | "full">("focus");
 
   const { data: hosts = [] } = trpc.hosts.options.useQuery(undefined, { staleTime: 30_000 });
@@ -295,6 +296,12 @@ export default function HostProbeCarrierHistory() {
     return String(host?.name || `#${hostId}`);
   }), [hosts, selectedHostIds]);
 
+  const focusedHostName = useMemo(() => {
+    if (focusedHostId == null) return "";
+    const host = (hosts as any[]).find((item) => Number(item.id) === focusedHostId);
+    return String(host?.name || `#${focusedHostId}`);
+  }, [focusedHostId, hosts]);
+
   const toggleHostSelection = (hostId: number) => {
     setSelectedHostIds((current) => {
       if (current.includes(hostId)) return current.filter((id) => id !== hostId);
@@ -316,7 +323,7 @@ export default function HostProbeCarrierHistory() {
               <Badge variant="outline" className="text-[10px]">5 分钟聚合</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              电信、联通、移动分开展示，每台服务器只保留自己的当前状态和小趋势；需要横向比较时最多选择两台服务器。
+              电信、联通、移动分开展示；点“查看三网”查看单台服务器详情，需要横向比较时最多选择两台服务器。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -362,6 +369,7 @@ export default function HostProbeCarrierHistory() {
                     {carrierDefinitions.map((definition) => {
                       const latest = latestByDefinition.get(definition.key);
                       const selected = selectedHostIds.includes(definition.hostId);
+                      const focused = focusedHostId === definition.hostId;
                       const selectionLocked = selectedHostIds.length >= 2 && !selected;
                       const sparkData = chartData
                         .filter((point) => point[definition.key] != null && Number.isFinite(Number(point[definition.key])))
@@ -371,7 +379,7 @@ export default function HostProbeCarrierHistory() {
                       return (
                         <div key={definition.key} className={cn(
                           "rounded-lg border bg-card/50 p-3 transition-colors",
-                          selected ? "border-primary/60 bg-primary/5" : "border-border/40",
+                          selected || focused ? "border-primary/60 bg-primary/5" : "border-border/40",
                         )}>
                           <div className="flex min-w-0 items-start justify-between gap-2">
                             <div className="min-w-0">
@@ -383,15 +391,25 @@ export default function HostProbeCarrierHistory() {
                                 {definition.region} · {definition.method.toUpperCase()} · {formatProbeTarget(definition)}
                               </p>
                             </div>
-                            <Button
-                              size="sm"
-                              variant={selected ? "secondary" : "outline"}
-                              className="h-7 shrink-0 px-2 text-[11px]"
-                              disabled={selectionLocked}
-                              onClick={() => toggleHostSelection(definition.hostId)}
-                            >
-                              {selected ? "已选择" : "加入对比"}
-                            </Button>
+                            <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant={focused ? "secondary" : "outline"}
+                                className="h-7 px-2 text-[11px]"
+                                onClick={() => setFocusedHostId(definition.hostId)}
+                              >
+                                {focused ? "正在查看" : "查看三网"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant={selected ? "secondary" : "outline"}
+                                className="h-7 px-2 text-[11px]"
+                                disabled={selectionLocked}
+                                onClick={() => toggleHostSelection(definition.hostId)}
+                              >
+                                {selected ? "已选择" : "加入对比"}
+                              </Button>
+                            </div>
                           </div>
 
                           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -432,6 +450,97 @@ export default function HostProbeCarrierHistory() {
               );
             })}
           </div>
+        )}
+
+        {focusedHostId != null && (
+          <section className="rounded-xl border border-primary/30 bg-primary/[0.03] p-3 sm:p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold">单机三网</p>
+                  <Badge variant="outline" className="text-[10px]">{focusedHostName}</Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  同一台服务器的电信、联通、移动分别成行展示，不把 Ping 与 TCPing 混成一条图。
+                </p>
+              </div>
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setFocusedHostId(null)}>关闭单机详情</Button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {CARRIER_ORDER.map((carrier) => {
+                const definition = (definitionsByCarrier.get(carrier) || [])
+                  .find((item) => item.hostId === focusedHostId);
+
+                if (!definition) {
+                  return (
+                    <div key={carrier} className="rounded-lg border border-dashed border-border/50 bg-background/15 p-3">
+                      <div className="flex items-center gap-2">
+                        <CarrierBadge carrier={carrier} />
+                        <span className="text-xs text-muted-foreground">当前服务器未配置该运营商探测，或当前地区筛选下没有数据。</span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const latest = latestByDefinition.get(definition.key);
+                const loss = latest?.loss;
+                const yMax = latencyYMax([definition], chartData, scaleMode);
+
+                return (
+                  <div key={carrier} className="rounded-lg border border-border/40 bg-background/20 p-3">
+                    <div className="mb-2 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <CarrierBadge carrier={carrier} />
+                        <span className="text-sm font-medium">{CHINA_CARRIER_LABELS[carrier]} · 24h RTT</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {definition.method.toUpperCase()} · {formatProbeTarget(definition)}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                        <span>
+                          当前 RTT <strong className={cn("font-semibold text-foreground", latest?.timeout ? "text-destructive" : "")}>{latestLatencyLabel(definition, latest)}</strong>
+                        </span>
+                        <span className={cn(loss != null && loss > 0 ? "text-destructive" : "")}>
+                          {probeFailureLabel(definition)} <strong className="font-semibold">{loss == null || !Number.isFinite(loss) ? "--" : `${loss.toFixed(1)}%`}</strong>
+                        </span>
+                        <span>{latest ? `最近样本 ${formatFullTime(latest.at)}` : "暂无最近样本"}</span>
+                      </div>
+                    </div>
+
+                    <div className="h-[190px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                          <XAxis
+                            dataKey="at"
+                            type="number"
+                            domain={["dataMin", "dataMax"]}
+                            tickFormatter={(value) => formatAxisTime(Number(value))}
+                            tick={{ fontSize: 10 }}
+                            minTickGap={54}
+                          />
+                          <YAxis domain={[0, yMax]} allowDataOverflow width={46} tick={{ fontSize: 10 }} unit="ms" />
+                          <RechartsTooltip content={<CompareTooltip definitions={[definition]} />} />
+                          <Line
+                            type="linear"
+                            dataKey={definition.key}
+                            name={definition.hostName}
+                            stroke={definition.color}
+                            strokeWidth={1.9}
+                            connectNulls
+                            isAnimationActive={false}
+                            dot={false}
+                            activeDot={{ r: 3.5 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         )}
 
         <section className="rounded-xl border border-border/50 bg-card/35 p-3 sm:p-4">
