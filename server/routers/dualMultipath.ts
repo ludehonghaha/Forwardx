@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import {
@@ -9,11 +10,24 @@ import {
   type DualMultipathSettingsStore,
 } from "../dualMultipathControlPlane";
 import { buildDualMultipathDeploymentPlan } from "../dualMultipathDeploymentPlan";
+import {
+  enqueueDualPilotTask,
+  getDualPilotTaskStatus,
+} from "../dualPilotTasks";
 
 const settingsStore: DualMultipathSettingsStore = {
   getSetting: (key) => db.getSetting(key),
   setSetting: (key, value) => db.setSetting(key, value),
 };
+
+const dualPilotActionInput = z.object({
+  hostId: z.number().int().positive(),
+  action: z.enum(["start", "stop", "status"]),
+});
+
+const dualPilotStatusInput = z.object({
+  hostId: z.number().int().positive(),
+});
 
 function badRequest(error: unknown): never {
   throw new TRPCError({
@@ -22,11 +36,6 @@ function badRequest(error: unknown): never {
   });
 }
 
-/**
- * Dual multipath 目前只提供离线控制面：保存草稿、读取草稿、编译预览
- * 和生成不可执行的 Dry-run 部署计划。本 router 故意不导入
- * agentEvents、runtime lifecycle 或 tunnel mutation。
- */
 export const dualMultipathRouter = router({
   current: adminProcedure.query(async () => {
     try {
@@ -78,4 +87,21 @@ export const dualMultipathRouter = router({
         return badRequest(error);
       }
     }),
+
+  // Pilot control is intentionally much narrower than the generic Agent/plugin
+  // action surface. Only these three lifecycle enums can be queued. Executable,
+  // paths, role and arguments are fixed inside the Agent binary.
+  pilotAction: adminProcedure
+    .input(dualPilotActionInput)
+    .mutation(({ input }) => {
+      try {
+        return enqueueDualPilotTask(input.hostId, input.action);
+      } catch (error) {
+        return badRequest(error);
+      }
+    }),
+
+  pilotActionStatus: adminProcedure
+    .input(dualPilotStatusInput)
+    .query(({ input }) => ({ status: getDualPilotTaskStatus(input.hostId) })),
 });
