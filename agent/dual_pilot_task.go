@@ -20,6 +20,7 @@ const dualPilotTaskTimeout = 35 * time.Second
 const dualPilotTaskOutputLimit = 16 * 1024
 
 var dualPilotTaskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+var dualPilotLauncherForTask = dualPilotLauncherPath
 
 type dualPilotTask struct {
 	TaskID    string `json:"taskId"`
@@ -81,7 +82,8 @@ func runDualPilotTaskWith(task dualPilotTask, command dualPilotCommandFn) dualPi
 		result.Error = "Dual Pilot executor is unavailable"
 		return result
 	}
-	info, err := os.Stat(dualPilotLauncherPath)
+	launcher := strings.TrimSpace(dualPilotLauncherForTask)
+	info, err := os.Stat(launcher)
 	if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
 		result.Error = "Dual Pilot runtime is not installed"
 		return result
@@ -92,9 +94,10 @@ func runDualPilotTaskWith(task dualPilotTask, command dualPilotCommandFn) dualPi
 
 	// Security boundary: no shell, no request-controlled executable/path/role
 	// or free-form arguments. Only the validated lifecycle enum crosses into
-	// the preinstalled Pilot launcher.
+	// the preinstalled Pilot launcher. dualPilotLauncherForTask differs from the
+	// constant only inside unit tests.
 	cmd := command(ctx,
-		dualPilotLauncherPath,
+		launcher,
 		"server",
 		action,
 		dualPilotConfigDir,
