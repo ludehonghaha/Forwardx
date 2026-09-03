@@ -42,13 +42,13 @@ jobs:
           cp tests/upstream-multipath/forwardx_longflow_test.go \
             "$SOURCE_DIR/protocol/multipath/forwardx_longflow_test.go"
 
-      - name: Run ForwardX 256 MiB core regression
+      - name: Run ForwardX 256 MiB core regressions
         shell: bash
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/singbox-multipath"
           go test ./protocol/multipath \
-            -run '^TestForwardXCoreLongFlow256MiB$' \
+            -run '^TestForwardXCoreLongFlow(256MiB|Leg1StallFallback256MiB)$' \
             -count=1 \
-            -timeout=3m \
+            -timeout=4m \
             -v
