@@ -1,0 +1,21 @@
+name: Temporary Cancel Duplicate v2.3.294 Release
+
+on:
+  push:
+    branches:
+      - release/panel-v2.3.294
+    paths:
+      - ".github/workflows/tmp-cancel-duplicate-v2394.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel duplicate pending release run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel 33725885117 --repo "$GITHUB_REPOSITORY"
