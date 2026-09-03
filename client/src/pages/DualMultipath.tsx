@@ -19,6 +19,15 @@ import { trpc } from "@/lib/trpc";
 import { Cable, CheckCircle2, Copy, Eye, Gauge, Loader2, LockKeyhole, Network, Play, Save, Server, ShieldCheck, Square, TerminalSquare } from "lucide-react";
 import { toast } from "sonner";
 
+type PilotHostOption = {
+  id: number;
+  name: string;
+  isOnline: boolean;
+  ip?: string | null;
+  ipv4?: string | null;
+  ipv6?: string | null;
+};
+
 function prettyJson(value: unknown) {
   return value ? JSON.stringify(value, null, 2) : "";
 }
@@ -73,6 +82,7 @@ export default function DualMultipathPage() {
   const [pilotServerHostId, setPilotServerHostId] = useState(0);
   const currentQuery = trpc.dualMultipath.current.useQuery(undefined, { retry: false, refetchOnWindowFocus: false });
   const hostsQuery = trpc.hosts.listAll.useQuery(undefined, { retry: false, refetchOnWindowFocus: false });
+  const pilotHosts = (hostsQuery.data || []) as PilotHostOption[];
   const pilotStatusQuery = trpc.dualMultipath.pilotActionStatus.useQuery(
     { hostId: pilotServerHostId || 1 },
     {
@@ -139,7 +149,7 @@ export default function DualMultipathPage() {
       toast.error("请先明确选择 7CM Dual 服务端 Agent");
       return;
     }
-    const selectedHost = (hostsQuery.data || []).find((host) => Number(host.id) === pilotServerHostId);
+    const selectedHost = pilotHosts.find((host) => Number(host.id) === pilotServerHostId);
     if (!selectedHost) {
       toast.error("选择的服务端主机不存在");
       return;
@@ -185,7 +195,7 @@ export default function DualMultipathPage() {
       ? privateBridge.target.discovery.evidence.snapshotId
       : null;
   const pilotStatus = pilotStatusQuery.data?.status;
-  const selectedPilotHost = (hostsQuery.data || []).find((host) => Number(host.id) === pilotServerHostId);
+  const selectedPilotHost = pilotHosts.find((host) => Number(host.id) === pilotServerHostId);
   const pilotBusy = pilotActionMutation.isPending || pilotStatus?.state === "queued" || pilotStatus?.state === "running";
 
   return (
@@ -267,7 +277,7 @@ export default function DualMultipathPage() {
                   disabled={hostsQuery.isLoading || pilotBusy}
                 >
                   <option value="">请选择，不自动猜测</option>
-                  {(hostsQuery.data || []).map((host) => (
+                  {pilotHosts.map((host) => (
                     <option key={host.id} value={host.id}>{host.name} · #{host.id} · {host.isOnline ? "在线" : "离线"} · {host.ip || host.ipv4 || host.ipv6 || "无地址"}</option>
                   ))}
                 </select>
