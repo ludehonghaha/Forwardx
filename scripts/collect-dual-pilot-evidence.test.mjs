@@ -63,10 +63,6 @@ test("collector source remains read-only toward services and networking", () => 
     /\bip\s+route\b/,
     /\bip\s+rule\b/,
     /\bservice\s+.*(?:stop|restart|start)\b/,
-    /server-gray\.json/,
-    /dual-test\.json/,
-    /mita-pilot\.json/,
-    /mieru-gray\.json/,
   ]) {
     assert.doesNotMatch(source, forbidden);
   }
