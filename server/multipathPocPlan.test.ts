@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "./dualPilotTasks.test";
+import "./dualMultipathPilotInstaller.test";
 import {
   MULTIPATH_POC_UPSTREAM,
   buildMultipathPocInbound,
