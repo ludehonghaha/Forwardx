@@ -16,7 +16,7 @@ import {
   type DualMultipathFormState,
 } from "@/lib/dualMultipathForm";
 import { trpc } from "@/lib/trpc";
-import { Cable, CheckCircle2, Copy, Eye, Gauge, Loader2, LockKeyhole, Network, Save, ShieldCheck } from "lucide-react";
+import { Cable, CheckCircle2, Copy, Eye, Gauge, Loader2, LockKeyhole, Network, Play, Save, Server, ShieldCheck, Square, TerminalSquare } from "lucide-react";
 import { toast } from "sonner";
 
 function prettyJson(value: unknown) {
@@ -58,10 +58,30 @@ function StatusRow({ label, protocol, status, detail }: { label: string; protoco
   );
 }
 
+function pilotStateLabel(state: string | undefined) {
+  if (state === "queued") return "等待 Agent";
+  if (state === "running") return "执行中";
+  if (state === "success") return "操作成功";
+  if (state === "error") return "操作失败";
+  if (state === "timeout") return "Agent 超时";
+  return "尚未检查";
+}
+
 export default function DualMultipathPage() {
   const utils = trpc.useUtils();
   const [form, setForm] = useState<DualMultipathFormState>(() => defaultDualMultipathForm());
+  const [pilotServerHostId, setPilotServerHostId] = useState(0);
   const currentQuery = trpc.dualMultipath.current.useQuery(undefined, { retry: false, refetchOnWindowFocus: false });
+  const hostsQuery = trpc.hosts.listAll.useQuery(undefined, { retry: false, refetchOnWindowFocus: false });
+  const pilotStatusQuery = trpc.dualMultipath.pilotActionStatus.useQuery(
+    { hostId: pilotServerHostId || 1 },
+    {
+      enabled: pilotServerHostId > 0,
+      retry: false,
+      refetchOnWindowFocus: false,
+      refetchInterval: pilotServerHostId > 0 ? 2000 : false,
+    },
+  );
 
   useEffect(() => {
     if (currentQuery.data?.draft) setForm(dualMultipathFormFromDraft(currentQuery.data.draft));
@@ -85,6 +105,13 @@ export default function DualMultipathPage() {
     },
     onError: (error) => toast.error(error.message || "Dual 草稿保存失败"),
   });
+  const pilotActionMutation = trpc.dualMultipath.pilotAction.useMutation({
+    onSuccess: async (result) => {
+      await pilotStatusQuery.refetch();
+      toast.success(`Dual Pilot ${result.task.action} 已进入 Agent 专用任务队列`);
+    },
+    onError: (error) => toast.error(error.message || "Dual Pilot 操作失败"),
+  });
 
   const patchForm = (patch: Partial<DualMultipathFormState>) => {
     setForm((current) => ({ ...current, ...patch }));
@@ -105,6 +132,23 @@ export default function DualMultipathPage() {
     if (kind === "preview") previewMutation.mutate(draft);
     if (kind === "plan") planMutation.mutate(draft);
     if (kind === "save") saveMutation.mutate(draft);
+  };
+
+  const runPilotAction = (action: "start" | "stop" | "status") => {
+    if (!pilotServerHostId) {
+      toast.error("请先明确选择 7CM Dual 服务端 Agent");
+      return;
+    }
+    const selectedHost = (hostsQuery.data || []).find((host) => Number(host.id) === pilotServerHostId);
+    if (!selectedHost) {
+      toast.error("选择的服务端主机不存在");
+      return;
+    }
+    if (!selectedHost.isOnline) {
+      toast.error("该 Agent 当前离线，未下发 Pilot 操作");
+      return;
+    }
+    pilotActionMutation.mutate({ hostId: pilotServerHostId, action });
   };
 
   if (currentQuery.isLoading) {
@@ -140,6 +184,9 @@ export default function DualMultipathPage() {
     : privateBridge.type === "mihomo-dedicated-listener" && privateBridge.target.discovery.status === "verified-read-only"
       ? privateBridge.target.discovery.evidence.snapshotId
       : null;
+  const pilotStatus = pilotStatusQuery.data?.status;
+  const selectedPilotHost = (hostsQuery.data || []).find((host) => Number(host.id) === pilotServerHostId);
+  const pilotBusy = pilotActionMutation.isPending || pilotStatus?.state === "queued" || pilotStatus?.state === "running";
 
   return (
     <DashboardLayout>
@@ -150,15 +197,16 @@ export default function DualMultipathPage() {
             <p className="mt-1 text-sm text-muted-foreground">一个聚合节点：小流量优先专线，大流量自动追加直连。</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary" className="gap-1.5"><Eye className="h-3.5 w-3.5" />离线预览</Badge>
+            <Badge variant="secondary" className="gap-1.5"><Eye className="h-3.5 w-3.5" />诊断预览</Badge>
+            <Badge variant="secondary">Pilot 实验</Badge>
             <Badge variant={configured ? "outline" : "secondary"}>{configured ? "已有草稿" : "尚未保存"}</Badge>
           </div>
         </div>
 
         <Alert>
           <ShieldCheck className="h-4 w-4" />
-          <AlertTitle>部署门禁保持关闭</AlertTitle>
-          <AlertDescription>本页只有 ForwardX 的 Dual 草稿与脱敏预览；不会修改 OpenClash、Mita、systemd、防火墙、路由或远端运行时。</AlertDescription>
+          <AlertTitle>生产部署门禁仍然关闭</AlertTitle>
+          <AlertDescription>草稿、预览和 Dry-run 不修改运行环境。下方 Pilot 控制只有在你明确选择服务端 Agent 后才会下发固定 start / stop / status；它只管理独立 Pilot runtime，不允许修改生产 Mita、HY2、systemd、防火墙或路由。</AlertDescription>
         </Alert>
 
         {currentQuery.isError ? (
@@ -192,6 +240,69 @@ export default function DualMultipathPage() {
           </CardContent>
         </Card>
 
+        <Card className="border-amber-500/30 bg-card/60 backdrop-blur-md">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle className="flex items-center gap-2"><Server className="h-4 w-4 text-primary" />服务端 Pilot</CardTitle>
+                <CardDescription className="mt-1">实验启停通道。当前只控制 7CM Dual 服务端；客户端接入和订阅仍不属于生产部署。</CardDescription>
+              </div>
+              <Badge variant="secondary">readyToDeploy=false</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Alert>
+              <LockKeyhole className="h-4 w-4" />
+              <AlertTitle>必须手动绑定正确的服务端 Agent</AlertTitle>
+              <AlertDescription>ForwardX 不会从 IP、客户端目标或 discovery 名称猜主机 ID。机器未预装 Dual Pilot runtime 时，Agent 只会返回“未安装”，不会自动下载或触碰生产服务。</AlertDescription>
+            </Alert>
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+              <div className="space-y-2">
+                <Label htmlFor="dual-pilot-server-host">7CM Dual 服务端 Agent</Label>
+                <select
+                  id="dual-pilot-server-host"
+                  value={pilotServerHostId || ""}
+                  onChange={(event) => setPilotServerHostId(Number(event.target.value) || 0)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  disabled={hostsQuery.isLoading || pilotBusy}
+                >
+                  <option value="">请选择，不自动猜测</option>
+                  {(hostsQuery.data || []).map((host) => (
+                    <option key={host.id} value={host.id}>{host.name} · #{host.id} · {host.isOnline ? "在线" : "离线"} · {host.ip || host.ipv4 || host.ipv6 || "无地址"}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" disabled={!pilotServerHostId || pilotBusy || !selectedPilotHost?.isOnline} onClick={() => runPilotAction("status")}>
+                  {pilotActionMutation.isPending && pilotActionMutation.variables?.action === "status" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TerminalSquare className="mr-2 h-4 w-4" />}检查状态
+                </Button>
+                <Button type="button" disabled={!pilotServerHostId || pilotBusy || !selectedPilotHost?.isOnline} onClick={() => runPilotAction("start")}>
+                  {pilotActionMutation.isPending && pilotActionMutation.variables?.action === "start" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}启动 Pilot
+                </Button>
+                <Button type="button" variant="destructive" disabled={!pilotServerHostId || pilotBusy || !selectedPilotHost?.isOnline} onClick={() => runPilotAction("stop")}>
+                  {pilotActionMutation.isPending && pilotActionMutation.variables?.action === "stop" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Square className="mr-2 h-4 w-4" />}停止 Pilot
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-muted/15 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">最近一次 Pilot Agent 操作</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedPilotHost ? `${selectedPilotHost.name} · Host #${selectedPilotHost.id}` : "尚未选择服务端"}</p>
+                </div>
+                <Badge variant={pilotStatus?.state === "error" || pilotStatus?.state === "timeout" ? "destructive" : "secondary"}>{pilotStateLabel(pilotStatus?.state)}</Badge>
+              </div>
+              {pilotStatus ? (
+                <div className="mt-3 space-y-2 text-xs">
+                  <p className="text-muted-foreground">动作：{pilotStatus.action} · Task {pilotStatus.taskId}</p>
+                  {pilotStatus.error ? <p className="whitespace-pre-wrap text-destructive">{pilotStatus.error}</p> : null}
+                  {pilotStatus.output ? <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-background/70 p-3 font-mono leading-5">{pilotStatus.output}</pre> : null}
+                </div>
+              ) : <p className="mt-3 text-xs text-muted-foreground">点击“检查状态”后，结果会通过现有加密 Agent 通道返回。</p>}
+            </div>
+          </CardContent>
+        </Card>
+
         <details className="rounded-xl border border-border/50 bg-card/40">
           <summary className="cursor-pointer px-5 py-4 text-sm font-medium">高级 / 诊断（离线、脱敏）</summary>
           <div className="space-y-5 border-t border-border/50 p-5">
@@ -207,7 +318,7 @@ export default function DualMultipathPage() {
               <Button type="button" variant="outline" onClick={() => submit("preview")} disabled={busy}>{previewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}生成诊断预览</Button>
               <Button type="button" variant="outline" onClick={() => submit("plan")} disabled={busy}>{planMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Gauge className="mr-2 h-4 w-4" />}生成 Dry-run</Button>
             </div>
-            {previewData ? <Alert><CheckCircle2 className="h-4 w-4" /><AlertTitle>确定性脱敏预览已生成</AlertTitle><AlertDescription>native HY2 依赖 pinned artifact 的 with_quic 构建；所有 runtime mutation 仍关闭。</AlertDescription></Alert> : null}
+            {previewData ? <Alert><CheckCircle2 className="h-4 w-4" /><AlertTitle>确定性脱敏预览已生成</AlertTitle><AlertDescription>native HY2 依赖 pinned artifact 的 with_quic 构建；所有生产 runtime mutation 仍关闭。</AlertDescription></Alert> : null}
             {planData ? (
               <div className="space-y-2 rounded-lg border border-border/50 p-4">
                 <div className="flex items-center justify-between"><p className="text-sm font-medium">部署阻塞项</p><Badge variant="secondary">readyToDeploy=false</Badge></div>
