@@ -21,6 +21,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify Pilot evidence collector safety
+        run: node --test scripts/collect-dual-pilot-evidence.test.mjs
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
