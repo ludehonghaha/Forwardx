@@ -36,6 +36,13 @@ function badRequest(error: unknown): never {
   });
 }
 
+async function requireOnlineDualPilotHost(hostId: number) {
+  const host = await db.getHostById(hostId);
+  if (!host) throw new Error("Dual Pilot 服务端主机不存在");
+  if (!(host as any).isOnline) throw new Error("Dual Pilot 服务端 Agent 当前离线");
+  return host;
+}
+
 export const dualMultipathRouter = router({
   current: adminProcedure.query(async () => {
     try {
@@ -90,11 +97,13 @@ export const dualMultipathRouter = router({
 
   // Pilot control is intentionally much narrower than the generic Agent/plugin
   // action surface. Only these three lifecycle enums can be queued. Executable,
-  // paths, role and arguments are fixed inside the Agent binary.
+  // paths, role and arguments are fixed inside the Agent binary. The server
+  // independently re-checks host existence and liveness instead of trusting UI.
   pilotAction: adminProcedure
     .input(dualPilotActionInput)
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       try {
+        await requireOnlineDualPilotHost(input.hostId);
         return enqueueDualPilotTask(input.hostId, input.action);
       } catch (error) {
         return badRequest(error);
