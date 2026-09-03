@@ -31,6 +31,7 @@ EOF
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 LAUNCHER_SOURCE="$SCRIPT_DIR/run-dual-pilot.sh"
+COLLECTOR_SOURCE="$SCRIPT_DIR/collect-dual-pilot-evidence.sh"
 SERVER_SOURCE="$SOURCE_CONFIG_DIR/server-gray.json"
 MITA_SOURCE="$SOURCE_CONFIG_DIR/mita-pilot.json"
 SING_BOX_SOURCE="$SOURCE_ARTIFACT_DIR/sing-box-linux-amd64"
@@ -38,10 +39,11 @@ SING_BOX_SOURCE="$SOURCE_ARTIFACT_DIR/sing-box-linux-amd64"
 fail() { printf '[dual-pilot-install] ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[dual-pilot-install] %s\n' "$*"; }
 
-for file in "$LAUNCHER_SOURCE" "$SERVER_SOURCE" "$MITA_SOURCE" "$SING_BOX_SOURCE"; do
+for file in "$LAUNCHER_SOURCE" "$COLLECTOR_SOURCE" "$SERVER_SOURCE" "$MITA_SOURCE" "$SING_BOX_SOURCE"; do
   [ -f "$file" ] || fail "missing required file: $file"
 done
 [ -x "$LAUNCHER_SOURCE" ] || fail "launcher is not executable: $LAUNCHER_SOURCE"
+[ -x "$COLLECTOR_SOURCE" ] || fail "evidence collector is not executable: $COLLECTOR_SOURCE"
 [ -x "$SING_BOX_SOURCE" ] || fail "pinned sing-box is not executable: $SING_BOX_SOURCE"
 
 json_sanity() {
@@ -99,8 +101,9 @@ for pid_file in "$RUNTIME_DIR"/*.pid; do
 done
 
 install -d -m 0755 "$INSTALL_ROOT" "$INSTALL_ARTIFACT_DIR"
-install -d -m 0700 "$INSTALL_CONFIG_DIR" "$RUNTIME_DIR"
+install -d -m 0700 "$INSTALL_CONFIG_DIR" "$RUNTIME_DIR" "$RUNTIME_DIR/evidence"
 install -m 0755 "$LAUNCHER_SOURCE" "$INSTALL_ROOT/run-dual-pilot.sh"
+install -m 0755 "$COLLECTOR_SOURCE" "$INSTALL_ROOT/collect-dual-pilot-evidence.sh"
 install -m 0755 "$SING_BOX_SOURCE" "$INSTALL_ARTIFACT_DIR/sing-box-linux-amd64"
 install -m 0600 "$SERVER_SOURCE" "$INSTALL_CONFIG_DIR/server-gray.json"
 install -m 0600 "$MITA_SOURCE" "$INSTALL_CONFIG_DIR/mita-pilot.json"
@@ -109,8 +112,13 @@ install -m 0600 "$MITA_SOURCE" "$INSTALL_CONFIG_DIR/mita-pilot.json"
 PROTECTED_MITA_PORT="$PROTECTED_MITA_PORT" \
   "$INSTALL_ROOT/run-dual-pilot.sh" server validate "$INSTALL_CONFIG_DIR" "$INSTALL_ARTIFACT_DIR" "$RUNTIME_DIR"
 
+# Validate that the installed evidence collector itself can execute read-only
+# against an empty/stopped runtime. This creates only a private evidence folder.
+"$INSTALL_ROOT/collect-dual-pilot-evidence.sh" server "$RUNTIME_DIR" "$INSTALL_CONFIG_DIR" >/dev/null
+
 log "installation PASS"
 log "installed launcher: $INSTALL_ROOT/run-dual-pilot.sh"
+log "installed evidence collector: $INSTALL_ROOT/collect-dual-pilot-evidence.sh"
 log "installed config: $INSTALL_CONFIG_DIR (0600 files)"
 log "installed pinned artifact: $INSTALL_ARTIFACT_DIR/sing-box-linux-amd64"
 log "Pilot was NOT started; use the ForwardX Pilot start action only after reviewing this validation."
