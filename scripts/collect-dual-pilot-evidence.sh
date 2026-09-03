@@ -22,6 +22,7 @@ chmod 700 "$EVIDENCE_ROOT" "$OUT" 2>/dev/null || true
 
 sanitize_stream() {
   sed -E \
+    -e 's/((password|passwd|auth|token|secret|private[_ -]?key)[[:space:]]*[:=][[:space:]]*)"[^"]*"/\1"[REDACTED]"/Ig' \
     -e 's/((password|passwd|auth|token|secret|private[_ -]?key)[[:space:]]*[:=][[:space:]]*)[^,[:space:]"}]+/\1[REDACTED]/Ig' \
     -e 's/("(password|auth|token|secret)"[[:space:]]*:[[:space:]]*")[^"]+"/\1[REDACTED]"/Ig'
 }
@@ -89,6 +90,5 @@ for port in 39000 24180 24181; do
   fi
 done
 
-# Intentionally never copy server-gray.json, dual-test.json, mita-pilot.json,
-# mieru-gray.json, TLS material, HY2 auth or Mieru credentials.
+# Secret-bearing configs and TLS/carrier credential material are deliberately excluded.
 printf '%s\n' "$OUT"
