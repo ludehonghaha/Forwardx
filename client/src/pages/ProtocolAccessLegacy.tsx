@@ -149,6 +149,12 @@ function fullFeedUrl(path?: string) {
   return new URL(value, window.location.origin).toString();
 }
 
+function feedPathForIpVersion(path: string | undefined, ipVersion: "4" | "6") {
+  const value = String(path || "");
+  if (!value) return value;
+  return `${value}${value.includes("?") ? "&" : "?"}ipVersion=${ipVersion}`;
+}
+
 function endpointFormFromRow(endpoint: any): EndpointForm {
   const config = parseProtocolAccessConfig(endpoint?.configJson);
   return {
@@ -243,6 +249,7 @@ export default function ProtocolAccessPage() {
   const [assignmentEnabled, setAssignmentEnabled] = useState(true);
   const [feedUserId, setFeedUserId] = useState(0);
   const [feedUserSelect, setFeedUserSelect] = useState("");
+  const [feedIpVersion, setFeedIpVersion] = useState<"4" | "6">("4");
 
   const endpointsQuery = trpc.protocolAccess.listEndpoints.useQuery(undefined, {
     enabled: isAdmin,
@@ -533,18 +540,31 @@ export default function ProtocolAccessPage() {
     </div>
   ) : feedQuery.data ? (
     <div className="space-y-3">
+      <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-medium">订阅 IP 版本</p>
+          <p className="text-xs leading-5 text-muted-foreground">默认 IPv4；手动选 IPv6 后，生成的订阅地址会固定携带 ipVersion=6，不会静默回退 IPv4。</p>
+        </div>
+        <Select value={feedIpVersion} onValueChange={(value) => setFeedIpVersion(value as "4" | "6")}>
+          <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="4">IPv4</SelectItem>
+            <SelectItem value="6">IPv6</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <FeedLink
         label="通用 URI 订阅"
         description="包含 SS、Mieru、VLESS Reality 和 Hysteria2；Snell 与 SS over SSH 仅进入 Mihomo 订阅。"
-        value={fullFeedUrl(feedQuery.data.uriPath)}
+        value={fullFeedUrl(feedPathForIpVersion(feedQuery.data.uriPath, feedIpVersion))}
       />
       <FeedLink
         label="Mihomo / OpenClash 订阅"
         description="适用于 OpenClash、Clash Meta，可包含 SS、Mieru、Snell、VLESS Reality、Hysteria2 与 SS over SSH。"
-        value={fullFeedUrl(feedQuery.data.mihomoPath)}
+        value={fullFeedUrl(feedPathForIpVersion(feedQuery.data.mihomoPath, feedIpVersion))}
       />
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-        <p className="text-xs text-muted-foreground">地址长期稳定；仅在泄露时轮换。</p>
+        <p className="text-xs text-muted-foreground">地址长期稳定；IPv6 缺失时订阅接口会明确报错，不回退 IPv4；仅在地址泄露时轮换 Token。</p>
         <Button variant="outline" size="sm" onClick={confirmRotateFeed} disabled={rotateFeed.isPending}>
           <RefreshCw className={`mr-2 h-4 w-4 ${rotateFeed.isPending ? "forwardx-icon-spin" : ""}`} />
           轮换地址

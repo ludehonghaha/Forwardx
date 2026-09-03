@@ -37,7 +37,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var Version = "2.2.197"
+var Version = "2.2.199"
 var agentProcessStartedAt = time.Now()
 var agentBootID = readAgentBootID()
 var runtimeAgentToken atomic.Value
@@ -334,6 +334,9 @@ var forceSendLocalRuntimeState = true
 // TTL 5s：正常心跳间隔 30s，对数据新鲜度无影响；
 // 在 SSE 唤醒风暴（churn）期间可消除重复的 ss/systemctl 调用。
 const localRuntimeReadinessCacheTTL = 5 * time.Second
+
+const xrayRuntimeSyncReadyMaxAttempts = 10
+const xrayRuntimeSyncReadyRetryInterval = time.Second
 
 var localRuntimeReadinessCacheMu sync.Mutex
 var localRuntimeReadinessCacheResult *localRuntimeReadiness
@@ -939,16 +942,19 @@ type localRuntimeReadiness struct {
 	nginxRuntimePorts          map[int]bool
 	mieruRuntimePorts          map[int]bool
 	mihomoRuntimePorts         map[int]bool
+	xrayRuntimePorts           map[int]bool
 	gostRuntimePortProtocols   map[int]map[string]bool
 	tunnelRuntimePortProtocols map[int]map[string]bool
 	nginxRuntimePortProtocols  map[int]map[string]bool
 	mieruRuntimePortProtocols  map[int]map[string]bool
 	mihomoRuntimePortProtocols map[int]map[string]bool
+	xrayRuntimePortProtocols   map[int]map[string]bool
 	gostRuntimeReady           bool
 	tunnelRuntimeReady         bool
 	nginxRuntimeReady          bool
 	mieruRuntimeReady          bool
 	mihomoRuntimeReady         bool
+	xrayRuntimeReady           bool
 	sharedRuntimeReady         bool
 	serviceStates              []localRuntimeServiceState
 	serviceActiveCache         map[string]bool
@@ -1045,16 +1051,19 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 		nginxRuntimePorts:          map[int]bool{},
 		mieruRuntimePorts:          map[int]bool{},
 		mihomoRuntimePorts:         map[int]bool{},
+		xrayRuntimePorts:           map[int]bool{},
 		gostRuntimePortProtocols:   map[int]map[string]bool{},
 		tunnelRuntimePortProtocols: map[int]map[string]bool{},
 		nginxRuntimePortProtocols:  map[int]map[string]bool{},
 		mieruRuntimePortProtocols:  map[int]map[string]bool{},
 		mihomoRuntimePortProtocols: map[int]map[string]bool{},
+		xrayRuntimePortProtocols:   map[int]map[string]bool{},
 		gostRuntimeReady:           true,
 		tunnelRuntimeReady:         true,
 		nginxRuntimeReady:          true,
 		mieruRuntimeReady:          true,
 		mihomoRuntimeReady:         true,
+		xrayRuntimeReady:           true,
 		sharedRuntimeReady:         true,
 		serviceActiveCache:         map[string]bool{},
 		kernelSnapshot:             newKernelForwardSnapshot(),
@@ -1098,6 +1107,9 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 				case "mihomo":
 					readiness.mihomoRuntimePorts[port] = true
 					addRuntimePortProtocol(readiness.mihomoRuntimePortProtocols, port, protocol)
+				case "xray":
+					readiness.xrayRuntimePorts[port] = true
+					addRuntimePortProtocol(readiness.xrayRuntimePortProtocols, port, protocol)
 				case "nginx":
 					readiness.nginxRuntimePorts[port] = true
 					addRuntimePortProtocol(readiness.nginxRuntimePortProtocols, port, protocol)
@@ -1124,6 +1136,8 @@ func readLocalRuntimeReadiness() localRuntimeReadiness {
 				readiness.mieruRuntimeReady = false
 			case "mihomo":
 				readiness.mihomoRuntimeReady = false
+			case "xray":
+				readiness.xrayRuntimeReady = false
 			case "nginx":
 				readiness.nginxRuntimeReady = false
 			case "tunnel-gost":
@@ -1306,6 +1320,16 @@ func (r *localRuntimeReadiness) mihomoReadyForPort(port int, protocol string) bo
 		r.mihomoRuntimePorts[port] &&
 		runtimePortProtocolConfigured(r.mihomoRuntimePortProtocols, port, protocol) &&
 		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"mihomo", "forwardx-mihomo"})
+}
+
+func (r *localRuntimeReadiness) xrayReadyForPort(port int, protocol string) bool {
+	if r == nil || port <= 0 {
+		return false
+	}
+	return r.xrayRuntimeReady &&
+		r.xrayRuntimePorts[port] &&
+		runtimePortProtocolConfigured(r.xrayRuntimePortProtocols, port, protocol) &&
+		runtimeListenPortReady(r.listenSnapshot, port, protocol, []string{"xray", "forwardx-xray"})
 }
 
 func addrPort(addr string) int {
@@ -2241,6 +2265,7 @@ func localRuntimeListenerStates(readiness *localRuntimeReadiness) []localRuntime
 	appendStates("nginx", readiness.nginxRuntimePortProtocols, readiness.nginxReadyForPort)
 	appendStates("mieru", readiness.mieruRuntimePortProtocols, readiness.mieruReadyForPort)
 	appendStates("mihomo", readiness.mihomoRuntimePortProtocols, readiness.mihomoReadyForPort)
+	appendStates("xray", readiness.xrayRuntimePortProtocols, readiness.xrayReadyForPort)
 	sort.Slice(listeners, func(i, j int) bool {
 		if listeners[i].Runtime != listeners[j].Runtime {
 			return listeners[i].Runtime < listeners[j].Runtime
@@ -2379,7 +2404,10 @@ func localRuntimeStateSignature(state localRuntimeStatePayload) string {
 }
 
 func localRuntimeStateForHeartbeat() (string, *localRuntimeStatePayload) {
-	state := readLocalRuntimeStatePayload()
+	return localRuntimeStateUploadForHeartbeat(readLocalRuntimeStatePayload())
+}
+
+func localRuntimeStateUploadForHeartbeat(state localRuntimeStatePayload) (string, *localRuntimeStatePayload) {
 	signature := localRuntimeStateSignature(state)
 	localRuntimeStateMu.Lock()
 	sendFull := forceSendLocalRuntimeState || signature != lastLocalRuntimeStateSignature
@@ -4867,6 +4895,9 @@ func handleActionJobWithRuntimeSnapshot(cfg Config, a action, releaseRuntimeGate
 			if mimicAction && shouldLogAgentReport("mimic-runtime-skip", agentReportLogInterval) {
 				logf("mimic runtime sync skipped; cached state healthy diagnostics=%s", mimicRuntimeDiagnostics())
 			}
+			if strings.TrimSpace(a.ForwardType) == "xray-runtime-sync" {
+				requestLocalRuntimeStateUpload()
+			}
 			return true
 		}
 		if wireGuardAction {
@@ -4967,7 +4998,11 @@ func handleActionJobWithRuntimeSnapshot(cfg Config, a action, releaseRuntimeGate
 			logf("runtime action complete forwardType=%s ok=%v", a.ForwardType, ok)
 		}
 		rememberRuntimeActionResult(a, ok)
-		invalidateLocalRuntimeReadinessCache()
+		if strings.TrimSpace(a.ForwardType) == "xray-runtime-sync" {
+			requestLocalRuntimeStateUpload()
+		} else {
+			invalidateLocalRuntimeReadinessCache()
+		}
 		if a.ReportStatus != nil && *a.ReportStatus {
 			if !ok {
 				message := strings.TrimSpace(actionMessage.get())
@@ -5595,7 +5630,7 @@ func shouldVerifyManagedRuntimeSync(a action) bool {
 		return false
 	}
 	switch strings.TrimSpace(a.ForwardType) {
-	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync", "mihomo-runtime-sync":
+	case "gost-runtime-sync", "nginx-runtime-sync", "mieru-runtime-sync", "mihomo-runtime-sync", "xray-runtime-sync":
 		return true
 	default:
 		return false
@@ -5603,6 +5638,15 @@ func shouldVerifyManagedRuntimeSync(a action) bool {
 }
 
 func waitForManagedRuntimeSyncReady(a action, timeout time.Duration) bool {
+	if strings.TrimSpace(a.ForwardType) == "xray-runtime-sync" {
+		return waitForManagedRuntimeSyncReadyWith(
+			a,
+			xrayRuntimeSyncReadyMaxAttempts,
+			xrayRuntimeSyncReadyRetryInterval,
+			managedRuntimeSyncReady,
+			time.Sleep,
+		)
+	}
 	if managedRuntimeSyncReady(a) {
 		return true
 	}
@@ -5614,6 +5658,45 @@ func waitForManagedRuntimeSyncReady(a action, timeout time.Duration) bool {
 		}
 	}
 	return managedRuntimeSyncReady(a)
+}
+
+func waitForManagedRuntimeSyncReadyWith(
+	a action,
+	maxAttempts int,
+	retryInterval time.Duration,
+	ready func(action) bool,
+	sleep func(time.Duration),
+) bool {
+	if maxAttempts <= 0 || ready == nil {
+		return false
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if ready(a) {
+			return true
+		}
+		if attempt+1 < maxAttempts && sleep != nil {
+			sleep(retryInterval)
+		}
+	}
+	return false
+}
+
+func managedRuntimeProcessNeedles(spec managedConfigSpec) []string {
+	service := strings.ToLower(strings.TrimSpace(spec.ServiceName))
+	path := strings.ToLower(strings.TrimSpace(spec.Path))
+	if strings.Contains(service, "mita") || strings.Contains(path, "mieru") || strings.Contains(path, "/mita/") {
+		return []string{"mita", "forwardx-mita"}
+	}
+	if strings.Contains(service, "mihomo") || strings.Contains(path, "/mihomo/") {
+		return []string{"mihomo", "forwardx-mihomo"}
+	}
+	if strings.Contains(service, "xray") || strings.Contains(path, "/xray/") {
+		return []string{"xray", "forwardx-xray"}
+	}
+	if strings.Contains(service, "nginx") || strings.Contains(path, "nginx") {
+		return []string{"nginx"}
+	}
+	return []string{"gost", "forwardx-runt"}
 }
 
 func managedRuntimeSyncReady(a action) bool {
@@ -5636,14 +5719,7 @@ func managedRuntimeSyncReady(a action) bool {
 		if !managedServiceActive(service) {
 			return false
 		}
-		needles := []string{"gost", "forwardx-runt"}
-		if strings.Contains(strings.ToLower(service), "mita") || strings.Contains(strings.ToLower(spec.Path), "mieru") || strings.Contains(strings.ToLower(spec.Path), "/mita/") {
-			needles = []string{"mita", "forwardx-mita"}
-		} else if strings.Contains(strings.ToLower(service), "mihomo") || strings.Contains(strings.ToLower(spec.Path), "/mihomo/") {
-			needles = []string{"mihomo", "forwardx-mihomo"}
-		} else if strings.Contains(strings.ToLower(service), "nginx") || strings.Contains(strings.ToLower(spec.Path), "nginx") {
-			needles = []string{"nginx"}
-		}
+		needles := managedRuntimeProcessNeedles(spec)
 		for _, listen := range listens {
 			port := addrPort(listen.Addr)
 			if port <= 0 || !runtimeListenPortReady(snapshot, port, listen.Protocol, needles) {

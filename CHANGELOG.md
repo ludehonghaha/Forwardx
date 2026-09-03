@@ -1,5 +1,88 @@
 # Changelog
 
+## [2.3.294] - 2026-09-03
+
+### 修复与优化
+
+- 三网目标探测首页改为按电信、联通、移动分组，每台服务器独立显示当前 RTT、Ping 丢包 / TCP 失败和 24 小时小趋势，避免所有主机与三网曲线叠在同一张总图。
+- 新增单机三网视图：同一台服务器用三个状态摘要卡配合一张 24 小时 RTT 图，同时展示电信、联通、移动三条曲线，并继续区分 Ping 丢包与 TCPing 连接失败语义。
+- 新增双机总对比：最多选择两台服务器，分别按电信、联通、移动进行 RTT 横向比较，保留当前 RTT 与失败率摘要。
+- 保留地区筛选、P95 聚焦正常量程与完整尖峰量程；本次仅调整展示层，不修改数据库、Agent 协议、探测调度或历史数据语义。
+
+### 版本
+
+- 面板与 APK Release `2.3.294`，Agent `2.2.199`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
+## [2.3.293] - 2026-09-02
+
+### 新增
+
+- 主机管理「高级探测」新增三网目标探测历史视图，按主机与服务分别展示 RTT 与探测失败率，并对 Ping 丢包与 TCPing 连接失败使用不同语义。
+- 上海三网默认验证方案采用电信 Ping `202.96.209.5`、联通 TCPing `210.22.84.3:53`、移动 Ping `211.136.150.66`，避免把单一 ICMP 目标无响应误解释为运营商整体故障。
+
+### 修复与优化
+
+- 修复五次质量 Ping 采用突发 ICMP 发送、可能在限速目标上制造假性部分丢包的问题；多样本探测改为传统 paced Ping，单样本仍保留原生低开销路径。
+- 修复高级探测服务修改后，运行中的 Agent 可能继续沿用旧的 Ping/TCPing 任务直到审计周期或进程重启的问题；服务变更现在会立即刷新受影响 Agent。
+- 修复探测方式、目标 IP/域名或 TCPing 端口变化后，旧历史被当前配置重新解释的问题；测量身份变化时只清理该服务自己的不兼容历史，名称、间隔、主机范围与启停变化继续保留历史。
+- 三网图表默认使用 P95 聚焦 RTT 量程，单独显示 0–100% 失败率，并明确固定目标失败不等于整个运营商网络失败。
+
+### 版本
+
+- 面板与 APK Release `2.3.293`，Agent `2.2.199`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
+## [2.3.292] - 2026-09-02
+
+### 修复与优化
+
+- 修复托管 VLESS + Reality / Xray 已恢复正常监听后，面板仍长期保留旧的“TCP 监听未就绪”状态的问题。
+- Agent 会在后续 heartbeat / runtime reconciliation 中重新采集 Xray listener 状态，健康快照可自动覆盖旧故障并清除当前 active error，无需重新部署端点。
+- Xray runtime sync 增加有上限的 listener readiness 重试，兼容服务启动稍慢的场景；重试耗尽时仍保持失败状态，不会误报健康。
+
+### 版本
+
+- 面板与 APK Release `2.3.292`，Agent `2.2.198`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
+## [2.3.291] - 2026-09-01
+
+### 修复与优化
+
+- 修复托管 VLESS + Reality / Xray 实际监听正常时，Agent 将 Xray 端口错误归类为 GOST，导致面板显示“TCP 监听未就绪”的问题。
+- Xray 现在拥有独立的 runtime ports、protocols 与 readiness 状态，并仅使用 Xray / forwardx-xray 监听进程判断健康状态。
+- 防止 GOST 与 Xray 在相同端口时互相冒充健康；IPv6 `[::]` 双栈监听继续正确识别。
+
+### 版本
+
+- 面板与 APK Release `2.3.291`，Agent `2.2.198`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
+## [2.3.290] - 2026-09-01
+
+### 修复与优化
+
+- 修复混合 IPv4 / IPv6 用户订阅中，只要任一已分配端点没有 `hosts.ipv6` 就会让整个 `ipVersion=6` 订阅返回 `422`、导致 Shadowrocket 提示“服务器 URL 遇到问题”的问题。
+- `ipVersion=6` 现在只输出具备真实 IPv6 的端点；IPv4-only 端点会被跳过且绝不回退 IPv4。若该用户没有任何可用 IPv6 端点，仍明确返回 `422`。
+- `X-ForwardX-Skipped-Entries` 会计入因缺少 IPv6 被跳过的端点，并补充混合双栈/IPv4-only 的 URI、Mihomo 隔离灰度与单元测试覆盖。
+
+### 版本
+
+- 面板与 APK Release `2.3.290`，Agent `2.2.197`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
+## [2.3.289] - 2026-09-01
+
+### 新增
+
+- 「协议接入」订阅地址新增 IPv4 / IPv6 手动选择，默认继续使用 IPv4；同一订阅可显式请求 `ipVersion=4` 或 `ipVersion=6`。
+- IPv6 订阅从协议端点关联主机的 `hosts.ipv6` 读取真实地址，URI 自动使用 `[IPv6]:端口`，Mihomo/OpenClash 输出对应 IPv6 `server`。
+
+### 修复与优化
+
+- 主机没有可用 IPv6 时返回明确错误并禁止静默回退 IPv4；非法 `ipVersion` 请求同样显式拒绝。
+- 增加隔离 dev-panel 灰度 smoke 和 CI 覆盖，验证默认 IPv4、显式 IPv4/IPv6、URI IPv6 括号、Mihomo IPv6、422 no-fallback 和非法参数。
+
+### 版本
+
+- 面板与 APK Release `2.3.289`，Agent `2.2.197`，ForwardX FXP runtime `2.2.114`，Android APP `2.3.97`。
+
 ## [2.3.288] - 2026-08-30
 
 ### 新增

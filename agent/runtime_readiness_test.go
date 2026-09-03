@@ -107,6 +107,184 @@ func TestLocalRuntimeStateReportsConfiguredListenerReadiness(t *testing.T) {
 	}
 }
 
+func TestLocalRuntimeStateReportsXrayListenerIndependentlyFromGost(t *testing.T) {
+	const port = 24568
+	tests := []struct {
+		name       string
+		listenLine string
+		wantXray   bool
+		wantGost   bool
+	}{
+		{
+			name:       "forwardx-xray listener",
+			listenLine: `tcp LISTEN 0 4096 *:24568 *:* users:(("forwardx-xray",pid=51,fd=3))`,
+			wantXray:   true,
+			wantGost:   false,
+		},
+		{
+			name:       "gost listener on same port",
+			listenLine: `tcp LISTEN 0 4096 *:24568 *:* users:(("forwardx-runtim",pid=52,fd=3))`,
+			wantXray:   false,
+			wantGost:   true,
+		},
+		{
+			name:       "IPv6 wildcard forwardx-xray listener",
+			listenLine: `tcp LISTEN 0 4096 [::]:24568 [::]:* users:(("forwardx-xray",pid=53,fd=3))`,
+			wantXray:   true,
+			wantGost:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := &runtimeListenSnapshot{
+				tcpPorts: map[int][]string{},
+				udpPorts: map[int][]string{},
+			}
+			snapshot.parseSSListenOutput(tt.listenLine)
+			readiness := localRuntimeReadiness{
+				gostRuntimePorts:           map[int]bool{port: true},
+				xrayRuntimePorts:           map[int]bool{port: true},
+				gostRuntimePortProtocols:   map[int]map[string]bool{port: {"tcp": true}},
+				xrayRuntimePortProtocols:   map[int]map[string]bool{port: {"tcp": true}},
+				gostRuntimeReady:           true,
+				xrayRuntimeReady:           true,
+				tunnelRuntimePortProtocols: map[int]map[string]bool{},
+				nginxRuntimePortProtocols:  map[int]map[string]bool{},
+				mieruRuntimePortProtocols:  map[int]map[string]bool{},
+				mihomoRuntimePortProtocols: map[int]map[string]bool{},
+				listenSnapshot:             snapshot,
+			}
+
+			got := localRuntimeListenerStates(&readiness)
+			want := []localRuntimeListenerState{
+				{Runtime: "gost", Port: port, Protocol: "tcp", Ready: tt.wantGost},
+				{Runtime: "xray", Port: port, Protocol: "tcp", Ready: tt.wantXray},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("listener states = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
+func TestXrayOnlyConfiguredPortIsNotReportedAsGost(t *testing.T) {
+	const port = 24569
+	readiness := localRuntimeReadiness{
+		xrayRuntimePorts:         map[int]bool{port: true},
+		xrayRuntimePortProtocols: map[int]map[string]bool{port: {"tcp": true}},
+		xrayRuntimeReady:         true,
+		gostRuntimePortProtocols: map[int]map[string]bool{},
+		listenSnapshot: &runtimeListenSnapshot{
+			tcpPorts: map[int][]string{
+				port: {`tcp LISTEN 0 4096 *:24569 *:* users:(("forwardx-xray",pid=54,fd=3))`},
+			},
+			udpPorts: map[int][]string{},
+			usable:   true,
+		},
+	}
+
+	got := localRuntimeListenerStates(&readiness)
+	want := []localRuntimeListenerState{
+		{Runtime: "xray", Port: port, Protocol: "tcp", Ready: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("listener states = %#v, want %#v", got, want)
+	}
+}
+
+func TestLocalRuntimeHeartbeatReconcilesXrayListenerTransitions(t *testing.T) {
+	localRuntimeStateMu.Lock()
+	previousSignature := lastLocalRuntimeStateSignature
+	previousForceSend := forceSendLocalRuntimeState
+	lastLocalRuntimeStateSignature = ""
+	forceSendLocalRuntimeState = true
+	localRuntimeStateMu.Unlock()
+	t.Cleanup(func() {
+		localRuntimeStateMu.Lock()
+		lastLocalRuntimeStateSignature = previousSignature
+		forceSendLocalRuntimeState = previousForceSend
+		localRuntimeStateMu.Unlock()
+	})
+
+	state := func(ready bool) localRuntimeStatePayload {
+		return localRuntimeStatePayload{
+			Services:  []localRuntimeServiceState{{Name: xrayServiceName, Active: true, HasWork: true}},
+			Listeners: []localRuntimeListenerState{{Runtime: "xray", Port: 32676, Protocol: "tcp", Ready: ready}},
+		}
+	}
+	assertUploadedReady := func(want bool) {
+		t.Helper()
+		_, uploaded := localRuntimeStateUploadForHeartbeat(state(want))
+		if uploaded == nil || len(uploaded.Listeners) != 1 || uploaded.Listeners[0].Ready != want {
+			t.Fatalf("uploaded state = %#v, want listener ready=%v", uploaded, want)
+		}
+	}
+
+	assertUploadedReady(false)
+	if _, duplicate := localRuntimeStateUploadForHeartbeat(state(false)); duplicate != nil {
+		t.Fatalf("unchanged failed listener state was uploaded again: %#v", duplicate)
+	}
+	requestLocalRuntimeStateUpload()
+	assertUploadedReady(false)
+	assertUploadedReady(true)
+	assertUploadedReady(false)
+	assertUploadedReady(true)
+}
+
+func TestXrayRuntimeSyncUsesIndependentListenerVerification(t *testing.T) {
+	a := action{
+		StatusType:  "runtime",
+		Op:          "apply",
+		ForwardType: "xray-runtime-sync",
+		ManagedConfigs: []managedConfigSpec{{
+			Path:        xrayConfigPath,
+			ServiceName: xrayServiceName,
+		}},
+	}
+	if !shouldVerifyManagedRuntimeSync(a) {
+		t.Fatal("Xray runtime sync did not require listener verification")
+	}
+	wantNeedles := []string{"xray", "forwardx-xray"}
+	if got := managedRuntimeProcessNeedles(a.ManagedConfigs[0]); !reflect.DeepEqual(got, wantNeedles) {
+		t.Fatalf("Xray process needles = %#v, want %#v", got, wantNeedles)
+	}
+}
+
+func TestManagedRuntimeSyncReadyRetriesUntilListenerStarts(t *testing.T) {
+	attempts := 0
+	sleeps := []time.Duration{}
+	ready := func(action) bool {
+		attempts++
+		return attempts == 4
+	}
+	if !waitForManagedRuntimeSyncReadyWith(action{}, 10, time.Second, ready, func(delay time.Duration) {
+		sleeps = append(sleeps, delay)
+	}) {
+		t.Fatal("listener retry did not accept a later successful check")
+	}
+	if attempts != 4 || !reflect.DeepEqual(sleeps, []time.Duration{time.Second, time.Second, time.Second}) {
+		t.Fatalf("retry attempts=%d sleeps=%v", attempts, sleeps)
+	}
+}
+
+func TestManagedRuntimeSyncReadyFailsAfterBoundedRetries(t *testing.T) {
+	attempts := 0
+	sleeps := 0
+	ready := func(action) bool {
+		attempts++
+		return false
+	}
+	if waitForManagedRuntimeSyncReadyWith(action{}, 10, time.Second, ready, func(time.Duration) {
+		sleeps++
+	}) {
+		t.Fatal("listener retry reported success after every check failed")
+	}
+	if attempts != 10 || sleeps != 9 {
+		t.Fatalf("bounded retry attempts=%d sleeps=%d, want attempts=10 sleeps=9", attempts, sleeps)
+	}
+}
+
 func TestGostRuntimeReadinessCacheSeparatesMainAndTunnelScopes(t *testing.T) {
 	mainKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostMainRuntimeScope)
 	tunnelKey := desiredRuntimeReadyCacheKey(61082, "tcp", desiredGostTunnelRuntimeScope)

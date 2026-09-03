@@ -2098,6 +2098,18 @@ func pingLatencyStatsWithCount(host string, timeout time.Duration, count int) (i
 	if count < 1 {
 		count = 1
 	}
+	// Multi-sample quality probes must be paced. The native ICMP path sends
+	// all packets immediately, which can trigger ICMP rate limiting at the
+	// target and turn a healthy path into artificial 20/40/60/80% loss.
+	// Prefer the system ping for count > 1: it sends one sample per second
+	// and gives us the same packet counters users see from a normal ping.
+	if preferPacedSystemPing(count) {
+		if latency, successes, losses, detail, ok := pacedSystemPingLatencyStatsWithCount(target, timeout, count); ok {
+			return latency, successes, losses, detail
+		} else if detail != "" && shouldLogAgentReport("paced-system-ping-fallback", 5*time.Minute) {
+			logf("paced system ping unavailable target=%s: %s; falling back to native ping", target, detail)
+		}
+	}
 	if latency, successes, detail, err := nativePingLatencyStatsWithCount(target, timeout, count); err == nil {
 		return latency, successes, count - successes, detail
 	} else if shouldLogAgentReport("native-ping-fallback", 5*time.Minute) {
