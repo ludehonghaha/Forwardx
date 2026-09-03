@@ -1,0 +1,37 @@
+name: Dual Sync Diagnose 20260903
+
+on:
+  push:
+    branches:
+      - feat/dual-multipath-control-plane
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Dual branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch latest main
+        run: git fetch origin main
+
+      - name: Diagnose merge conflicts only
+        shell: bash
+        run: |
+          set +e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-commit --no-ff origin/main
+          rc=$?
+          echo "merge_exit=$rc"
+          echo "===== UNMERGED FILES ====="
+          git diff --name-only --diff-filter=U || true
+          echo "===== STATUS ====="
+          git status --short || true
+          git merge --abort 2>/dev/null || true
+          exit 0
