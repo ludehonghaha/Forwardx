@@ -156,7 +156,10 @@ test("Pilot materializer rejects the protected production Mita listener before c
 });
 
 test("Pilot lifecycle is bounded to owned processes and avoids production mutation commands", () => {
-  const launcher = readFileSync(resolve("scripts/run-dual-pilot.sh"), "utf8");
+  const launcherPath = resolve("scripts/run-dual-pilot.sh");
+  execFileSync("bash", ["-n", launcherPath], { cwd: resolve("."), stdio: "pipe" });
+
+  const launcher = readFileSync(launcherPath, "utf8");
   assert.match(launcher, /MITA_CONFIG_JSON_FILE=/);
   assert.match(launcher, /MITA_UDS_PATH=/);
   assert.match(launcher, /MIERU_CONFIG_JSON_FILE=/);
@@ -164,5 +167,5 @@ test("Pilot lifecycle is bounded to owned processes and avoids production mutati
   assert.match(launcher, /possible PID reuse/);
   assert.match(launcher, /PROTECTED_MITA_PORT/);
   assert.match(launcher, /tcp_fast_open=true is forbidden/);
-  assert.doesNotMatch(launcher, /\bsystemctl\b|\bnft\b|\biptables\b|\bip6tables\b|\bip[[:space:]]+route\b/);
+  assert.doesNotMatch(launcher, /\bsystemctl\b|\bnft\b|\biptables\b|\bip6tables\b|\bip\s+route\b/);
 });
