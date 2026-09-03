@@ -73,8 +73,13 @@ find_mieru() {
   command -v mieru 2>/dev/null || fail "mieru not found; set MIERU_BIN"
 }
 
-SING_BOX_BIN_RESOLVED="$(find_sing_box)"
-require_executable "$SING_BOX_BIN_RESOLVED"
+SING_BOX_BIN_RESOLVED=""
+resolve_sing_box() {
+  if [ -z "$SING_BOX_BIN_RESOLVED" ]; then
+    SING_BOX_BIN_RESOLVED="$(find_sing_box)"
+    require_executable "$SING_BOX_BIN_RESOLVED"
+  fi
+}
 
 SERVER_CONFIG="$CONFIG_DIR/server-gray.json"
 MITA_CONFIG="$CONFIG_DIR/mita-pilot.json"
@@ -82,8 +87,10 @@ CLIENT_CONFIG="$CONFIG_DIR/dual-test.json"
 MIERU_CONFIG="$CONFIG_DIR/mieru-gray.json"
 PROTECTED_MITA_PORT="${PROTECTED_MITA_PORT:-11464}"
 
-mkdir -p "$RUNTIME_DIR"
-chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+ensure_runtime_dir() {
+  mkdir -p "$RUNTIME_DIR"
+  chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+}
 
 json_sanity() {
   local file="$1"
@@ -202,6 +209,7 @@ assert_safe_sing_box_config() {
   if grep -Eq '"tcp_fast_open"[[:space:]]*:[[:space:]]*true' "$file"; then
     fail "tcp_fast_open=true is forbidden in Dual Pilot"
   fi
+  resolve_sing_box
   "$SING_BOX_BIN_RESOLVED" check -c "$file" >/dev/null || fail "sing-box check failed: $file"
 }
 
@@ -249,6 +257,7 @@ validate_client() {
 start_server() {
   local pilot_port mita_bin pid
   validate_server
+  ensure_runtime_dir
   pilot_port="$(extract_first_json_port "$MITA_CONFIG")"
   mita_bin="$(find_mita)"
   verify_owned server-singbox >/dev/null 2>&1 && fail "server-singbox already running"
@@ -286,6 +295,7 @@ start_server() {
 start_client() {
   local mieru_bin pid
   validate_client
+  ensure_runtime_dir
   mieru_bin="$(find_mieru)"
   verify_owned client-mieru >/dev/null 2>&1 && fail "client-mieru already running"
   verify_owned client-singbox >/dev/null 2>&1 && fail "client-singbox already running"
@@ -366,7 +376,9 @@ case "$ACTION" in
     ;;
   cleanup)
     stop_role
-    find "$RUNTIME_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+    if [ -d "$RUNTIME_DIR" ]; then
+      find "$RUNTIME_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+    fi
     log "$ROLE Pilot runtime files cleaned"
     ;;
 esac
