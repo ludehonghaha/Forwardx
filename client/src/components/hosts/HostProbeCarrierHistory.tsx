@@ -24,7 +24,7 @@ import {
 } from "./hostProbeCarrierHistory";
 
 const CARRIER_ORDER: ChinaCarrierKey[] = ["ct", "cu", "cm"];
-const SERIES_COLORS = [
+const HOST_COLORS = [
   "#2563eb",
   "#16a34a",
   "#9333ea",
@@ -35,6 +35,11 @@ const SERIES_COLORS = [
   "#4f46e5",
   "#65a30d",
 ];
+const CARRIER_COLORS: Record<ChinaCarrierKey, string> = {
+  ct: "#2563eb",
+  cu: "#d97706",
+  cm: "#16a34a",
+};
 
 type SeriesDefinition = {
   key: string;
@@ -118,13 +123,13 @@ function latencyYMax(definitions: SeriesDefinition[], chartData: any[], scaleMod
   return Math.max(120, Math.ceil(base * 1.1 / 10) * 10);
 }
 
-function CompareTooltip({ active, payload, definitions }: any) {
+function ProbeTooltip({ active, payload, definitions, carrierColors = false }: any) {
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload || {};
   const at = Number(point.at || 0);
 
   return (
-    <div className="max-w-[340px] rounded-md border border-border bg-card/95 px-3 py-2 shadow-lg backdrop-blur">
+    <div className="max-w-[360px] rounded-md border border-border bg-card/95 px-3 py-2 shadow-lg backdrop-blur">
       <p className="mb-2 text-xs text-muted-foreground">{formatFullTime(at)}</p>
       <div className="space-y-1.5">
         {(definitions as SeriesDefinition[]).map((definition) => {
@@ -134,12 +139,15 @@ function CompareTooltip({ active, payload, definitions }: any) {
           const hasLatency = latency != null && Number.isFinite(Number(latency));
           const hasLoss = loss != null && Number.isFinite(Number(loss));
           if (!hasLatency && !hasLoss && !timeout) return null;
+          const dotColor = carrierColors ? CARRIER_COLORS[definition.carrier] : definition.color;
 
           return (
             <div key={definition.key} className="flex items-center justify-between gap-4 text-xs">
               <span className="flex min-w-0 items-center gap-1.5">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: definition.color }} />
-                <span className="truncate">{definition.hostName}</span>
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: dotColor }} />
+                <span className="truncate">
+                  {carrierColors ? CHINA_CARRIER_LABELS[definition.carrier] : definition.hostName}
+                </span>
               </span>
               <span className="shrink-0 text-right font-medium tabular-nums">
                 <span className={cn(timeout ? "text-destructive" : "")}>
@@ -212,7 +220,7 @@ export default function HostProbeCarrierHistory() {
     const hostIds = Array.from(new Set((hosts as any[]).map((host) => Number(host.id))))
       .filter((id) => Number.isInteger(id) && id > 0)
       .sort((a, b) => a - b);
-    return new Map(hostIds.map((hostId, index) => [hostId, SERIES_COLORS[index % SERIES_COLORS.length]]));
+    return new Map(hostIds.map((hostId, index) => [hostId, HOST_COLORS[index % HOST_COLORS.length]]));
   }, [hosts]);
 
   const definitions = useMemo<SeriesDefinition[]>(() => {
@@ -228,7 +236,7 @@ export default function HostProbeCarrierHistory() {
         targetPort: item.service.method === "tcping" && Number(item.service.targetPort) > 0 ? Number(item.service.targetPort) : null,
         carrier: item.carrier,
         region: item.region,
-        color: hostColorById.get(Number(host.id)) || SERIES_COLORS[0],
+        color: hostColorById.get(Number(host.id)) || HOST_COLORS[0],
       })));
 
     const unique = new Map<string, Omit<SeriesDefinition, "key" | "lossKey" | "timeoutKey">>();
@@ -302,6 +310,15 @@ export default function HostProbeCarrierHistory() {
     return String(host?.name || `#${focusedHostId}`);
   }, [focusedHostId, hosts]);
 
+  const focusedDefinitions = useMemo(
+    () => focusedHostId == null
+      ? []
+      : definitions
+        .filter((definition) => definition.hostId === focusedHostId)
+        .sort((a, b) => carrierOrder(a.carrier) - carrierOrder(b.carrier)),
+    [definitions, focusedHostId],
+  );
+
   const toggleHostSelection = (hostId: number) => {
     setSelectedHostIds((current) => {
       if (current.includes(hostId)) return current.filter((id) => id !== hostId);
@@ -323,7 +340,7 @@ export default function HostProbeCarrierHistory() {
               <Badge variant="outline" className="text-[10px]">5 分钟聚合</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              电信、联通、移动分开展示；点“查看三网”查看单台服务器详情，需要横向比较时最多选择两台服务器。
+              默认按电信、联通、移动分组浏览；点“查看三网”后在一张图里查看单台服务器三网 RTT，需要横向比较时最多选择两台服务器。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -461,85 +478,86 @@ export default function HostProbeCarrierHistory() {
                   <Badge variant="outline" className="text-[10px]">{focusedHostName}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  同一台服务器的电信、联通、移动分别成行展示，不把 Ping 与 TCPing 混成一条图。
+                  一张图叠加电信、联通、移动三条 RTT 曲线；Ping 丢包与 TCP 失败仍分别标注，不把失败语义混在一起。
                 </p>
               </div>
               <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setFocusedHostId(null)}>关闭单机详情</Button>
             </div>
 
-            <div className="mt-4 space-y-4">
-              {CARRIER_ORDER.map((carrier) => {
-                const definition = (definitionsByCarrier.get(carrier) || [])
-                  .find((item) => item.hostId === focusedHostId);
-
-                if (!definition) {
-                  return (
-                    <div key={carrier} className="rounded-lg border border-dashed border-border/50 bg-background/15 p-3">
-                      <div className="flex items-center gap-2">
-                        <CarrierBadge carrier={carrier} />
-                        <span className="text-xs text-muted-foreground">当前服务器未配置该运营商探测，或当前地区筛选下没有数据。</span>
+            {focusedDefinitions.length === 0 ? (
+              <div className="mt-4 flex min-h-[150px] items-center justify-center rounded-lg border border-dashed border-border/50 text-sm text-muted-foreground">
+                当前服务器在这个地区筛选下没有三网探测数据。
+              </div>
+            ) : (
+              <>
+                <div className="mt-4 grid gap-2 md:grid-cols-3">
+                  {CARRIER_ORDER.map((carrier) => {
+                    const definition = focusedDefinitions.find((item) => item.carrier === carrier);
+                    if (!definition) {
+                      return (
+                        <div key={carrier} className="rounded-lg border border-dashed border-border/50 bg-background/15 p-3">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ background: CARRIER_COLORS[carrier] }} />
+                            <CarrierBadge carrier={carrier} />
+                          </div>
+                          <p className="mt-2 text-xs text-muted-foreground">未配置或暂无数据</p>
+                        </div>
+                      );
+                    }
+                    const latest = latestByDefinition.get(definition.key);
+                    const loss = latest?.loss;
+                    return (
+                      <div key={carrier} className="rounded-lg border border-border/40 bg-background/20 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ background: CARRIER_COLORS[carrier] }} />
+                          <CarrierBadge carrier={carrier} />
+                          <span className="text-[10px] text-muted-foreground">{definition.method.toUpperCase()} · {formatProbeTarget(definition)}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                          <span>RTT <strong className="text-base font-semibold text-foreground">{latestLatencyLabel(definition, latest)}</strong></span>
+                          <span className={cn(loss != null && loss > 0 ? "text-destructive" : "")}>
+                            {probeFailureLabel(definition)} <strong>{loss == null || !Number.isFinite(loss) ? "--" : `${loss.toFixed(1)}%`}</strong>
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground">{latest ? `最近样本 ${formatFullTime(latest.at)}` : "暂无最近样本"}</p>
                       </div>
-                    </div>
-                  );
-                }
+                    );
+                  })}
+                </div>
 
-                const latest = latestByDefinition.get(definition.key);
-                const loss = latest?.loss;
-                const yMax = latencyYMax([definition], chartData, scaleMode);
-
-                return (
-                  <div key={carrier} className="rounded-lg border border-border/40 bg-background/20 p-3">
-                    <div className="mb-2 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <CarrierBadge carrier={carrier} />
-                        <span className="text-sm font-medium">{CHINA_CARRIER_LABELS[carrier]} · 24h RTT</span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {definition.method.toUpperCase()} · {formatProbeTarget(definition)}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-                        <span>
-                          当前 RTT <strong className={cn("font-semibold text-foreground", latest?.timeout ? "text-destructive" : "")}>{latestLatencyLabel(definition, latest)}</strong>
-                        </span>
-                        <span className={cn(loss != null && loss > 0 ? "text-destructive" : "")}>
-                          {probeFailureLabel(definition)} <strong className="font-semibold">{loss == null || !Number.isFinite(loss) ? "--" : `${loss.toFixed(1)}%`}</strong>
-                        </span>
-                        <span>{latest ? `最近样本 ${formatFullTime(latest.at)}` : "暂无最近样本"}</span>
-                      </div>
-                    </div>
-
-                    <div className="h-[190px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                          <XAxis
-                            dataKey="at"
-                            type="number"
-                            domain={["dataMin", "dataMax"]}
-                            tickFormatter={(value) => formatAxisTime(Number(value))}
-                            tick={{ fontSize: 10 }}
-                            minTickGap={54}
-                          />
-                          <YAxis domain={[0, yMax]} allowDataOverflow width={46} tick={{ fontSize: 10 }} unit="ms" />
-                          <RechartsTooltip content={<CompareTooltip definitions={[definition]} />} />
-                          <Line
-                            type="linear"
-                            dataKey={definition.key}
-                            name={definition.hostName}
-                            stroke={definition.color}
-                            strokeWidth={1.9}
-                            connectNulls
-                            isAnimationActive={false}
-                            dot={false}
-                            activeDot={{ r: 3.5 }}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                <div className="mt-3 h-[270px] w-full rounded-lg border border-border/40 bg-background/20 p-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                      <XAxis
+                        dataKey="at"
+                        type="number"
+                        domain={["dataMin", "dataMax"]}
+                        tickFormatter={(value) => formatAxisTime(Number(value))}
+                        tick={{ fontSize: 10 }}
+                        minTickGap={54}
+                      />
+                      <YAxis domain={[0, latencyYMax(focusedDefinitions, chartData, scaleMode)]} allowDataOverflow width={46} tick={{ fontSize: 10 }} unit="ms" />
+                      <RechartsTooltip content={<ProbeTooltip definitions={focusedDefinitions} carrierColors />} />
+                      {focusedDefinitions.map((definition) => (
+                        <Line
+                          key={definition.key}
+                          type="linear"
+                          dataKey={definition.key}
+                          name={CHINA_CARRIER_LABELS[definition.carrier]}
+                          stroke={CARRIER_COLORS[definition.carrier]}
+                          strokeWidth={2}
+                          connectNulls
+                          isAnimationActive={false}
+                          dot={false}
+                          activeDot={{ r: 3.5 }}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </>
+            )}
           </section>
         )}
 
@@ -591,7 +609,9 @@ export default function HostProbeCarrierHistory() {
                               <span className="h-2 w-2 rounded-full" style={{ background: definition.color }} />
                               <span>{definition.hostName}</span>
                               <span className="font-medium text-foreground">{latestLatencyLabel(definition, latest)}</span>
-                              <span className={cn(loss != null && loss > 0 ? "text-destructive" : "")}>{probeFailureLabel(definition)} {loss == null ? "--" : `${loss.toFixed(1)}%`}</span>
+                              <span className={cn(loss != null && loss > 0 ? "text-destructive" : "")}>
+                                {probeFailureLabel(definition)} {loss == null ? "--" : `${loss.toFixed(1)}%`}
+                              </span>
                             </span>
                           );
                         })}
@@ -611,7 +631,7 @@ export default function HostProbeCarrierHistory() {
                             minTickGap={54}
                           />
                           <YAxis domain={[0, yMax]} allowDataOverflow width={46} tick={{ fontSize: 10 }} unit="ms" />
-                          <RechartsTooltip content={<CompareTooltip definitions={compareDefinitions} />} />
+                          <RechartsTooltip content={<ProbeTooltip definitions={compareDefinitions} />} />
                           {compareDefinitions.map((definition) => (
                             <Line
                               key={definition.key}
@@ -637,7 +657,7 @@ export default function HostProbeCarrierHistory() {
         </section>
 
         <p className="text-[11px] text-muted-foreground">
-          Ping 服务显示 Ping 丢包率，TCPing 服务显示 TCP 连接失败率；固定目标异常只代表该目标探测结果，不直接等同于整个运营商网络故障。
+          单机图只把三网 RTT 放在同一坐标系里；Ping 服务显示 Ping 丢包率，TCPing 服务显示 TCP 连接失败率，固定目标异常不直接等同于整个运营商网络故障。
         </p>
       </CardContent>
     </Card>
