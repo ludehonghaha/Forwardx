@@ -1,0 +1,54 @@
+name: Dual multipath pinned-core regression
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forwardx-dual-multipath-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-core-long-flow:
+    name: Pinned core 256 MiB long-flow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Fetch exact pinned multipath source
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM_REPOSITORY="WuSiYu/singbox-multipath"
+          UPSTREAM_COMMIT="1c36787d956d750f2ee58d73710d8006a11ccf2c"
+          SOURCE_DIR="$RUNNER_TEMP/singbox-multipath"
+          git init "$SOURCE_DIR"
+          git -C "$SOURCE_DIR" remote add origin "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git -C "$SOURCE_DIR" fetch --depth=1 --filter=blob:none origin "$UPSTREAM_COMMIT"
+          git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
+          test "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          cp tests/upstream-multipath/forwardx_longflow_test.go \
+            "$SOURCE_DIR/protocol/multipath/forwardx_longflow_test.go"
+
+      - name: Run ForwardX 256 MiB core regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/singbox-multipath"
+          go test ./protocol/multipath \
+            -run '^TestForwardXCoreLongFlow256MiB$' \
+            -count=1 \
+            -timeout=3m \
+            -v
