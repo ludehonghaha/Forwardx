@@ -42,7 +42,9 @@ copy_status() {
 }
 
 owner_snapshot() {
-  local name="$1" pid_file="$RUNTIME_DIR/$name.pid" pid="" start="" exe="" state="missing"
+  local name="$1"
+  local pid_file="$RUNTIME_DIR/$name.pid"
+  local pid="" start="" exe="" state="missing"
   if [ -r "$pid_file" ]; then
     pid="$(cat "$pid_file" 2>/dev/null || true)"
     start="$(cat "$RUNTIME_DIR/$name.start" 2>/dev/null || true)"
