@@ -3,6 +3,8 @@ set -euo pipefail
 
 UPSTREAM_REPOSITORY="WuSiYu/singbox-multipath"
 UPSTREAM_COMMIT="1c36787d956d750f2ee58d73710d8006a11ccf2c"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CORE_PATCH="$SCRIPT_DIR/../patches/singbox-multipath-ack-window.patch"
 MIERU_REPOSITORY="enfein/mieru"
 MIERU_VERSION="3.36.0"
 MIERU_TAG="v${MIERU_VERSION}"
@@ -35,6 +37,10 @@ if [[ "$ACTUAL_COMMIT" != "$UPSTREAM_COMMIT" ]]; then
   exit 1
 fi
 
+git -C "$SOURCE_DIR" apply --check "$CORE_PATCH"
+git -C "$SOURCE_DIR" apply "$CORE_PATCH"
+PATCH_SHA256="$(sha256sum "$CORE_PATCH" | awk '{print $1}')"
+
 cd "$SOURCE_DIR"
 BUILD_TAGS="$(tr -d '\r\n' < release/DEFAULT_BUILD_TAGS_OTHERS)"
 case ",${BUILD_TAGS}," in
@@ -46,7 +52,7 @@ case ",${BUILD_TAGS}," in
 esac
 
 LDFLAGS_SHARED="$(tr -d '\r\n' < release/LDFLAGS)"
-VERSION="forwardx-dual-gray-${UPSTREAM_COMMIT:0:12}"
+VERSION="forwardx-dual-gray-${UPSTREAM_COMMIT:0:12}-ackwin-${PATCH_SHA256:0:12}"
 
 printf 'Building macOS arm64 with tags: %s\n' "$BUILD_TAGS"
 go version
@@ -163,6 +169,8 @@ cat > "$OUTPUT_DIR/build-metadata.json" <<EOF
   "purpose": "ForwardX Dual macOS arm64 first E2E gray validation only",
   "upstreamRepository": "$UPSTREAM_REPOSITORY",
   "upstreamCommit": "$UPSTREAM_COMMIT",
+  "forwardxPatch": "patches/singbox-multipath-ack-window.patch",
+  "forwardxPatchSha256": "$PATCH_SHA256",
   "platform": "macos",
   "architecture": "arm64",
   "requiredBuildTag": "with_quic",

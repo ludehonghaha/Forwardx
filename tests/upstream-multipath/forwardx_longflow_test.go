@@ -58,6 +58,59 @@ func forwardXWaitForActivation(t *testing.T, core *mpCore) {
 	}
 }
 
+// TestForwardXCoreBoundsUnackedWindow reproduces the mechanism behind the
+// real-carrier reset without depending on WAN timing. A child transport can
+// accept writes into its own buffers much faster than the peer receives them.
+// Without an ACK-bounded send window, txSeq advances beyond the receiver's
+// reorder capacity even though the local leg queues appear empty.
+func TestForwardXCoreBoundsUnackedWindow(t *testing.T) {
+	cfg := forwardXGrayCoreConfig()
+	core, appConn := newCore(context.Background(), cfg)
+
+	coreConn, peerConn := net.Pipe()
+	if _, err := core.addLeg(0, coreConn, nil); err != nil {
+		t.Fatal(err)
+	}
+	peerDrainDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, peerConn)
+		close(peerDrainDone)
+	}()
+
+	window := uint64(cfg.QueueFrames)
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := io.CopyN(appConn, forwardXZeroReader{}, int64(window+32)*int64(cfg.ChunkSize))
+		writeDone <- err
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for core.txSeq.Load() < window && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := core.txSeq.Load(); got != window {
+		t.Fatalf("unacked send window mismatch: got=%d want=%d", got, window)
+	}
+	select {
+	case err := <-writeDone:
+		t.Fatalf("write escaped unacked window before ACK: %v", err)
+	default:
+	}
+
+	core.Close()
+	_ = peerConn.Close()
+	select {
+	case <-writeDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked logical writer did not stop with the core")
+	}
+	select {
+	case <-peerDrainDone:
+	case <-time.After(time.Second):
+		t.Fatal("peer drain did not stop")
+	}
+}
+
 // TestForwardXCoreLongFlow256MiB is intentionally streamed: it verifies the
 // multipath core can carry a 256 MiB logical TCP byte stream without allocating
 // a 256 MiB payload in CI. It uses the same 64 KiB chunk, 256-frame queue,

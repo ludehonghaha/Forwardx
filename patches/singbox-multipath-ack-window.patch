@@ -1,0 +1,103 @@
+diff --git a/protocol/multipath/core.go b/protocol/multipath/core.go
+index 368c32e..c7bf184 100644
+--- a/protocol/multipath/core.go
++++ b/protocol/multipath/core.go
+@@ -322,6 +322,7 @@ type mpCore struct {
+ 	ackNext      atomic.Uint64
+ 	ackedNext    atomic.Uint64
+ 	ackWake      chan struct{}
++	txWindowWake chan struct{}
+ 	replayMu     sync.Mutex
+ 	replay       map[uint64]*replayEntry
+ 	replayBytes  int64
+@@ -364,19 +365,20 @@ func newCore(parent context.Context, cfg coreConfig) (*mpCore, net.Conn) {
+ 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
+ 	appConn, txPipe, rxPipe := newLogicalPipe()
+ 	c := &mpCore{
+-		cfg:      cfg,
+-		ctx:      ctx,
+-		cancel:   cancel,
+-		appConn:  appConn,
+-		txPipe:   txPipe,
+-		rxPipe:   rxPipe,
+-		legs:     make(map[uint8]*mpLeg),
+-		reserved: make(map[uint8]bool),
+-		incoming: make(chan wireFrame, cfg.QueueFrames*2),
+-		done:     make(chan struct{}),
+-		activeCh: make(chan struct{}),
+-		ackWake:  make(chan struct{}, 1),
+-		replay:   make(map[uint64]*replayEntry),
++		cfg:          cfg,
++		ctx:          ctx,
++		cancel:       cancel,
++		appConn:      appConn,
++		txPipe:       txPipe,
++		rxPipe:       rxPipe,
++		legs:         make(map[uint8]*mpLeg),
++		reserved:     make(map[uint8]bool),
++		incoming:     make(chan wireFrame, cfg.QueueFrames*2),
++		done:         make(chan struct{}),
++		activeCh:     make(chan struct{}),
++		ackWake:      make(chan struct{}, 1),
++		txWindowWake: make(chan struct{}, 1),
++		replay:       make(map[uint64]*replayEntry),
+ 	}
+ 	appConn.onClose = func() { c.fail(io.EOF) }
+ 	c.bufferPool.New = func() any {
+@@ -592,6 +594,9 @@ func (c *mpCore) putBuffer(buffer []byte) {
+ 
+ func (c *mpCore) txLoop() {
+ 	for {
++		if err := c.waitSendWindow(); err != nil {
++			return
++		}
+ 		buffer := c.getBuffer()
+ 		n, err := c.txPipe.Read(buffer[:c.cfg.ChunkSize])
+ 		if n > 0 {
+@@ -627,6 +632,35 @@ func (c *mpCore) txLoop() {
+ 	}
+ }
+ 
++func (c *mpCore) sendWindowFrames() uint64 {
++	// ACKs describe the receiver's next contiguous sequence. Bound the number
++	// of later frames that can be emitted so one slow leg cannot make the other
++	// leg overflow the receiver's reorder limits.
++	frames := c.cfg.QueueFrames
++	if c.cfg.MaxReorderFrames < frames {
++		frames = c.cfg.MaxReorderFrames
++	}
++	if byteFrames := int(c.cfg.MaxReorderBytes / int64(c.cfg.ChunkSize)); byteFrames < frames {
++		frames = byteFrames
++	}
++	if frames < 1 {
++		frames = 1
++	}
++	return uint64(frames)
++}
++
++func (c *mpCore) waitSendWindow() error {
++	limit := c.sendWindowFrames()
++	for c.txSeq.Load()-c.ackedNext.Load() >= limit {
++		select {
++		case <-c.done:
++			return errCoreClosed
++		case <-c.txWindowWake:
++		}
++	}
++	return nil
++}
++
+ func (c *mpCore) sendFIN() error {
+ 	if !c.localFIN.CompareAndSwap(false, true) {
+ 		return nil
+@@ -1167,6 +1201,10 @@ func (c *mpCore) handleACK(next uint64) {
+ 			break
+ 		}
+ 	}
++	select {
++	case c.txWindowWake <- struct{}{}:
++	default:
++	}
+ 	var buffers [][]byte
+ 	c.replayMu.Lock()
+ 	for seq, entry := range c.replay {

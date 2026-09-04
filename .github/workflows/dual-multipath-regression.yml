@@ -47,6 +47,8 @@ jobs:
           git -C "$SOURCE_DIR" fetch --depth=1 --filter=blob:none origin "$UPSTREAM_COMMIT"
           git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
           test "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          git -C "$SOURCE_DIR" apply --check "$GITHUB_WORKSPACE/patches/singbox-multipath-ack-window.patch"
+          git -C "$SOURCE_DIR" apply "$GITHUB_WORKSPACE/patches/singbox-multipath-ack-window.patch"
           cp tests/upstream-multipath/forwardx_longflow_test.go \
             "$SOURCE_DIR/protocol/multipath/forwardx_longflow_test.go"
 
@@ -56,7 +58,7 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/singbox-multipath"
           go test ./protocol/multipath \
-            -run '^TestForwardXCoreLongFlow(256MiB|Leg1StallFallback256MiB)$' \
+            -run '^TestForwardXCore(BoundsUnackedWindow|LongFlow256MiB|LongFlowLeg1StallFallback256MiB)$' \
             -count=1 \
             -timeout=4m \
             -v
