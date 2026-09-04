@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -22,6 +23,37 @@ func (forwardXZeroReader) Read(p []byte) (int, error) {
 type forwardXReadResult struct {
 	n   int64
 	err error
+}
+
+type forwardXGateWriteConn struct {
+	net.Conn
+	started     chan struct{}
+	release     chan struct{}
+	startedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newForwardXGateWriteConn(conn net.Conn) *forwardXGateWriteConn {
+	return &forwardXGateWriteConn{
+		Conn:    conn,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (c *forwardXGateWriteConn) Write(buffer []byte) (int, error) {
+	c.startedOnce.Do(func() { close(c.started) })
+	<-c.release
+	return c.Conn.Write(buffer)
+}
+
+func (c *forwardXGateWriteConn) Release() {
+	c.releaseOnce.Do(func() { close(c.release) })
+}
+
+func (c *forwardXGateWriteConn) Close() error {
+	c.Release()
+	return c.Conn.Close()
 }
 
 func forwardXGrayCoreConfig() coreConfig {
@@ -109,6 +141,94 @@ func TestForwardXCoreBoundsUnackedWindow(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("peer drain did not stop")
 	}
+}
+
+// TestForwardXCoreHOLReplayKeepsBoosterAttached models a healthy booster whose
+// successfully written frame is held behind an earlier preferred-leg frame at
+// the receiver. A cumulative ACK cannot distinguish that head-of-line delay
+// from packet loss. The replay timeout must send a fallback copy on leg 0
+// without detaching and reconnecting the healthy booster.
+func TestForwardXCoreHOLReplayKeepsBoosterAttached(t *testing.T) {
+	cfg := forwardXGrayCoreConfig()
+	cfg.ReplayTimeout = 100 * time.Millisecond
+	failures := make(chan legFailureStage, 1)
+	cfg.OnLegFailure = func(_ uint8, stage legFailureStage, _ error) {
+		failures <- stage
+	}
+	left, leftApp := newCore(context.Background(), cfg)
+	right, rightApp := newCore(context.Background(), cfg)
+	defer left.Close()
+	defer right.Close()
+
+	leg0Left, leg0Right := net.Pipe()
+	gatedLeg0 := newForwardXGateWriteConn(leg0Left)
+	connectTestLeg(t, left, right, 0, gatedLeg0, leg0Right)
+	leg1Left, leg1Right := net.Pipe()
+	booster, _ := connectTestLeg(t, left, right, 1, leg1Left, leg1Right)
+
+	received := make(chan forwardXReadResult, 1)
+	go func() {
+		buffer := make([]byte, 2*cfg.ChunkSize)
+		n, err := io.ReadFull(rightApp, buffer)
+		received <- forwardXReadResult{n: int64(n), err: err}
+	}()
+
+	first := left.getBuffer()
+	second := left.getBuffer()
+	for index := range first {
+		first[index] = 0x11
+		second[index] = 0x22
+	}
+	left.txSeq.Store(2)
+	if !left.tryQueueNewFrame(left.getLeg(0), wireFrame{typ: frameTypeData, seq: 0, data: first}) {
+		t.Fatal("failed to queue preferred frame")
+	}
+	select {
+	case <-gatedLeg0.started:
+	case <-time.After(time.Second):
+		t.Fatal("preferred frame did not enter the gated write")
+	}
+	if !left.tryQueueNewFrame(left.getLeg(1), wireFrame{typ: frameTypeData, seq: 1, data: second}) {
+		t.Fatal("failed to queue booster frame")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for right.reorderCount.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if right.reorderCount.Load() != 1 {
+		t.Fatal("booster frame was not buffered behind the preferred frame")
+	}
+	time.Sleep(3 * cfg.ReplayTimeout)
+	if current := left.getLeg(1); current != booster {
+		t.Fatal("healthy booster was detached after cumulative ACK timeout")
+	}
+	select {
+	case stage := <-failures:
+		t.Fatalf("healthy booster reported failure at %s", stage)
+	default:
+	}
+
+	gatedLeg0.Release()
+	select {
+	case result := <-received:
+		if result.err != nil || result.n != int64(2*cfg.ChunkSize) {
+			t.Fatalf("fallback delivery failed: n=%d err=%v", result.n, result.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("fallback delivery timed out")
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for left.ackedNext.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if left.ackedNext.Load() != 2 {
+		t.Fatalf("fallback was not acknowledged: next=%d", left.ackedNext.Load())
+	}
+	if current := left.getLeg(1); current != booster {
+		t.Fatal("healthy booster did not remain attached after fallback")
+	}
+	_ = leftApp
 }
 
 // TestForwardXCoreLongFlow256MiB is intentionally streamed: it verifies the
