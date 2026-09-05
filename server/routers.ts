@@ -6,6 +6,7 @@ import { announcementsRouter } from "./routers/announcements";
 import { authRouter } from "./routers/auth";
 import { billingRouter } from "./routers/billing";
 import { dashboardRouter } from "./routers/dashboard";
+import { dualMultipathRouter } from "./routers/dualMultipath";
 import { forwardGroupsRouter } from "./routers/forwardGroups";
 import { hostsRouter } from "./routers/hosts";
 import { lookingGlassRouter } from "./routers/lookingGlass";
@@ -35,6 +36,7 @@ export const appRouter = router({
   hosts: hostsRouter,
   lookingGlass: lookingGlassRouter,
   nobrandProvider: nobrandProviderRouter,
+  dualMultipath: dualMultipathRouter,
   rules: rulesRouter,
   forwardGroups: forwardGroupsRouter,
   tunnels: tunnelsRouter,

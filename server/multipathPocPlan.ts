@@ -35,7 +35,11 @@ export type MultipathPocLine = {
 const UINT32_MAX = 0xffffffff;
 
 const DEFAULTS = {
-  tcpFastOpen: true,
+  // Live P1 Gray on 2026-09-03 completed 64 MiB single-flow aggregation
+  // only after disabling the early logical connection path. Keep the
+  // experimental runtime conservative until the pinned fork fixes the
+  // large-flow reset observed with tcp_fast_open enabled.
+  tcpFastOpen: false,
   activationThresholdMbps: 120,
   activationWindow: "1s",
   chunkSize: 64 * 1024,
@@ -106,7 +110,11 @@ function normalizedLine(line: MultipathPocLine) {
     id,
     server,
     serverPort,
-    listen: String(line.listen || "0.0.0.0").trim() || "0.0.0.0",
+    // Fail closed. The pinned upstream multipath protocol has no built-in
+    // authentication or encryption, so an omitted listen address must never
+    // turn into a public 0.0.0.0 listener. Topologies such as WireGuard can
+    // still opt in to an explicit trusted interface address.
+    listen: String(line.listen || "127.0.0.1").trim() || "127.0.0.1",
     preferredLegIndex,
     udpLegIndex,
     tcpFastOpen,
@@ -165,9 +173,9 @@ export function buildMultipathPocOutbound(lineInput: MultipathPocLine, legInput:
 }
 
 /**
- * Compile only the matching server inbound stanza. `tcp_fast_open` is not
- * emitted here because the pinned upstream MultipathInboundOptions does not
- * define that field.
+ * Compile only the matching server inbound stanza. The pinned upstream
+ * MultipathInboundOptions embeds ListenOptions, so tcp_fast_open is a valid
+ * inbound field and mirrors the same line-level setting as the client side.
  */
 export function buildMultipathPocInbound(lineInput: MultipathPocLine, legInput: MultipathPocLeg[]) {
   const line = normalizedLine(lineInput);
@@ -178,6 +186,7 @@ export function buildMultipathPocInbound(lineInput: MultipathPocLine, legInput: 
     tag: `forwardx-multipath-${line.id}`,
     listen: line.listen,
     listen_port: line.serverPort,
+    tcp_fast_open: line.tcpFastOpen,
     ...sharedSchedulingConfig(line, legs),
     max_reorder_frames: line.maxReorderFrames,
   };

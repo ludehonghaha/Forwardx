@@ -1,6 +1,6 @@
 # ForwardX Dual / singbox-multipath 设计与 PoC 边界
 
-> 状态：P1-0A 架构结论完成；允许进入 P1-0B 灰度 PoC，禁止直接生产启用。
+> 状态：离线控制面建模中；禁止灰度/生产部署，`readyToDeploy=false`。
 
 ## 1. 上游基线
 
@@ -30,28 +30,40 @@ ForwardX 的 Dual 聚合实验以 `WuSiYu/singbox-multipath` 为唯一 PoC 上�
 
 不得把 `multipath` 塞进 `ProtocolType`。现有 Reality、Mieru、Hysteria2、Shadowsocks 等普通协议订阅和运行时保持独立。
 
-### 3.2 独立数据模型
+### 3.2 单一 ForwardX 产品模型
 
-P1-0B 计划新增独立模型：
+用户只管理一个 ForwardX Dual 聚合节点。Mieru/Mita、Hysteria2、SOCKS bridge、multipath listener 和 secret reference 都是底层组件，不是额外面板。
 
-- `aggregate_lines`
-  - 聚合线路本体
-  - 名称、运行主机、监听地址/端口、启用状态
-  - 上游版本/commit pin
-  - activation / queue / chunk / replay 等调度参数
-  - production gate 状态
-- `aggregate_legs`
-  - 每条 aggregate line 恰好两行
-  - `legIndex` 只能为 0/1
-  - 引用现有可验证路径，而不是复制节点凭据
-  - 标记 preferred / UDP fallback / 预期带宽权重
+当前离线草稿使用 v5，并拆分：
+
+- `serverTargetDiscovery`：某一台 Dual 服务端的只读发现快照；interface、IP、gateway、现有 Mita listener 等都是服务端目标数据，不是产品 schema 常量；
+- `clientTarget`：独立的客户端绑定；正式 ForwardX Host 使用 Panel 所有的 `hosts.id`，未注册 OpenWrt 使用 `dual-client:<namespace>:<stable-key>`，不能用 IP 或 server target 代替；
+- `openClashIngressAdapter`：OpenClash 连接 ForwardX sidecar 的本地入口；
+- `privateCarrierBridge`：默认使用 ForwardX-managed official Mieru foreground sidecar；旧 Mihomo bridge 只保留兼容读取；
+- `dualPrivateCarrierClientEndpointDiscoverySchema`：独立描述客户端真正可见的 Mieru server/port/TCP 与只读证据；未 verified 时 Gray materializer fail closed；
+- `directCarrier`：pinned artifact 的 native Hysteria2；
+- `serverRuntime`：与具体主机无关的 loopback multipath 边界和未解析 HY2 runtime 策略。
+
+generic schema 不包含 `eth0`、`eth1`、固定 IP、gateway 或 Mita 端口 literal。当前 NoBrand Dual 的已核验结果单独保存为 `NO_BRAND_DUAL_SERVER_DISCOVERY_SNAPSHOT`；以后更换为 `ens3`、`10.x` 或不同 Mita 端口时，只注入新的 server snapshot，不修改 TypeScript schema/source code。
+
+服务端 `privateSide.sourceAddress` 只描述服务端网卡，绝不能推导客户端 Mieru destination。当前 NoBrand Windows Gray 观察到的 `211.136.162.188:11464/TCP` 作为独立 runtime discovery evidence 传入；默认产品模型不硬编码该地址。
+
+当前 NoBrand 7CM Gray 的 direct carrier 使用 `reuse-existing-forwardx-hy2`：外部 endpoint 为 `87.86.22.221:24618/udp`，由 `forwardx-runtime.service` 在 host network namespace 转发到 `127.0.0.1:13666/udp`，实际 Hysteria2 listener 归 `forwardx-mihomo.service` 所有。Gray materializer 只读取脱敏 discovery 与 `dual.*` secret reference，在仓库外注入 auth、Salamander obfs 和 TLS/SNI；服务端配置只新增 `127.0.0.1:39000` multipath inbound，不创建第二个 HY2 listener，也不修改现有 Agent/Mihomo/runtime。
+
+2026-09-03 的首次真机门禁没有进入完整 Dual workload：当前 NoBrand per-user Mita 配置中 `allowLoopbackIP` 缺失，official Mieru sidecar 经 `211.136.162.188:11464` 请求服务端 `127.0.0.1:39000` 时得到 SOCKS5 reply code 2。现有 Mieru 的普通公网代理能力不等于它被授权访问服务器 loopback。在“不修改 Mita”且 multipath 必须 loopback-only 的边界下，这是 P1 的实际阻塞；不得用两条单路都可上网替代 single-flow multipath 结论。
+
+客户端入口与 Mieru sidecar SOCKS 各自持有独立的 `portPlanning` discriminated union。未规划时是 `{ status: "unresolved", strategy: "auto", port: null }`；只有同时携带 `snapshotId` 与 `clientTargetRef` 的 read-only evidence 才能成为 `planned-read-only`。schema 会拒绝任何与当前 `clientTarget` 不一致的 client-side evidence。
+
+`DualClientDiscoverySnapshot` 只包含 canonical client ref、显式时间、occupied TCP ports 与不含 secret 的 Mihomo candidate facts。`evaluateDualClientSnapshot()` 只使用调用方传入的 `referenceTime/maxAgeMs` 判定 freshness。`planDualClientLoopbackPorts()` 在集中定义的 `23180-23279` 范围内顺序选择两个不同且未占用的端口；`resolveDualPureMieruProxy()` 只接受恰好一个 private-only、无 fallback 的 concrete Mieru proxy，拒绝 group、DIRECT/REJECT、mixed listener、public fallback 与 ingress recursion。两者均为纯函数，不采集、不打开 socket、不持久化、不调用 Agent。
+
+Persisted key 已升级为 `dualMultipathDraftV5`。v1、v2、portable/pinned-host v3 和 v4 都只做内存升级，不自动写回。v4 没有 canonical client identity，因此旧端口与 proxy evidence 必须 fail closed 回到 unresolved；只有管理员显式保存时才写 v5。
 
 数据库层必须保证同一 aggregate line 不出现重复 legIndex；业务层必须拒绝少于或多于两条 leg。
 
-### 3.3 独立运行时
+### 3.3 底层运行时边界
 
-- 每个 AggregateLine 一个独立 singbox-multipath 进程 / systemd service；
-- 不复用 `forwardx-mihomo`、`forwardx-mita`、Xray 或普通 GOST runtime；
+- ForwardX 是唯一管理面；底层可使用独立 singbox-multipath 进程，但不形成第二个用户面板；
+- Windows Gray 由 ForwardX 管理官方 `enfein/mieru` client sidecar，不读取或修改 Clash Mi；现有 Mita 服务保持不变；
 - 配置先写临时文件、执行配置校验，再原子替换；
 - apply 失败必须保留上一份可工作的配置；
 - Agent desired-state 只在 feature gate 明确开启时下发；
@@ -73,13 +85,16 @@ Dual 必须输出专用的 sing-box/multipath 客户端配置，不得伪装成�
   "activation_window": "1s",
   "chunk_size": 65536,
   "queue_frames": 256,
-  "bandwidth_mbps": [160, 700],
+  "bandwidth_mbps": [200, 1000],
   "leg1_replay_timeout": "5s",
-  "tcp_fast_open": true
+  "tcp_fast_open": false
 }
 ```
 
-参数必须可配置；上面只是符合当前上游示例/实验目标的起点。
+参数必须可配置。`tcp_fast_open=false` 是 2026-09-03 真机 P1 Gray
+验收后的安全默认值：开启时两个大连接都在 leg1 加入后提前 reset；关闭后
+64 MiB 单连接在默认 replay 5s 下完整完成并由两腿共同承载。该结论只针对
+当前 pinned fork，不能外推为普通 TCP Fast Open 的通用结论。
 
 ## 5. P1-0B 灰度验收矩阵
 
@@ -108,8 +123,8 @@ Dual 必须输出专用的 sing-box/multipath 客户端配置，不得伪装成�
 
 ## 7. 当前结论
 
-**GO：进入 P1-0B 单机灰度 PoC。**
+**GO：继续离线 schema、预览、UI 和测试。**
 
-**BLOCKED：生产默认启用。**
+**BLOCKED：任何 gray/prod runtime 变更。**
 
-下一实施步应先做独立 AggregateLine/Leg 的最小数据模型和配置编译器，再接 Agent runtime；不要先改普通协议订阅或现有 ProtocolType。
+下一步必须先解决真实 Mieru client credential 注入、端口占用核验、HY2 最终监听/TLS、两条 carrier 到 loopback listener 的实机可达性、生命周期、健康检查和回滚；不要先改普通协议订阅或现有 ProtocolType。

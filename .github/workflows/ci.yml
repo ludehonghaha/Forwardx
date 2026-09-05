@@ -54,6 +54,7 @@ jobs:
           node --import tsx --test server/protocolFeedIpVersion.test.ts
           node scripts/gray-ipv6-subscription-smoke.mjs
           node --import tsx --test server/multipathPocPlan.test.ts
+          node --import tsx --test server/dualMultipathControlPlane.test.ts server/dualMultipathDeploymentPlan.test.ts server/dualMultipathPortPlanner.test.ts server/dualMultipathClientDiscovery.test.ts server/dualMultipathMobileGrayBundle.test.ts server/dualMultipathGrayRuntimeBundle.test.ts server/dualMultipathExistingHy2Materializer.test.ts server/dualMultipathMieruSidecar.test.ts server/dualMultipathWindowsLauncher.test.ts client/src/lib/dualMultipathForm.test.ts
           node --import tsx --test server/protocolMieruCredentials.test.ts server/protocolMieruRuntimePlan.test.ts server/agentProtocolTrafficAccounting.test.ts server/agentProtocolTrafficRoute.test.ts server/repositories/protocolUserTrafficRepository.test.ts
           node --import tsx --test server/protocolVlessCredentials.test.ts server/protocolVlessIsolation.test.ts
           pnpm test:server
@@ -64,3 +65,303 @@ jobs:
         run: |
           (cd agent && go test ./... && go vet ./...)
           (cd forwardx-fxp && go test ./... && go vet ./...)
+
+  dual-android-gray-artifact:
+    name: Dual Android arm64 Gray artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Build pinned Android arm64 sidecar
+        run: bash scripts/build-dual-android-sidecar.sh "$RUNNER_TEMP/dual-android-gray"
+
+      - name: Upload Android arm64 sidecar
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-singbox-multipath-android-arm64
+          path: |
+            ${{ runner.temp }}/dual-android-gray/sing-box-android-arm64
+            ${{ runner.temp }}/dual-android-gray/sing-box-android-arm64.sha256
+            ${{ runner.temp }}/dual-android-gray/build-metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+  dual-windows-gray-artifact:
+    name: Dual Windows amd64 Gray artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Build pinned Windows amd64 sidecar
+        run: bash scripts/build-dual-windows-sidecar.sh "$RUNNER_TEMP/dual-windows-gray"
+
+      - name: Parse Windows Gray launcher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:RUNNER_TEMP/dual-windows-gray/run-forwardx-dual-gray.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - name: Upload Windows amd64 sidecar
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-windows-amd64
+          path: |
+            ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe
+            ${{ runner.temp }}/dual-windows-gray/sing-box-windows-amd64.exe.sha256
+            ${{ runner.temp }}/dual-windows-gray/mieru-windows-amd64.exe
+            ${{ runner.temp }}/dual-windows-gray/mieru-windows-amd64.exe.sha256
+            ${{ runner.temp }}/dual-windows-gray/mieru-3.36.0-source.tar.gz
+            ${{ runner.temp }}/dual-windows-gray/mieru-3.36.0-source.tar.gz.sha256
+            ${{ runner.temp }}/dual-windows-gray/MIERU-LICENSE-GPL-3.0.txt
+            ${{ runner.temp }}/dual-windows-gray/build-metadata.json
+            ${{ runner.temp }}/dual-windows-gray/SHA256SUMS.txt
+            ${{ runner.temp }}/dual-windows-gray/run-forwardx-dual-gray.ps1
+            ${{ runner.temp }}/dual-windows-gray/run-dual-test.cmd
+            ${{ runner.temp }}/dual-windows-gray/README-WINDOWS-GRAY.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  dual-linux-gray-artifact:
+    name: Dual Linux amd64 Gray artifact + config check
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build pinned Linux amd64 sidecar/server
+        run: bash scripts/build-dual-linux-sidecar.sh "$RUNNER_TEMP/dual-linux-gray"
+
+      - name: Generate isolated Gray certificate and configs
+        run: |
+          mkdir -p "$RUNNER_TEMP/dual-gray-tls" "$RUNNER_TEMP/dual-gray-fixtures"
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -subj "/CN=forwardx-dual-gray.test" \
+            -keyout "$RUNNER_TEMP/dual-gray-tls/server.key" \
+            -out "$RUNNER_TEMP/dual-gray-tls/server.crt"
+          node --import tsx scripts/generate-dual-gray-ci-fixtures.ts \
+            "$RUNNER_TEMP/dual-gray-fixtures" \
+            "$RUNNER_TEMP/dual-gray-tls/server.crt" \
+            "$RUNNER_TEMP/dual-gray-tls/server.key"
+
+      - name: Check generated client and server configs with pinned binary
+        run: |
+          BIN="$RUNNER_TEMP/dual-linux-gray/sing-box-linux-amd64"
+          "$BIN" version
+          "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/dual-test.json"
+          "$BIN" check -c "$RUNNER_TEMP/dual-gray-fixtures/server-gray.json"
+
+      - name: Validate official Mieru config and dedicated SOCKS startup
+        run: |
+          MIERU_ARCHIVE="$RUNNER_TEMP/mieru_3.36.0_linux_amd64.tar.gz"
+          MIERU_DIR="$RUNNER_TEMP/mieru-linux-amd64"
+          curl -fsSL -o "$MIERU_ARCHIVE" \
+            https://github.com/enfein/mieru/releases/download/v3.36.0/mieru_3.36.0_linux_amd64.tar.gz
+          echo "b3f8b32a8b5728c01f31e33ff7a71b3b33f3fd8e1341684fcb98d5ecebb7db7a  $MIERU_ARCHIVE" | sha256sum -c -
+          mkdir -p "$MIERU_DIR"
+          tar -xzf "$MIERU_ARCHIVE" -C "$MIERU_DIR"
+          echo "acbf1b6ea9d48a6f88af9397fa9f1897cdb0f5f6ec456608b55307d7f1dcbdfc  $MIERU_DIR/mieru" | sha256sum -c -
+          "$MIERU_DIR/mieru" version
+          MIERU_CONFIG_JSON_FILE="$RUNNER_TEMP/dual-gray-fixtures/mieru-test.json" \
+            "$MIERU_DIR/mieru" run >"$RUNNER_TEMP/mieru-gray.log" 2>&1 &
+          MIERU_PID=$!
+          cleanup() { kill "$MIERU_PID" 2>/dev/null || true; wait "$MIERU_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for attempt in $(seq 1 100); do
+            if ! kill -0 "$MIERU_PID" 2>/dev/null; then
+              echo "Official Mieru exited before 127.0.0.1:24181 became ready" >&2
+              exit 1
+            fi
+            if (exec 3<>/dev/tcp/127.0.0.1/24181) 2>/dev/null; then
+              exec 3>&-
+              exec 3<&-
+              exit 0
+            fi
+            sleep 0.1
+          done
+          echo "Timed out waiting for official Mieru SOCKS 127.0.0.1:24181" >&2
+          exit 1
+
+      - name: Upload Linux amd64 Gray artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-singbox-multipath-linux-amd64
+          path: |
+            ${{ runner.temp }}/dual-linux-gray/sing-box-linux-amd64
+            ${{ runner.temp }}/dual-linux-gray/sing-box-linux-amd64.sha256
+            ${{ runner.temp }}/dual-linux-gray/build-metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+  dual-openwrt-arm64-gray-artifact:
+    name: Dual OpenWrt/Linux arm64 Gray candidate artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Build pinned OpenWrt/Linux arm64 candidate
+        run: bash scripts/build-dual-openwrt-arm64-sidecar.sh "$RUNNER_TEMP/dual-openwrt-arm64-gray"
+
+      - name: Verify arm64 artifact architecture and safety metadata
+        run: |
+          SINGBOX="$RUNNER_TEMP/dual-openwrt-arm64-gray/sing-box-linux-arm64"
+          MIERU="$RUNNER_TEMP/dual-openwrt-arm64-gray/mieru-linux-arm64"
+          readelf -h "$SINGBOX" | grep -q 'Machine:.*AArch64'
+          readelf -h "$MIERU" | grep -q 'Machine:.*AArch64'
+          if readelf -l "$SINGBOX" | grep -q 'INTERP'; then
+            echo "Pinned singbox-multipath arm64 candidate unexpectedly requires a dynamic loader" >&2
+            exit 1
+          fi
+          if readelf -l "$MIERU" | grep -q 'INTERP'; then
+            echo "Official Mieru Linux arm64 candidate requires a dynamic loader; unsafe to assume OpenWrt compatibility" >&2
+            exit 1
+          fi
+          grep -q '"targetArchitectureVerified": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+          grep -q '"runtimeActivation": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+          grep -q '"deployment": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+          grep -q '"secretMaterialIncluded": false' "$RUNNER_TEMP/dual-openwrt-arm64-gray/build-metadata.json"
+
+      - name: Upload OpenWrt/Linux arm64 Gray candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-openwrt-linux-arm64
+          path: |
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/sing-box-linux-arm64
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/sing-box-linux-arm64.sha256
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-linux-arm64
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-linux-arm64.sha256
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-3.36.0-source.tar.gz
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/mieru-3.36.0-source.tar.gz.sha256
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/MIERU-LICENSE-GPL-3.0.txt
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/build-metadata.json
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/SHA256SUMS.txt
+            ${{ runner.temp }}/dual-openwrt-arm64-gray/README-OPENWRT-ARM64-GRAY.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  dual-macos-arm64-gray-artifact:
+    name: Dual macOS arm64 Gray artifact
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/dual-multipath-control-plane'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ForwardX
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go for pinned upstream
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Build pinned macOS arm64 Gray package
+        run: bash scripts/build-dual-macos-arm64-sidecar.sh "$RUNNER_TEMP/dual-macos-arm64-gray"
+
+      - name: Verify macOS artifact format, launcher, and safety metadata
+        run: |
+          ROOT="$RUNNER_TEMP/dual-macos-arm64-gray"
+          bash -n "$ROOT/run-forwardx-dual-gray.sh"
+          file "$ROOT/sing-box-macos-arm64" | grep -Eiq 'Mach-O.*arm64|Mach-O.*ARM64'
+          file "$ROOT/mieru-macos-arm64" | grep -Eiq 'Mach-O.*arm64|Mach-O.*ARM64'
+          grep -q '"runtimeConfigIncluded": false' "$ROOT/build-metadata.json"
+          grep -q '"secretMaterialIncluded": false' "$ROOT/build-metadata.json"
+          grep -q '"systemProxyMutation": false' "$ROOT/build-metadata.json"
+          grep -q '"routeMutation": false' "$ROOT/build-metadata.json"
+          grep -q '"runtimeActivation": false' "$ROOT/build-metadata.json"
+          grep -q '"deployment": false' "$ROOT/build-metadata.json"
+
+      - name: Upload macOS arm64 Gray package
+        uses: actions/upload-artifact@v4
+        with:
+          name: forwardx-dual-macos-arm64
+          path: |
+            ${{ runner.temp }}/dual-macos-arm64-gray/sing-box-macos-arm64
+            ${{ runner.temp }}/dual-macos-arm64-gray/sing-box-macos-arm64.sha256
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-macos-arm64
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-macos-arm64.sha256
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-3.36.0-source.tar.gz
+            ${{ runner.temp }}/dual-macos-arm64-gray/mieru-3.36.0-source.tar.gz.sha256
+            ${{ runner.temp }}/dual-macos-arm64-gray/MIERU-LICENSE-GPL-3.0.txt
+            ${{ runner.temp }}/dual-macos-arm64-gray/build-metadata.json
+            ${{ runner.temp }}/dual-macos-arm64-gray/SHA256SUMS.txt
+            ${{ runner.temp }}/dual-macos-arm64-gray/run-forwardx-dual-gray.sh
+            ${{ runner.temp }}/dual-macos-arm64-gray/README-MACOS-ARM64-GRAY.txt
+          if-no-files-found: error
+          retention-days: 7

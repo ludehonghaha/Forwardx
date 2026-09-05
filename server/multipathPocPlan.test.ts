@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "./dualPilotTasks.test";
+import "./dualMultipathPilotInstaller.test";
 import {
   MULTIPATH_POC_UPSTREAM,
   buildMultipathPocInbound,
@@ -37,7 +39,7 @@ test("compiles a two-leg client outbound with conservative PoC defaults", () => 
     udp_outbound: "dedicated",
     server: "10.66.67.1",
     server_port: 39000,
-    tcp_fast_open: true,
+    tcp_fast_open: false,
     activation_threshold_mbps: 120,
     activation_window: "1s",
     chunk_size: 65536,
@@ -50,13 +52,14 @@ test("compiles a two-leg client outbound with conservative PoC defaults", () => 
   });
 });
 
-test("compiles the matching server inbound using only upstream inbound fields", () => {
+test("compiles the matching server inbound using inherited ListenOptions fields", () => {
   const inbound = buildMultipathPocInbound(line, legs) as Record<string, unknown> | null;
   assert.deepEqual(inbound, {
     type: "multipath",
     tag: "forwardx-multipath-1",
-    listen: "0.0.0.0",
+    listen: "127.0.0.1",
     listen_port: 39000,
+    tcp_fast_open: false,
     activation_threshold_mbps: 120,
     activation_window: "1s",
     chunk_size: 65536,
@@ -68,9 +71,16 @@ test("compiles the matching server inbound using only upstream inbound fields", 
     bandwidth_mbps: [160, 700],
     max_reorder_frames: 2048,
   });
-  assert.equal("tcp_fast_open" in (inbound || {}), false);
+  assert.equal(inbound?.tcp_fast_open, false);
+  assert.equal(buildMultipathPocInbound({ ...line, tcpFastOpen: false }, legs)?.tcp_fast_open, false);
+  assert.equal(buildMultipathPocInbound({ ...line, tcpFastOpen: true }, legs)?.tcp_fast_open, true);
   assert.equal(JSON.stringify(inbound).includes("password"), false);
   assert.equal(JSON.stringify(inbound).includes("outbounds"), false);
+});
+
+test("requires an explicit opt-in for a non-loopback listener", () => {
+  assert.equal(buildMultipathPocInbound({ ...line, listen: "10.66.67.1" }, legs)?.listen, "10.66.67.1");
+  assert.equal(buildMultipathPocInbound({ ...line, listen: "" }, legs)?.listen, "127.0.0.1");
 });
 
 test("allows explicit leg preference and UDP delegation", () => {

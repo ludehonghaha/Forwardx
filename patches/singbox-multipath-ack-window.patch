@@ -1,0 +1,327 @@
+diff --git a/protocol/multipath/core.go b/protocol/multipath/core.go
+index 368c32e..dc82e7a 100644
+--- a/protocol/multipath/core.go
++++ b/protocol/multipath/core.go
+@@ -122,10 +122,12 @@ type wireFrame struct {
+ }
+ 
+ type replayEntry struct {
+-	frame          wireFrame
+-	sentAt         time.Time
+-	fallbackQueued bool
+-	acked          bool
++	frame               wireFrame
++	writeStartedAt      time.Time
++	sentAt              time.Time
++	fallbackQueued      bool
++	writeFallbackQueued bool
++	acked               bool
+ }
+ 
+ type mpLegCounters struct {
+@@ -223,6 +225,7 @@ type mpLeg struct {
+ 	closeOne     sync.Once
+ 	queuedBytes  atomic.Int64
+ 	writingBytes atomic.Int64
++	suspended    atomic.Bool
+ }
+ 
+ func (l *mpLeg) Done() <-chan struct{} {
+@@ -322,6 +325,7 @@ type mpCore struct {
+ 	ackNext      atomic.Uint64
+ 	ackedNext    atomic.Uint64
+ 	ackWake      chan struct{}
++	txWindowWake chan struct{}
+ 	replayMu     sync.Mutex
+ 	replay       map[uint64]*replayEntry
+ 	replayBytes  int64
+@@ -364,19 +368,20 @@ func newCore(parent context.Context, cfg coreConfig) (*mpCore, net.Conn) {
+ 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
+ 	appConn, txPipe, rxPipe := newLogicalPipe()
+ 	c := &mpCore{
+-		cfg:      cfg,
+-		ctx:      ctx,
+-		cancel:   cancel,
+-		appConn:  appConn,
+-		txPipe:   txPipe,
+-		rxPipe:   rxPipe,
+-		legs:     make(map[uint8]*mpLeg),
+-		reserved: make(map[uint8]bool),
+-		incoming: make(chan wireFrame, cfg.QueueFrames*2),
+-		done:     make(chan struct{}),
+-		activeCh: make(chan struct{}),
+-		ackWake:  make(chan struct{}, 1),
+-		replay:   make(map[uint64]*replayEntry),
++		cfg:          cfg,
++		ctx:          ctx,
++		cancel:       cancel,
++		appConn:      appConn,
++		txPipe:       txPipe,
++		rxPipe:       rxPipe,
++		legs:         make(map[uint8]*mpLeg),
++		reserved:     make(map[uint8]bool),
++		incoming:     make(chan wireFrame, cfg.QueueFrames*2),
++		done:         make(chan struct{}),
++		activeCh:     make(chan struct{}),
++		ackWake:      make(chan struct{}, 1),
++		txWindowWake: make(chan struct{}, 1),
++		replay:       make(map[uint64]*replayEntry),
+ 	}
+ 	appConn.onClose = func() { c.fail(io.EOF) }
+ 	c.bufferPool.New = func() any {
+@@ -592,6 +597,9 @@ func (c *mpCore) putBuffer(buffer []byte) {
+ 
+ func (c *mpCore) txLoop() {
+ 	for {
++		if err := c.waitSendWindow(); err != nil {
++			return
++		}
+ 		buffer := c.getBuffer()
+ 		n, err := c.txPipe.Read(buffer[:c.cfg.ChunkSize])
+ 		if n > 0 {
+@@ -627,6 +635,35 @@ func (c *mpCore) txLoop() {
+ 	}
+ }
+ 
++func (c *mpCore) sendWindowFrames() uint64 {
++	// ACKs describe the receiver's next contiguous sequence. Bound the number
++	// of later frames that can be emitted so one slow leg cannot make the other
++	// leg overflow the receiver's reorder limits.
++	frames := c.cfg.QueueFrames
++	if c.cfg.MaxReorderFrames < frames {
++		frames = c.cfg.MaxReorderFrames
++	}
++	if byteFrames := int(c.cfg.MaxReorderBytes / int64(c.cfg.ChunkSize)); byteFrames < frames {
++		frames = byteFrames
++	}
++	if frames < 1 {
++		frames = 1
++	}
++	return uint64(frames)
++}
++
++func (c *mpCore) waitSendWindow() error {
++	limit := c.sendWindowFrames()
++	for c.txSeq.Load()-c.ackedNext.Load() >= limit {
++		select {
++		case <-c.done:
++			return errCoreClosed
++		case <-c.txWindowWake:
++		}
++	}
++	return nil
++}
++
+ func (c *mpCore) sendFIN() error {
+ 	if !c.localFIN.CompareAndSwap(false, true) {
+ 		return nil
+@@ -765,6 +802,9 @@ func (c *mpCore) chooseLeg(frameLength int) *mpLeg {
+ 	var best *mpLeg
+ 	var bestNum, bestDen uint64
+ 	for _, leg := range legs {
++		if leg.id == 1 && leg.suspended.Load() {
++			continue
++		}
+ 		weight := uint64(c.weightFor(leg.id))
+ 		num := uint64(leg.backlogBytes() + int64(frameLength))
+ 		if best == nil || num*bestDen < bestNum*weight {
+@@ -865,14 +905,22 @@ func (c *mpCore) legWriteLoop(leg *mpLeg) {
+ 			leg.queuedBytes.Add(-length)
+ 			leg.writingBytes.Add(length)
+ 			if leg.id == 1 {
+-				c.markReplaySent(frame.seq)
++				if !c.markReplayWriteStarted(frame.seq) {
++					leg.writingBytes.Add(-length)
++					c.putBuffer(frame.data)
++					continue
++				}
+ 			}
+ 			err := writeWireFrame(leg.conn, frame)
+ 			leg.writingBytes.Add(-length)
++			leg.suspended.Store(false)
+ 			if err != nil {
+ 				c.legFailed(leg, legFailureWriteData, err)
+ 				return
+ 			}
++			if leg.id == 1 {
++				c.markReplaySent(frame.seq)
++			}
+ 			c.legCounters[leg.id].txBytes.Add(uint64(length))
+ 			c.legCounters[leg.id].txFrames.Add(1)
+ 			if leg.id == 0 {
+@@ -1145,12 +1193,42 @@ func (c *mpCore) untrackReplay(seq uint64, release bool) {
+ 	}
+ }
+ 
++func (c *mpCore) markReplayWriteStarted(seq uint64) bool {
++	c.replayMu.Lock()
++	entry := c.replay[seq]
++	if entry == nil {
++		c.replayMu.Unlock()
++		return false
++	}
++	if entry.acked {
++		delete(c.replay, seq)
++		c.replayBytes -= int64(len(entry.frame.data))
++		c.replayMu.Unlock()
++		return false
++	}
++	if entry.writeStartedAt.IsZero() {
++		entry.writeStartedAt = time.Now()
++	}
++	c.replayMu.Unlock()
++	return true
++}
++
+ func (c *mpCore) markReplaySent(seq uint64) {
++	var buffer []byte
+ 	c.replayMu.Lock()
+-	if entry := c.replay[seq]; entry != nil && entry.sentAt.IsZero() {
+-		entry.sentAt = time.Now()
++	if entry := c.replay[seq]; entry != nil {
++		if entry.acked {
++			delete(c.replay, seq)
++			c.replayBytes -= int64(len(entry.frame.data))
++			buffer = entry.frame.data
++		} else {
++			entry.sentAt = time.Now()
++		}
+ 	}
+ 	c.replayMu.Unlock()
++	if buffer != nil {
++		c.putBuffer(buffer)
++	}
+ }
+ 
+ func (c *mpCore) handleACK(next uint64) {
+@@ -1167,13 +1245,17 @@ func (c *mpCore) handleACK(next uint64) {
+ 			break
+ 		}
+ 	}
++	select {
++	case c.txWindowWake <- struct{}{}:
++	default:
++	}
+ 	var buffers [][]byte
+ 	c.replayMu.Lock()
+ 	for seq, entry := range c.replay {
+ 		if seq >= next {
+ 			continue
+ 		}
+-		if entry.fallbackQueued {
++		if entry.fallbackQueued || (entry.writeFallbackQueued && entry.sentAt.IsZero()) {
+ 			entry.acked = true
+ 			continue
+ 		}
+@@ -1206,34 +1288,103 @@ func (c *mpCore) replayLoop() {
+ 		case <-c.done:
+ 			return
+ 		case now := <-ticker.C:
+-			stalled := false
++			sequences := make([]uint64, 0)
++			stalledFrames := make([]wireFrame, 0)
++			writeStalled := false
+ 			c.replayMu.Lock()
+-			for _, entry := range c.replay {
+-				if !entry.fallbackQueued && !entry.sentAt.IsZero() && now.Sub(entry.sentAt) >= c.cfg.ReplayTimeout {
+-					stalled = true
+-					break
++			for seq, entry := range c.replay {
++				if entry.fallbackQueued || entry.writeStartedAt.IsZero() {
++					continue
++				}
++				if entry.sentAt.IsZero() {
++					if !entry.writeFallbackQueued && now.Sub(entry.writeStartedAt) >= c.cfg.ReplayTimeout {
++						writeStalled = true
++					}
++					continue
++				}
++				if now.Sub(entry.sentAt) >= c.cfg.ReplayTimeout {
++					entry.fallbackQueued = true
++					sequences = append(sequences, seq)
+ 				}
+ 			}
+-			c.replayMu.Unlock()
+-			if stalled {
++			if writeStalled {
+ 				if leg := c.getLeg(1); leg != nil {
+-					c.legFailed(leg, legFailureReplay, errLeg1Stalled)
++					leg.suspended.Store(true)
+ 				}
++				for seq, entry := range c.replay {
++					if entry.fallbackQueued || entry.writeFallbackQueued {
++						continue
++					}
++					buffer := c.getBuffer()[:len(entry.frame.data)]
++					copy(buffer, entry.frame.data)
++					entry.writeFallbackQueued = true
++					stalledFrames = append(stalledFrames, wireFrame{typ: frameTypeData, seq: seq, data: buffer})
++				}
++			}
++			c.replayMu.Unlock()
++			if len(stalledFrames) > 0 {
++				go c.queueStalledWriteFallback(stalledFrames)
++			}
++			if len(sequences) > 0 {
++				go c.queueReplayFallback(sequences)
+ 			}
+ 		}
+ 	}
+ }
+ 
+ func (c *mpCore) reinjectLeg1() {
++	var buffers [][]byte
+ 	c.replayMu.Lock()
+ 	sequences := make([]uint64, 0, len(c.replay))
+ 	for seq, entry := range c.replay {
++		if entry.acked {
++			delete(c.replay, seq)
++			c.replayBytes -= int64(len(entry.frame.data))
++			buffers = append(buffers, entry.frame.data)
++			continue
++		}
+ 		if !entry.fallbackQueued {
+ 			entry.fallbackQueued = true
+ 			sequences = append(sequences, seq)
+ 		}
+ 	}
+ 	c.replayMu.Unlock()
++	for _, buffer := range buffers {
++		c.putBuffer(buffer)
++	}
++	c.queueReplayFallback(sequences)
++}
++
++func (c *mpCore) queueStalledWriteFallback(frames []wireFrame) {
++	sort.Slice(frames, func(i, j int) bool { return frames[i].seq < frames[j].seq })
++	ticker := time.NewTicker(time.Millisecond)
++	defer ticker.Stop()
++	for _, frame := range frames {
++		for {
++			if c.isDone() {
++				c.putBuffer(frame.data)
++				break
++			}
++			leg0 := c.getLeg(0)
++			if leg0 == nil {
++				c.putBuffer(frame.data)
++				c.fail(errors.New("multipath control leg unavailable during stalled-write fallback"))
++				return
++			}
++			if leg0.tryQueue(frame, c.cfg.QueueBytes) {
++				break
++			}
++			select {
++			case <-c.done:
++				c.putBuffer(frame.data)
++				return
++			case <-ticker.C:
++			}
++		}
++	}
++}
++
++func (c *mpCore) queueReplayFallback(sequences []uint64) {
+ 	sort.Slice(sequences, func(i, j int) bool { return sequences[i] < sequences[j] })
+ 	ticker := time.NewTicker(time.Millisecond)
+ 	defer ticker.Stop()

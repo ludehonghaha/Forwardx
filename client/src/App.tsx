@@ -15,6 +15,7 @@ import Setup from "./pages/Setup";
 import AnnouncementsPage from "@/pages/Announcements";
 import BillingPage from "@/pages/Billing";
 import CustomSidebarPage from "@/pages/CustomSidebarPage";
+import DualMultipathPage from "@/pages/DualMultipath";
 import EmailSettingsPage from "@/pages/EmailSettings";
 import ForwardGroupsPage from "@/pages/ForwardGroups";
 import HomePage from "@/pages/Home";
@@ -97,6 +98,7 @@ function Router() {
       <Route path="/">{routeComponent(HomePage)}</Route>
       <Route path="/profile">{routeComponent(ProfilePage)}</Route>
       <Route path="/protocol-access">{routeComponent(ProtocolAccessPage)}</Route>
+      <Route path="/dual-multipath">{() => <AdminRoute component={DualMultipathPage} />}</Route>
       <Route path="/hosts">{() => <AdminRoute component={HostsPage} />}</Route>
       <Route path="/rules">{routeComponent(RulesPage)}</Route>
       <Route path="/looking-glass" component={LookingGlassRoute} />

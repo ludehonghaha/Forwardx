@@ -1,0 +1,88 @@
+name: Dual Gray Panel Image
+
+on:
+  push:
+    branches:
+      - feat/dual-multipath-control-plane
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: dual-gray-panel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/forwardx
+
+jobs:
+  build-amd64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Dual branch
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Read panel version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push isolated Dual Gray image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:dual-gray-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:dual-gray-latest
+          labels: |
+            org.opencontainers.image.title=ForwardX Dual Gray
+            org.opencontainers.image.description=Isolated ForwardX Dual multipath gray panel image
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.forwardx.channel=dual-gray
+          build-args: |
+            FORWARDX_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=forwardx-dual-gray-amd64
+          cache-to: type=gha,mode=max,scope=forwardx-dual-gray-amd64
+
+      - name: Verify published image
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${IMAGE_NAME}:dual-gray-${GITHUB_SHA}"
+          docker pull "$TAG"
+          docker run --rm --platform linux/amd64 --entrypoint node "$TAG" -e '
+            const pkg = require("/app/package.json");
+            if (pkg.version !== process.env.FORWARDX_IMAGE_VERSION) {
+              throw new Error(`package=${pkg.version} image=${process.env.FORWARDX_IMAGE_VERSION}`);
+            }
+            console.log(`verified panel=${pkg.version} arch=${process.arch}`);
+          '
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "### Dual Gray panel image" >> "$GITHUB_STEP_SUMMARY"
+          echo "- exact: \`${IMAGE_NAME}:dual-gray-${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- moving: \`${IMAGE_NAME}:dual-gray-latest\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- panel version: \`${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- architecture: \`linux/amd64\`" >> "$GITHUB_STEP_SUMMARY"
