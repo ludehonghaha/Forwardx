@@ -147,7 +147,7 @@ index 368c32e..17b1885 100644
  	var buffers [][]byte
  	c.replayMu.Lock()
  	for seq, entry := range c.replay {
-@@ -1206,19 +1256,34 @@ func (c *mpCore) replayLoop() {
+@@ -1206,19 +1256,41 @@ func (c *mpCore) replayLoop() {
  		case <-c.done:
  			return
  		case now := <-ticker.C:
@@ -175,6 +175,13 @@ index 368c32e..17b1885 100644
 +					sequences = append(sequences, seq)
  				}
  			}
++			if writeStalled {
++				// Full-leg recovery owns every outstanding entry. Undo partial
++				// selection so reinjectLeg1 cannot skip frames from this scan.
++				for _, seq := range sequences {
++					c.replay[seq].fallbackQueued = false
++				}
++			}
  			c.replayMu.Unlock()
 -			if stalled {
 +			if writeStalled {
@@ -188,7 +195,7 @@ index 368c32e..17b1885 100644
  			}
  		}
  	}
-@@ -1234,6 +1299,10 @@ func (c *mpCore) reinjectLeg1() {
+@@ -1234,6 +1306,10 @@ func (c *mpCore) reinjectLeg1() {
  		}
  	}
  	c.replayMu.Unlock()

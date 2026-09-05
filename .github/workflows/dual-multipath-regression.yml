@@ -58,7 +58,7 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/singbox-multipath"
           go test ./protocol/multipath \
-            -run '^TestForwardXCore(BoundsUnackedWindow|LongFlow256MiB|LongFlowLeg1StallFallback256MiB)$' \
+            -run '^TestForwardXCore' \
             -count=1 \
             -timeout=4m \
             -v

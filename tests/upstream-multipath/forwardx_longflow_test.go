@@ -231,6 +231,54 @@ func TestForwardXCoreHOLReplayKeepsBoosterAttached(t *testing.T) {
 	_ = leftApp
 }
 
+// TestForwardXCoreMixedReplayTimeoutDrains covers a scan containing both
+// completed writes awaiting ACK and a genuinely stalled write. Every entry
+// must reach fallback, including those visited before the stalled entry.
+func TestForwardXCoreMixedReplayTimeoutDrains(t *testing.T) {
+	for attempt := 0; attempt < 8; attempt++ {
+		cfg := forwardXGrayCoreConfig()
+		cfg.ReplayTimeout = 100 * time.Millisecond
+		core, _ := newCore(context.Background(), cfg)
+		primary, peer := net.Pipe()
+		if _, err := core.addLeg(0, primary, nil); err != nil {
+			t.Fatal(err)
+		}
+		booster, boosterPeer := net.Pipe()
+		if _, err := core.addLeg(1, booster, nil); err != nil {
+			t.Fatal(err)
+		}
+		go io.Copy(io.Discard, peer)
+		old := time.Now().Add(-time.Second)
+		core.replayMu.Lock()
+		for seq := uint64(0); seq < 65; seq++ {
+			entry := &replayEntry{frame: wireFrame{typ: frameTypeData, seq: seq, data: core.getBuffer()}, writeStartedAt: old, sentAt: old}
+			if seq == 64 {
+				entry.sentAt = time.Time{}
+			}
+			core.replay[seq] = entry
+			core.replayBytes += int64(len(entry.frame.data))
+		}
+		core.replayMu.Unlock()
+		deadline := time.Now().Add(time.Second)
+		var remaining int
+		for {
+			core.replayMu.Lock()
+			remaining = len(core.replay)
+			core.replayMu.Unlock()
+			if remaining == 0 || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		core.Close()
+		peer.Close()
+		boosterPeer.Close()
+		if remaining != 0 {
+			t.Fatalf("scan %d stranded %d replay frames", attempt, remaining)
+		}
+	}
+}
+
 // TestForwardXCoreLongFlow256MiB is intentionally streamed: it verifies the
 // multipath core can carry a 256 MiB logical TCP byte stream without allocating
 // a 256 MiB payload in CI. It uses the same 64 KiB chunk, 256-frame queue,
