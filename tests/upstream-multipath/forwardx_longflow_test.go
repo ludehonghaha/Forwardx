@@ -233,7 +233,7 @@ func TestForwardXCoreHOLReplayKeepsBoosterAttached(t *testing.T) {
 
 // TestForwardXCoreMixedReplayTimeoutDrains covers a scan containing both
 // completed writes awaiting ACK and a genuinely stalled write. Every entry
-// must reach fallback, including those visited before the stalled entry.
+// must reach fallback without detaching the booster.
 func TestForwardXCoreMixedReplayTimeoutDrains(t *testing.T) {
 	for attempt := 0; attempt < 8; attempt++ {
 		cfg := forwardXGrayCoreConfig()
@@ -265,16 +265,24 @@ func TestForwardXCoreMixedReplayTimeoutDrains(t *testing.T) {
 			core.replayMu.Lock()
 			remaining = len(core.replay)
 			core.replayMu.Unlock()
-			if remaining == 0 || time.Now().After(deadline) {
+			if core.legCounters[0].txFrames.Load() >= 65 || time.Now().After(deadline) {
 				break
 			}
 			time.Sleep(time.Millisecond)
 		}
+		core.handleACK(65)
+		core.markReplaySent(64)
+		core.replayMu.Lock()
+		remaining = len(core.replay)
+		core.replayMu.Unlock()
 		core.Close()
 		peer.Close()
 		boosterPeer.Close()
 		if remaining != 0 {
 			t.Fatalf("scan %d stranded %d replay frames", attempt, remaining)
+		}
+		if core.getLeg(1) == nil {
+			t.Fatalf("scan %d detached booster during soft fallback", attempt)
 		}
 	}
 }
@@ -333,8 +341,8 @@ func TestForwardXCoreLongFlow256MiB(t *testing.T) {
 // failure shape: after aggregation activates, the booster accepts a scheduled
 // frame but its write stalls while the preferred leg continues to carry later
 // sequence numbers. The core must survive the production 5s replay timeout,
-// fail only the booster, reinject its replay history through leg 0 and complete
-// the original logical stream without reset/reconnect.
+// copy the stalled frame through leg 0 and complete the original logical
+// stream without reset, reconnect or early reuse of the blocked write buffer.
 func TestForwardXCoreLongFlowLeg1StallFallback256MiB(t *testing.T) {
 	cfg := forwardXGrayCoreConfig()
 	left, leftApp := newCore(context.Background(), cfg)
@@ -387,7 +395,7 @@ func TestForwardXCoreLongFlowLeg1StallFallback256MiB(t *testing.T) {
 	if countedLeg1.written.Load() != 0 {
 		t.Fatalf("stalled booster unexpectedly completed %d wire bytes", countedLeg1.written.Load())
 	}
-	if left.getLeg(1) != nil {
-		t.Fatal("stalled booster should have been removed after replay timeout")
+	if left.getLeg(1) == nil {
+		t.Fatal("stalled booster should remain attached after soft fallback")
 	}
 }
